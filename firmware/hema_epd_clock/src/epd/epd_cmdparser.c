@@ -123,12 +123,6 @@ static void expand_vars(const char *in, char *out, uint16_t out_size)
     out[n] = '\0';
 }
 
-/* True only while the first run of a freshly received script is executing.
- * Gates TIME(): the script is replayed every minute, so a TIME() line left to
- * run again would reset the clock to the sync instant on every tick, freezing
- * the displayed minute and stopping the repaints that depend on it. */
-static bool s_first_run;
-
 static bool starts_with(const char *s, const char *prefix)
 {
     while (*prefix) {
@@ -289,21 +283,8 @@ static void dispatch_line(const char *line)
         return;
     }
 
-    /* TIME(<seconds since 2000-01-01>) - set the clock.
-     * Our own extension: the vendor's documented DSL has no time-set command
-     * (their firmware syncs over a separate binary path we have not decoded).
-     * The epoch matches their {u}/{g} variables, so hosts agree on the value.
-     *
-     * Applied on the first run of a script only - see s_first_run. Every other
-     * command here is idempotent and meant to be replayed; this one is not. */
-    if (starts_with(line, "TIME(")) {
-        p = line + 5;
-        int32_t secs = parse_int(&p);
-        if (s_first_run && secs > 0) {
-            epd_time_set((uint32_t)secs);
-        }
-        return;
-    }
+    /* TIME() never reaches here - it is applied and dropped as it arrives, in
+     * handle_line(), so it is neither stored nor replayed. */
 
     /* Unrecognized / not-yet-implemented command (CAL, CLOCK, IMG, ICON,
      * TABLE, ROTATE, MIRROR, SHOW, INV, LET, SRAND, RANDS, DATE_OFF,
@@ -332,12 +313,17 @@ static uint16_t s_script_len;
 static bool     s_script_full;
 static bool     s_batch_pending;
 
+/* Partial line carried between feeds: a BLE write is MTU-3 bytes (20 at the
+ * default MTU), so lines routinely arrive split across several of them. */
+static char     s_line[CMD_LINE_MAX];
+static uint16_t s_line_len;
+
 void epd_cmd_reset(void)
 {
     s_script_len = 0;
     s_script_full = false;
     s_batch_pending = false;
-    s_first_run = false;
+    s_line_len = 0;
 }
 
 void epd_cmd_begin_batch(void)
@@ -378,23 +364,81 @@ void epd_cmd_load_default(void)
     s_script_len = n;
     s_script_full = false;
     s_batch_pending = false;
-    s_first_run = true;
 }
 
-void epd_cmd_feed(const uint8_t *buf, uint16_t len)
+/* Handle one complete incoming line.
+ *
+ * TIME() is applied here and deliberately NOT stored. It is a control command,
+ * not part of the picture: storing it made a TIME()-only sync - the obvious
+ * thing for a host to send - replace the whole template with a script that
+ * draws nothing, so the framebuffer was never repainted again and the face
+ * froze at the pre-sync minute while the clock itself ran on correctly.
+ *
+ * Keeping it out of the buffer also means it can no longer be replayed, which
+ * is what the old s_first_run gate existed to prevent. */
+static void handle_line(const char *line, uint16_t len)
 {
+    if (starts_with(line, "TIME(")) {
+        const char *p = line + 5;
+        int32_t secs = parse_int(&p);
+        if (secs > 0) {
+            epd_time_set((uint32_t)secs);
+        }
+        return;
+    }
+
+    /* First drawing content of a new batch replaces the stored template. Doing
+     * it here rather than on the batch's first byte is what lets a TIME()-only
+     * batch leave the current face untouched. */
     if (s_batch_pending) {
         s_batch_pending = false;
-        s_script_len = 0;       /* first bytes of a new template - replace */
+        s_script_len = 0;
         s_script_full = false;
-        s_first_run = true;     /* let this batch's TIME() through, once */
     }
 
     for (uint16_t i = 0; i < len; i++) {
         if (s_script_len < CMD_SCRIPT_MAX - 1) {
-            s_script[s_script_len++] = (char)buf[i];
+            s_script[s_script_len++] = line[i];
         } else {
-            s_script_full = true;   /* keep what fits; drop the tail */
+            s_script_full = true;       /* keep what fits; drop the tail */
+        }
+    }
+    if (s_script_len < CMD_SCRIPT_MAX - 1) {
+        s_script[s_script_len++] = '\n';
+    }
+}
+
+/* Commit a trailing line that arrived without its newline. Callers that are
+ * about to act on the script must call this first, or a template whose last
+ * line is unterminated would lose that line. */
+static void flush_partial_line(void)
+{
+    if (s_line_len == 0) {
+        return;
+    }
+    s_line[s_line_len] = '\0';
+    handle_line(s_line, s_line_len);
+    s_line_len = 0;
+}
+
+void epd_cmd_feed(const uint8_t *buf, uint16_t len)
+{
+    for (uint16_t i = 0; i < len; i++) {
+        char c = (char)buf[i];
+
+        if (c == '\n') {
+            s_line[s_line_len] = '\0';
+            handle_line(s_line, s_line_len);
+            s_line_len = 0;
+        } else if (s_line_len < CMD_LINE_MAX - 1) {
+            s_line[s_line_len++] = c;
+        } else {
+            /* Over-long line: commit what fits and treat the rest as the next
+             * one, rather than dropping the batch. */
+            s_script_full = true;
+            s_line[s_line_len] = '\0';
+            handle_line(s_line, s_line_len);
+            s_line_len = 0;
         }
     }
 }
@@ -414,6 +458,10 @@ void epd_cmd_run(void)
     char line[CMD_LINE_MAX];
     uint16_t line_len = 0;
     bool overflow = false;
+
+    /* A client's last line often arrives without a trailing newline; commit it
+     * before replaying, or it would be silently dropped. */
+    flush_partial_line();
 
     for (uint16_t i = 0; i < s_script_len; i++) {
         char c = s_script[i];
@@ -440,6 +488,4 @@ void epd_cmd_run(void)
         line[line_len] = '\0';
         dispatch_line(line);
     }
-
-    s_first_run = false;
 }
