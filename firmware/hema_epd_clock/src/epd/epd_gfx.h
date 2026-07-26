@@ -49,10 +49,4 @@ void epd_gfx_circle(int16_t x, int16_t y, int16_t r, uint8_t color, uint8_t pix,
  * glyph tables per font_id later if pixel-identical rendering matters. */
 void epd_gfx_text(int16_t x, int16_t y, const char *text, uint8_t fore, uint8_t back, uint8_t scale);
 
-/* Fill epd_framebuffer with a self-test image: a border, two diagonals, a
- * filled + an outline rectangle, a circle, and a line of digits. Use it for
- * first-flash bring-up — call this then epd_display(epd_framebuffer) to prove
- * the whole SPI/GPIO/driver path works before any BLE is involved. */
-void epd_gfx_test_pattern(void);
-
 #endif // _EPD_GFX_H_

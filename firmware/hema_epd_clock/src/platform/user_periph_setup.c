@@ -46,11 +46,6 @@
 #include "spi.h"
 #include "epd_ssd1680.h"
 #include "epd_gfx.h"
-#include "flash_writer.h"
-
-/* Draw a self-test image on the panel at boot (first-flash bring-up). Comment
- * this out once the display is proven, so normal boots skip the ~2s refresh. */
-#define EPD_BOOT_TEST_PATTERN
 
 /*
  * GLOBAL VARIABLE DEFINITIONS
@@ -90,12 +85,6 @@ void GPIO_reservations(void)
     RESERVE_GPIO(EPD_RST,  EPD_RST_PORT,  EPD_RST_PIN,  PID_GPIO);
     RESERVE_GPIO(EPD_BUSY, EPD_BUSY_PORT, EPD_BUSY_PIN, PID_GPIO);
     RESERVE_GPIO(EPD_PWR,  EPD_PWR_PORT,  EPD_PWR_PIN,  PID_GPIO);
-
-    /* Boot-flash chip select. Only the flasher build drives it, but the
-     * reservation is unconditional: the pin-allocation monitor faults on an
-     * unreserved pin with a __BKPT that looks exactly like a driver hang
-     * (see BUILD_AND_FLASH.md), and reserving an unused pin costs nothing. */
-    RESERVE_GPIO(FLASH_CS, GPIO_PORT_0, GPIO_PIN_3, PID_SPI_EN);
 }
 
 #endif
@@ -175,18 +164,6 @@ void periph_init(void)
     uart_initialize(UART2, &uart_cfg);
 #endif
 
-#if EPD_FLASH_WRITER
-    /* This build is the SPI flash programmer, not the clock. It must run
-     * AFTER the peripheral power domain is up - calling it at the top of
-     * periph_init() instead leaves the SPI block unpowered and spi_access()
-     * spins forever waiting for a transfer that can never complete (observed:
-     * PC parked in spi_access with LR in spi_transaction). It runs before
-     * set_pad_functions() so the EPD is never configured - the panel shares
-     * P0_5 with the flash's MISO - and it never returns, so the BLE stack is
-     * never started. See flash_writer.h. */
-    flash_writer_main();
-#endif
-
     // Set pad functionality
     set_pad_functions();
 
@@ -199,13 +176,4 @@ void periph_init(void)
     // commands arrive over the command GATT characteristic.
     spi_initialize(&epd_spi_cfg);
     epd_init(true);
-
-#if defined (EPD_BOOT_TEST_PATTERN)
-    // First-flash bring-up: draw a self-test image so you get something
-    // visible on the panel immediately, without needing BLE working yet.
-    // Remove the EPD_BOOT_TEST_PATTERN define (below) once the panel is
-    // proven, so boot doesn't spend ~2s doing a full refresh every time.
-    epd_gfx_test_pattern();
-    epd_display(epd_framebuffer);
-#endif
 }

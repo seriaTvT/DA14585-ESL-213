@@ -230,29 +230,3 @@ void epd_gfx_text(int16_t x, int16_t y, const char *text, uint8_t fore, uint8_t 
         cursor += (5 + 1) * scale; /* glyph width + 1px gap */
     }
 }
-
-void epd_gfx_test_pattern(void)
-{
-    const int16_t W = epd_gfx_width();
-    const int16_t H = epd_gfx_height();
-
-    epd_gfx_clear(1);                              /* white background */
-
-    /* 1px border around the whole panel */
-    epd_gfx_rect(0, 0, W - 1, H - 1, 0, 1, 0);
-
-    /* two diagonals corner-to-corner */
-    epd_gfx_line(0, 0, W - 1, H - 1, 0, 1);
-    epd_gfx_line(W - 1, 0, 0, H - 1, 0, 1);
-
-    /* a filled black rectangle and an outline rectangle */
-    epd_gfx_rect(8, 8, 40, 30, 0, 1, 1);           /* filled */
-    epd_gfx_rect(W - 41, 8, W - 9, 30, 0, 2, 0);   /* outline, 2px */
-
-    /* a circle in the middle */
-    epd_gfx_circle(W / 2, H / 2, 18, 0, 1, 0);
-
-    /* text: prove the font path. White-on-black strip near the bottom. */
-    epd_gfx_rect(6, H - 24, W - 6, H - 6, 0, 1, 1);
-    epd_gfx_text(12, H - 20, "0123456789", 1, 0, 1);
-}
