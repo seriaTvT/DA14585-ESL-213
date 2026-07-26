@@ -318,12 +318,16 @@ static bool     s_batch_pending;
 static char     s_line[CMD_LINE_MAX];
 static uint16_t s_line_len;
 
+/* Set when a client's drawing content lands, cleared once persisted. */
+static bool     s_dirty;
+
 void epd_cmd_reset(void)
 {
     s_script_len = 0;
     s_script_full = false;
     s_batch_pending = false;
     s_line_len = 0;
+    s_dirty = false;
 }
 
 void epd_cmd_begin_batch(void)
@@ -395,6 +399,7 @@ static void handle_line(const char *line, uint16_t len)
         s_script_len = 0;
         s_script_full = false;
     }
+    s_dirty = true;
 
     for (uint16_t i = 0; i < len; i++) {
         if (s_script_len < CMD_SCRIPT_MAX - 1) {
@@ -451,6 +456,33 @@ bool epd_cmd_script_truncated(void)
 uint16_t epd_cmd_script_len(void)
 {
     return s_script_len;
+}
+
+const char *epd_cmd_script(void)
+{
+    return s_script;
+}
+
+void epd_cmd_load_script(const char *buf, uint16_t len)
+{
+    if (len > CMD_SCRIPT_MAX - 1) {
+        return;
+    }
+    for (uint16_t i = 0; i < len; i++) {
+        s_script[i] = buf[i];
+    }
+    s_script_len = len;
+    s_script_full = false;
+    s_batch_pending = false;
+    s_line_len = 0;
+    s_dirty = false;        /* restored from flash - already persisted */
+}
+
+bool epd_cmd_take_dirty(void)
+{
+    bool d = s_dirty;
+    s_dirty = false;
+    return d;
 }
 
 void epd_cmd_run(void)

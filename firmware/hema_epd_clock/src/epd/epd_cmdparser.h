@@ -71,4 +71,17 @@ bool epd_cmd_script_truncated(void);
 /** Bytes currently stored (0 = nothing to render). */
 uint16_t epd_cmd_script_len(void);
 
+/** The stored script itself, for persisting it. Not NUL-terminated; use
+ *  epd_cmd_script_len(). Valid until the next feed. */
+const char *epd_cmd_script(void);
+
+/** Replace the stored script wholesale, e.g. with one restored from flash.
+ *  Does not mark the script dirty - it is already persisted. */
+void epd_cmd_load_script(const char *buf, uint16_t len);
+
+/** True once if a client changed the script since the last call, i.e. there is
+ *  something new worth writing to flash. Self-clearing, so a caller that acts
+ *  on it will not write the same template twice. */
+bool epd_cmd_take_dirty(void);
+
 #endif // _EPD_CMDPARSER_H_

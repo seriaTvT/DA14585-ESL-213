@@ -85,6 +85,12 @@ void GPIO_reservations(void)
     RESERVE_GPIO(EPD_RST,  EPD_RST_PORT,  EPD_RST_PIN,  PID_GPIO);
     RESERVE_GPIO(EPD_BUSY, EPD_BUSY_PORT, EPD_BUSY_PIN, PID_GPIO);
     RESERVE_GPIO(EPD_PWR,  EPD_PWR_PORT,  EPD_PWR_PIN,  PID_GPIO);
+
+    /* Boot-flash chip select, driven by epd_store.c when it borrows the bus to
+     * persist the template. Every pin passed to GPIO_ConfigurePin() has to be
+     * reserved or the SDK's allocation monitor hits __BKPT(0), which looks
+     * exactly like a driver hang. */
+    RESERVE_GPIO(FLASH_CS, GPIO_PORT_0, GPIO_PIN_3, PID_SPI_EN);
 }
 
 #endif
@@ -116,18 +122,6 @@ void set_pad_functions(void)
 }
 
 // Configuration struct for the SPI master driving the EPD panel.
-// Speed/clock-mode are conservative defaults (SSD1680 supports up to
-// 20MHz SCLK, mode 0); tune once real hardware is in the loop.
-static const spi_cfg_t epd_spi_cfg = {
-    .spi_ms = SPI_MS_MODE_MASTER,
-    .spi_cp = SPI_CP_MODE_0,
-    .spi_speed = SPI_SPEED_MODE_8MHz,
-    .spi_wsz = SPI_MODE_8BIT,
-    .spi_cs = SPI_CS_0,
-    .spi_irq = SPI_IRQ_DISABLED,
-    .cs_pad = { .port = SPI_EN_PORT, .pin = SPI_EN_PIN },
-};
-
 #if defined (CFG_PRINTF_UART2)
 // Configuration struct for UART2
 static const uart_cfg_t uart_cfg = {
@@ -174,6 +168,6 @@ void periph_init(void)
     // NOTE: harmless to call before pairing/advertising is set up - the
     // panel just sits initialized-but-blank until the first CLEAR()/draw
     // commands arrive over the command GATT characteristic.
-    spi_initialize(&epd_spi_cfg);
+    epd_spi_claim();
     epd_init(true);
 }

@@ -70,8 +70,8 @@ cfg_dir = f'{PROJ}/src/config'
 for f in sorted(os.listdir(cfg_dir)):
     new += link(f'user_config/{f}', f'{U1}/src/config/{f}')
 
-new += link('user_platform/user_periph_setup.c',
-            f'{U1}/src/platform/user_periph_setup.c')
+for f in ('user_periph_setup.c', 'epd_store.c', 'epd_store.h'):
+    new += link(f'user_platform/{f}', f'{U1}/src/platform/{f}')
 
 for f in ('user_custs1_def.c', 'user_custs1_def.h',
           'user_custs_config.c', 'user_custs_config.h'):
@@ -110,7 +110,7 @@ inc_anchor = ('<listOptionValue builtIn="false" '
               'value="&quot;${ProjDirPath}/../src/config&quot;"/>')
 assert inc_anchor in cp, 'include anchor not found'
 inc_add = inc_anchor
-for d in ('src/epd', 'src/custom_profile'):
+for d in ('src/epd', 'src/custom_profile', 'src/platform'):
     inc_add += ('\n\t\t\t\t\t\t\t\t\t<listOptionValue builtIn="false" '
                 f'value="&quot;${{ProjDirPath}}/../{d}&quot;"/>')
 cp = cp.replace(inc_anchor, inc_add)
@@ -126,6 +126,7 @@ objs = [r'.\user_app\user_empty_peripheral_template.o',
         r'.\user_epd\epd_gfx.o',
         r'.\user_epd\epd_cmdparser.o',
         r'.\user_epd\epd_time.o',
+        r'.\user_platform\epd_store.o',
         r'.\sdk_app\app_customs.o',
         r'.\sdk_app\app_customs_common.o',
         r'.\sdk_app\app_customs_task.o',

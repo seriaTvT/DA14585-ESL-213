@@ -18,6 +18,11 @@
 #include "epd_ssd1680.h"
 #include "app_easy_timer.h"
 #include "epd_time.h"
+#include "epd_store.h"
+
+/* Scratch for a template restored from flash. Matches the parser's script
+ * buffer; static because it is far too big for this callback's stack. */
+#define EPD_RESTORE_MAX   1024
 
 /* --- deferred panel refresh ------------------------------------------------
  * A full refresh takes ~2 s, and a client sends a batch of drawing commands
@@ -47,6 +52,15 @@ static void epd_flush_cb(void)
 {
     s_flush_timer = EASY_TIMER_INVALID_TIMER;
     epd_render_now();
+
+    /* Persist after rendering, not before: a template that wedges the parser
+     * should not be the one we restore on the next boot. Borrowing the SPI bus
+     * is safe here - the refresh above has finished with the panel, and this
+     * callback already blocks for ~2 s so a few ms of flash writing changes
+     * nothing. */
+    if (epd_cmd_take_dirty()) {
+        epd_store_save(epd_cmd_script(), epd_cmd_script_len());
+    }
 }
 
 /* Called once per second by the time base. A full refresh takes ~2 s, so we
@@ -92,7 +106,18 @@ void user_on_set_dev_config_complete(void)
      * before advertising is up, which is the same cost the old boot test
      * pattern had - only now it puts a clock on the panel instead of a grid. */
     if (epd_cmd_script_len() == 0) {
-        epd_cmd_load_default();
+        static char restored[EPD_RESTORE_MAX];
+        uint16_t restored_len = 0;
+
+        /* Prefer a template a client saved earlier; the built-in face is only
+         * the fallback for a tag that has never been configured (or whose
+         * stored copy failed its CRC). */
+        if (epd_store_load(restored, sizeof(restored), &restored_len)
+                == EPD_STORE_OK) {
+            epd_cmd_load_script(restored, restored_len);
+        } else {
+            epd_cmd_load_default();
+        }
     }
     epd_time_init(epd_on_second);
     epd_render_now();

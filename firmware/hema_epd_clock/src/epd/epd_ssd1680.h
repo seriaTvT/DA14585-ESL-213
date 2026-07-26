@@ -115,6 +115,12 @@
 /** Configure DC/RST/BUSY GPIOs. Call once from set_pad_functions(). */
 void epd_gpio_init(void);
 
+/** Take the SPI bus back for the panel: restore D/C as a GPIO output and
+ *  re-init the SPI master with the panel's settings. Call after anything else
+ *  has driven the bus - the boot flash shares CLK/MOSI and claims P0_5, which
+ *  is the panel's D/C line. */
+void epd_spi_claim(void);
+
 /** Bring the panel out of reset and run the SSD1680 init sequence.
  *  full_lut: true = full-refresh waveform, false = partial-refresh waveform
  *  (mirrors the two 30-byte LUT tables found in the reference firmware). */

@@ -43,6 +43,10 @@ IMG_SIG = b'\x70\x51'
 PROD_SIG = b'\x70\x52'
 VALID = 0xAA
 
+# Must match EPD_STORE_ADDR / EPD_STORE_SECTOR in src/platform/epd_store.c.
+STORE_ADDR = 0x03F000
+STORE_SECTOR = 4096
+
 
 def find_product_header(flash: bytes) -> tuple:
     """Locate the product header and return (offset, bank1, bank2).
@@ -100,6 +104,14 @@ def main() -> int:
 
     hdr = build_header(bytes(flash[target:target + HDR_LEN]), payload, imageid)
     flash[target:limit] = (hdr + payload).ljust(limit - target, b'\xFF')
+
+    # Blank the sector epd_store.c persists the display template into, so a
+    # freshly flashed tag starts with no stored face and comes up on the
+    # built-in one. Carrying the stock firmware's bytes here would leave a
+    # record that fails its magic/CRC check anyway - blanking just makes the
+    # "nothing saved yet" case explicit rather than an error path.
+    flash[STORE_ADDR:STORE_ADDR + STORE_SECTOR] = b'\xFF' * STORE_SECTOR
+    print(f"store sector @ 0x{STORE_ADDR:06x}: blanked ({STORE_SECTOR} bytes)")
 
     open(sys.argv[3], 'wb').write(flash)
     print(f"bank {bank} @ 0x{target:06x}: {len(payload)} bytes, "

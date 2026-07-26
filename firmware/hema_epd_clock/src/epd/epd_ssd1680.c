@@ -153,6 +153,29 @@ static const uint8_t epd_lut_partial[76] = {
 
 /* ---- public API ----------------------------------------------------------- */
 
+/* The panel does not own the SPI bus outright: the boot flash hangs off the
+ * same CLK (P0_0) and MOSI (P0_6), and worse, P0_5 is the panel's D/C but the
+ * flash's MISO. Whoever used the bus last must therefore hand it back before
+ * the other can use it - see epd_store.c, which calls this on release. */
+static const spi_cfg_t epd_spi_cfg = {
+    .spi_ms    = SPI_MS_MODE_MASTER,
+    .spi_cp    = SPI_CP_MODE_0,
+    .spi_speed = SPI_SPEED_MODE_8MHz,
+    .spi_wsz   = SPI_MODE_8BIT,
+    .spi_cs    = SPI_CS_0,
+    .spi_irq   = SPI_IRQ_DISABLED,
+    /* Same pad as SPI_EN_PORT/PIN in user_periph_setup.h, named here in the
+     * panel driver's own terms - CS is driven manually by epd_cs_low/high. */
+    .cs_pad    = { .port = EPD_CS_PORT, .pin = EPD_CS_PIN },
+};
+
+void epd_spi_claim(void)
+{
+    /* D/C back to a plain output - the flash driver leaves it as SPI_DI. */
+    GPIO_ConfigurePin(EPD_DC_PORT, EPD_DC_PIN, OUTPUT, PID_GPIO, false);
+    spi_initialize(&epd_spi_cfg);
+}
+
 void epd_gpio_init(void)
 {
     /* CS as GPIO output, idle high (inactive). Must be PID_GPIO so the
