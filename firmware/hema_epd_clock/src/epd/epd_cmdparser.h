@@ -55,6 +55,12 @@ void epd_cmd_run(void);
  *  someone re-sent a template. Call this on connect. */
 void epd_cmd_begin_batch(void);
 
+/** Load the built-in clock face into the script buffer, replacing whatever is
+ *  there. Call at boot so a tag with no host shows a clock (reading 00:00 until
+ *  a TIME() sync) instead of a blank panel; a client's own template overwrites
+ *  it on the next batch. */
+void epd_cmd_load_default(void);
+
 /** Drop the stored script immediately, blanking the clock face at the next
  *  render. Not part of the connect/disconnect path - see epd_cmd_begin_batch(). */
 void epd_cmd_reset(void);

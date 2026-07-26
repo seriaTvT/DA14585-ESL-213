@@ -84,6 +84,14 @@ i.e.
 
 /**
  ****************************************************************************************
+ * @brief Device configuration complete. Starts the clock and paints the
+ *        built-in face, so the tag is useful with no host present.
+ ****************************************************************************************
+*/
+void user_on_set_dev_config_complete(void);
+
+/**
+ ****************************************************************************************
  * @brief Connection function.
  * @param[in] conidx        Connection Id index
  * @param[in] param         Pointer to GAPC_CONNECTION_REQ_IND message

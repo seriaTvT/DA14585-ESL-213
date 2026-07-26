@@ -345,6 +345,42 @@ void epd_cmd_begin_batch(void)
     s_batch_pending = true;
 }
 
+/* Built-in clock face, used when nothing has been pushed over BLE.
+ *
+ * Written in the DSL rather than drawn in C on purpose: it then goes through
+ * exactly the same parse/expand/render path as a client's template, so the
+ * default face and a pushed one cannot drift apart, and a client replaces it
+ * simply by sending its own (epd_cmd_begin_batch() clears on the first write).
+ *
+ * Landscape, so the geometry below is against a 250x122 logical panel. Text
+ * width for n glyphs is scale*(6n-1) - 5px glyph, 1px gap, no gap after the
+ * last - which is where the x offsets come from: (250 - width) / 2.
+ *
+ * Unset, the clock reads 00:00 on 2000-01-01 (the epoch), matching the stock
+ * firmware's cold-boot behaviour; a host re-syncs with TIME() on connect. */
+static const char DEFAULT_FACE[] =
+    "ROTATE(3)\n"
+    "CLEAR(1)\n"
+    "FONT(52,25,0,0,0,1,5,'{H:02d}:{N:02d}')\n"   /* 5 glyphs @5 -> 145 wide */
+    "FONT(66,72,0,0,0,1,2,'{y}-{m:02d}-{d:02d}')\n"  /* 10 @2 -> 118 */
+    "FONT(108,94,0,0,0,1,2,'{W}')\n";             /* 3 @2 -> 34 */
+
+void epd_cmd_load_default(void)
+{
+    uint16_t n = (uint16_t)(sizeof(DEFAULT_FACE) - 1);   /* drop the NUL */
+
+    if (n > CMD_SCRIPT_MAX - 1) {
+        return;                      /* cannot happen; keeps the copy honest */
+    }
+    for (uint16_t i = 0; i < n; i++) {
+        s_script[i] = DEFAULT_FACE[i];
+    }
+    s_script_len = n;
+    s_script_full = false;
+    s_batch_pending = false;
+    s_first_run = true;
+}
+
 void epd_cmd_feed(const uint8_t *buf, uint16_t len)
 {
     if (s_batch_pending) {

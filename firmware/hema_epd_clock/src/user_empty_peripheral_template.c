@@ -78,6 +78,26 @@ static void epd_schedule_flush(void)
     s_flush_timer = app_easy_timer(EPD_FLUSH_DELAY, epd_flush_cb);
 }
 
+void user_on_set_dev_config_complete(void)
+{
+    default_app_on_set_dev_config_complete();
+
+    /* Boot-time face. This hook, not an app-init one: a timer armed during app
+     * init never fires (see user_on_connection), whereas by the time the stack
+     * has finished GAPM_SET_DEV_CONFIG the kernel timers work. It is also the
+     * earliest point where a tag with no host in range can be made useful.
+     *
+     * Only seed when nothing is stored, so this stays a *default*: it must not
+     * clobber a face a client pushed. Rendering here costs a ~2 s full refresh
+     * before advertising is up, which is the same cost the old boot test
+     * pattern had - only now it puts a clock on the panel instead of a grid. */
+    if (epd_cmd_script_len() == 0) {
+        epd_cmd_load_default();
+    }
+    epd_time_init(epd_on_second);
+    epd_render_now();
+}
+
 void user_on_connection(uint8_t connection_idx, struct gapc_connection_req_ind const *param)
 {
     /* Arm - don't perform - a script replace. A client is expected to send its
