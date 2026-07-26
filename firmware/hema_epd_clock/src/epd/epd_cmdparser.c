@@ -50,6 +50,13 @@ static const char *const WDAY_NAME[7] = {
     "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"
 };
 
+/* Three letters, to match WDAY_NAME and the 5x7 font's uppercase-only glyph
+ * table. A face that wants "JULY" can spell it out itself. */
+static const char *const MONTH_NAME[12] = {
+    "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"
+};
+
 /* Expand {..} references in `in` into `out`. Unknown names are copied through
  * verbatim (braces included) so a typo is visible on the panel rather than
  * silently vanishing. */
@@ -105,12 +112,22 @@ static void expand_vars(const char *in, char *out, uint16_t out_size)
         else if (name[0]=='S' && !name[1]) num = tm.sec;
         else if (name[0]=='w' && !name[1]) num = tm.wday;
         else if (name[0]=='u' && !name[1]) num = epd_time_now();
+        else if (name[0]=='j' && !name[1]) num = tm.yday;
+        else if (name[0]=='L' && !name[1]) num = tm.mdays;
+        else if (name[0]=='V' && !name[1]) num = tm.week;
+        else if (name[0]=='G' && !name[1]) num = tm.wyear;
+        /* 12-hour clock: midnight and noon are 12, not 0. */
+        else if (name[0]=='h' && !name[1]) num = (tm.hour % 12) ? (tm.hour % 12) : 12;
         else                                is_num = false;
 
         if (is_num) {
             append_uint(out, out_size, &n, num, width, zero_pad);
         } else if (name[0]=='W' && !name[1]) {
             append_str(out, out_size, &n, WDAY_NAME[tm.wday % 7]);
+        } else if (name[0]=='M' && !name[1]) {
+            append_str(out, out_size, &n, MONTH_NAME[(tm.month - 1) % 12]);
+        } else if (name[0]=='P' && !name[1]) {
+            append_str(out, out_size, &n, tm.hour < 12 ? "AM" : "PM");
         } else if (name[0]=='V' && name[1]=='E' && name[2]=='R' && !name[3]) {
             append_str(out, out_size, &n, "HEMA1");
         } else {

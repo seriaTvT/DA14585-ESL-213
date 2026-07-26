@@ -10,7 +10,8 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -252,3 +253,128 @@ function popcount(b) {
   for (let i = 0; i < 8; i++) if (b & (1 << i)) n++;
   return n;
 }
+
+/* ------------------------------------------------------------------ */
+/* Calendar variables                                                  */
+/* ------------------------------------------------------------------ */
+
+/** Tag-seconds for a UTC midnight, as the tag would hold it. */
+const at = (y, m, d, hh = 0, mm = 0) =>
+  Math.floor(Date.UTC(y, m - 1, d, hh, mm) / 1000) - 946684800;
+
+test('ISO week numbering matches the C implementation and GNU date', () => {
+  /* Every one of these is a case a naive (yday / 7) would get wrong: weeks
+   * belonging to the neighbouring year, 53-week years, and leap days.
+   * Expected values are `date -d <day> +%V/%G/%j`. */
+  const cases = [
+    ['2026-01-01', 1, 2026, 1],    // Thu - week 1 starts on new year's day
+    ['2026-12-31', 53, 2026, 365], // 2026 is a 53-week year
+    ['2027-01-01', 53, 2026, 1],   // Fri - still last year's week
+    ['2021-01-01', 53, 2020, 1],
+    ['2020-12-31', 53, 2020, 366], // leap year, 366 days
+    ['2019-12-30', 1, 2020, 364],  // Mon - already next year's week 1
+    ['2024-02-29', 9, 2024, 60],   // leap day
+    ['2026-07-26', 30, 2026, 207],
+    ['2000-01-01', 52, 1999, 1],   // the tag's own epoch
+    ['2026-12-28', 53, 2026, 362],
+  ];
+
+  for (const [iso, week, wyear, yday] of cases) {
+    const [y, m, d] = iso.split('-').map(Number);
+    const tm = tagTime(at(y, m, d));
+    assert.equal(tm.week, week, `${iso} week`);
+    assert.equal(tm.wyear, wyear, `${iso} week-year`);
+    assert.equal(tm.yday, yday, `${iso} day-of-year`);
+  }
+});
+
+test('days in month tracks leap years', () => {
+  assert.equal(tagTime(at(2024, 2, 1)).mdays, 29);
+  assert.equal(tagTime(at(2026, 2, 1)).mdays, 28);
+  assert.equal(tagTime(at(2000, 2, 1)).mdays, 29);  // divisible by 400
+  assert.equal(tagTime(at(2100, 2, 1)).mdays, 28);  // divisible by 100, not 400
+  for (const [m, n] of [[1, 31], [4, 30], [7, 31], [9, 30], [12, 31]]) {
+    assert.equal(tagTime(at(2026, m, 1)).mdays, n, `month ${m}`);
+  }
+});
+
+test('the 12-hour clock never shows hour zero', () => {
+  /* The bug this guards is {h} rendering midnight as 0 and noon as 0. */
+  const h = (hh) => expandVars('{h}{P}', at(2026, 7, 26, hh));
+  assert.equal(h(0), '12AM');
+  assert.equal(h(1), '1AM');
+  assert.equal(h(11), '11AM');
+  assert.equal(h(12), '12PM');
+  assert.equal(h(13), '1PM');
+  assert.equal(h(23), '11PM');
+});
+
+test('month names match the firmware table', () => {
+  /* Same guard as the weekday table: the preview must not invent names the
+   * panel will not show. */
+  const c = readFileSync(PARSER_C, 'utf8');
+  const table = /MONTH_NAME\[12\] = \{([^}]*)\}/.exec(c);
+  assert.ok(table, 'MONTH_NAME not found in epd_cmdparser.c');
+  const names = [...table[1].matchAll(/"(\w+)"/g)].map((m) => m[1]);
+  assert.equal(names.length, 12);
+
+  for (let m = 1; m <= 12; m++) {
+    assert.equal(expandVars('{M}', at(2026, m, 1)), names[m - 1]);
+  }
+});
+
+test('the new variables pad like the old ones', () => {
+  assert.equal(expandVars('{j:03d}', at(2026, 1, 5)), '005');
+  assert.equal(expandVars('{V:02d}', at(2026, 1, 1)), '01');
+  assert.equal(expandVars('{h:2d}', at(2026, 7, 26, 9)), ' 9');
+  /* {V} must not swallow {VER}: the name is matched whole, not by prefix. */
+  assert.equal(expandVars('{VER}', at(2026, 7, 26)), 'HEMA1');
+});
+
+/* ------------------------------------------------------------------ */
+/* Cross-language parity against the real firmware                     */
+/*                                                                     */
+/* Every other test in this file checks the JS port against a *reading* */
+/* of the C. This one checks it against the C itself, compiled and run. */
+/* Needs firmware/hema_epd_clock/test/render to be built:              */
+/*     make -C firmware/hema_epd_clock/test render                     */
+/* Skipped rather than failed when it is absent, so the suite still     */
+/* runs on a machine with no compiler.                                  */
+/* ------------------------------------------------------------------ */
+
+const RENDER = join(HERE, '../firmware/hema_epd_clock/test/render');
+
+test('the JS renderer is byte-identical to the firmware C', { skip:
+      existsSync(RENDER) ? false : 'run: make -C firmware/hema_epd_clock/test render'
+    }, () => {
+  /* Every preset, plus scripts aimed at the places the two could drift:
+   * clipping, odd rotations, the new calendar variables, quoting. */
+  const scripts = [
+    ...Object.values(PRESETS),
+    "ROTATE(1)\nCLEAR(0)\nFONT(2,2,0,0,1,0,1,'{W} {M} {j} {V} {G} {L}')\n",
+    "ROTATE(2)\nCLEAR(1)\nCIRCLE(60,60,40,0,2,0)\nRECT(5,5,50,30,0,1,1)\n",
+    "ROTATE(3)\nCLEAR(1)\nLINE(-20,-20,300,200,0,3)\nPOINT(249,121,0,1)\n",
+    "ROTATE(3)\nCLEAR(1)\nFONT(0,0,0,0,0,1,4,'{h}{P} A,B')\n",
+    /* Off-panel and degenerate input: both sides must clip, not wrap. */
+    "ROTATE(3)\nCLEAR(1)\nRECT(240,110,400,400,0,1,1)\nFONT(230,0,0,0,0,1,3,'XYZ')\n",
+  ];
+
+  /* A date where {V}/{G} disagree with {y}, so a parity bug in the new
+   * variables cannot hide behind an ordinary day. */
+  const secs = Math.floor(Date.UTC(2027, 0, 1, 9, 5, 0) / 1000) - 946684800;
+
+  for (const script of scripts) {
+    const c = execFileSync(RENDER, [String(secs)], {
+      input: script, maxBuffer: 1 << 20,
+    });
+
+    const p = new Panel();
+    p.clear(1);
+    runScript(p, script, secs);
+
+    assert.equal(c.length, p.fb.length);
+    const at = c.findIndex((b, i) => b !== p.fb[i]);
+    assert.equal(at, -1, at < 0 ? '' :
+      `first difference at byte ${at} (native row ${(at / 16) | 0}) for:\n${script}`);
+  }
+});

@@ -89,3 +89,7 @@ firmware/hema_epd_clock/BUILD_AND_FLASH.md
 firmware/hema_epd_clock/GPIO_TRACING_GUIDE.md
 firmware/hema_epd_clock/README.md
 docs/
+
+# Host test binaries
+firmware/hema_epd_clock/test/test_time
+firmware/hema_epd_clock/test/render

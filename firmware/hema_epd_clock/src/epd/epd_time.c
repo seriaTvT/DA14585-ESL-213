@@ -80,6 +80,50 @@ static void civil_from_days(int32_t z, uint16_t *y, uint8_t *m, uint8_t *d)
     *d = (uint8_t)dd;
 }
 
+static bool is_leap(uint16_t y)
+{
+    return (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+}
+
+/* Days before the 1st of each month in a common year. */
+static const uint16_t MDAYS_BEFORE[12] =
+    { 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334 };
+static const uint8_t  MDAYS[12] =
+    { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+
+/* Weekday of 31 December, as 0 = Sunday. A year has 53 ISO weeks exactly when
+ * it starts on a Thursday, or is a leap year starting on a Wednesday - which
+ * is what this expresses via the last day rather than the first. */
+static uint8_t weeks_in_year(uint16_t y)
+{
+    uint32_t p = (y + y / 4 - y / 100 + y / 400) % 7;
+    uint32_t q = (y - 1);
+    q = (q + q / 4 - q / 100 + q / 400) % 7;
+    return (p == 4 || q == 3) ? 53 : 52;
+}
+
+/* ISO 8601 week numbering. Weeks start on Monday and belong to whichever year
+ * holds their Thursday, so the first days of January can fall in week 52/53 of
+ * the *previous* year - hence the separate wyear, which is what makes a
+ * "{V} {G}" pair correct across a new year rather than merely usually right. */
+static void iso_week(epd_tm_t *tm)
+{
+    /* ISO counts Monday as 1 and Sunday as 7; epd_tm_t counts Sunday as 0. */
+    uint8_t iso_wday = (tm->wday == 0) ? 7 : tm->wday;
+    int32_t week = ((int32_t)tm->yday - iso_wday + 10) / 7;
+
+    if (week < 1) {
+        tm->wyear = tm->year - 1;
+        tm->week  = weeks_in_year(tm->wyear);
+    } else if (week > weeks_in_year(tm->year)) {
+        tm->wyear = tm->year + 1;
+        tm->week  = 1;
+    } else {
+        tm->wyear = tm->year;
+        tm->week  = (uint8_t)week;
+    }
+}
+
 void epd_time_get(epd_tm_t *tm)
 {
     uint32_t secs = s_secs;
@@ -95,4 +139,11 @@ void epd_time_get(epd_tm_t *tm)
 
     /* 1970-01-01 was a Thursday; 0 = Sunday. */
     tm->wday = (uint8_t)((days1970 + 4) % 7);
+
+    bool leap = is_leap(tm->year);
+    tm->yday  = (uint16_t)(MDAYS_BEFORE[tm->month - 1] + tm->day
+                           + ((leap && tm->month > 2) ? 1 : 0));
+    tm->mdays = (uint8_t)(MDAYS[tm->month - 1]
+                          + ((leap && tm->month == 2) ? 1 : 0));
+    iso_week(tm);
 }

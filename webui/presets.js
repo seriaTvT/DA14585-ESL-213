@@ -50,6 +50,19 @@ export const PRESETS = {
     `FONT(${centre(8, 4)},30,0,0,0,1,4,'{H:02d}:{N:02d}:{S:02d}')\n` +
     `FONT(${centre(10, 2)},80,0,0,0,1,2,'{y}-{m:02d}-{d:02d}')\n`,
 
+  /* Shows off the calendar variables. Widths are fixed rather than centred:
+   * {M} and {W} are always three glyphs, and {j}/{V} are padded, so the line
+   * does not reflow as the date changes - a face that shifts sideways on the
+   * 1st of the month looks broken even though it is not. */
+  'Calendar':
+    'ROTATE(3)\n' +
+    'CLEAR(1)\n' +
+    "FONT(10,8,0,0,0,1,2,'{W} {d:02d} {M} {y}')\n" +
+    'LINE(10,30,240,30,0,1)\n' +
+    `FONT(${centre(5, 6)},44,0,0,0,1,6,'{H:02d}:{N:02d}')\n` +
+    "FONT(10,102,0,0,0,1,1,'WEEK {V:02d} OF {G}')\n" +
+    "FONT(160,102,0,0,0,1,1,'DAY {j} / {L}')\n",
+
   /* Portrait, so the frame is 122x250 and the centring above does not apply. */
   'Portrait':
     'ROTATE(0)\n' +

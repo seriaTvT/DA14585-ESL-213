@@ -27,6 +27,14 @@ typedef struct {
     uint8_t  min;    /* 0-59                        */
     uint8_t  sec;    /* 0-59                        */
     uint8_t  wday;   /* 0 = Sunday .. 6 = Saturday  */
+
+    /* Calendar fields, derived from the above. Filled in by epd_time_get()
+     * rather than computed at the point of use: they cost a few dozen cycles
+     * once per repaint, and a face may reference several of them. */
+    uint16_t yday;   /* day of year, 1-366          */
+    uint8_t  mdays;  /* days in this month, 28-31   */
+    uint8_t  week;   /* ISO 8601 week number, 1-53  */
+    uint16_t wyear;  /* ISO week-numbering year     */
 } epd_tm_t;
 
 /** Called once per second from the tick timer, after the counter advances.

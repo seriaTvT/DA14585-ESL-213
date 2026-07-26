@@ -311,9 +311,16 @@
                 <i>Push</i>, so repeat pushes replace rather than stack.</td></tr>
       </table>
       <table style="margin-top:14px">
-        <tr><td>{H} {N} {S}</td><td>hour, minute, second</td></tr>
+        <tr><td>{H} {N} {S}</td><td>hour (0–23), minute, second</td></tr>
+        <tr><td>{h} {P}</td><td>hour on a 12-hour clock (1–12), and AM/PM</td></tr>
         <tr><td>{y} {m} {d}</td><td>year, month, day</td></tr>
+        <tr><td>{M}</td><td>month name (JAN…DEC)</td></tr>
         <tr><td>{w} {W}</td><td>weekday number, weekday name (SUN…SAT)</td></tr>
+        <tr><td>{j}</td><td>day of the year, 1–366</td></tr>
+        <tr><td>{L}</td><td>days in this month, 28–31</td></tr>
+        <tr><td>{V} {G}</td><td>ISO 8601 week number and its week-year. Early
+                January can belong to week 52/53 of the <i>previous</i> year,
+                which is why the year is separate from {y}.</td></tr>
         <tr><td>{u}</td><td>raw seconds since the 2000 epoch</td></tr>
         <tr><td>{VER}</td><td>firmware tag — <code>HEMA1</code></td></tr>
         <tr><td>{H:02d}</td><td>width/zero-pad suffix, printf-style</td></tr>

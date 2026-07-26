@@ -77,6 +77,8 @@ const FONT = {
 };
 
 const WDAY_NAME = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+const MONTH_NAME = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
+                    'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
 
 /* The firmware's clock counts seconds from 2000-01-01; Date works in Unix
  * seconds. The tag has no notion of a timezone, so local wall-clock time is
@@ -89,13 +91,49 @@ export function tagSecondsNow(now = new Date()) {
          - EPOCH_2000;
 }
 
+const isLeap = (y) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+const MDAYS_BEFORE = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334];
+const MDAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+/* Ports weeks_in_year() from epd_time.c - 53 ISO weeks iff the year ends on a
+ * Thursday, or the previous one did on a Wednesday. */
+function weeksInYear(y) {
+  const p = (y + ((y / 4) | 0) - ((y / 100) | 0) + ((y / 400) | 0)) % 7;
+  const q = y - 1;
+  const r = (q + ((q / 4) | 0) - ((q / 100) | 0) + ((q / 400) | 0)) % 7;
+  return (p === 4 || r === 3) ? 53 : 52;
+}
+
 /** Break tag-seconds into the fields the {} variables expose. */
 export function tagTime(secs) {
   const d = new Date((secs + EPOCH_2000) * 1000);
+  const year = d.getUTCFullYear();
+  const month = d.getUTCMonth() + 1;
+  const day = d.getUTCDate();
+  const wday = d.getUTCDay();
+  const leap = isLeap(year);
+
+  const yday = MDAYS_BEFORE[month - 1] + day + (leap && month > 2 ? 1 : 0);
+  const mdays = MDAYS[month - 1] + (leap && month === 2 ? 1 : 0);
+
+  /* ISO 8601: weeks run Monday-Sunday and belong to the year holding their
+   * Thursday, so early January can land in the previous year's week 52/53 -
+   * which is why wyear exists separately. Mirrors iso_week() in epd_time.c. */
+  const isoWday = wday === 0 ? 7 : wday;
+  let week = Math.floor((yday - isoWday + 10) / 7);
+  let wyear = year;
+  if (week < 1) {
+    wyear = year - 1;
+    week = weeksInYear(wyear);
+  } else if (week > weeksInYear(year)) {
+    wyear = year + 1;
+    week = 1;
+  }
+
   return {
-    year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate(),
+    year, month, day, wday, yday, mdays, week, wyear,
     hour: d.getUTCHours(), min: d.getUTCMinutes(), sec: d.getUTCSeconds(),
-    wday: d.getUTCDay(), u: secs,
+    u: secs,
   };
 }
 
@@ -243,12 +281,19 @@ export function expandVars(input, secs) {
     const nums = {
       y: tm.year, m: tm.month, d: tm.day, H: tm.hour,
       N: tm.min, S: tm.sec, w: tm.wday, u: tm.u,
+      j: tm.yday, L: tm.mdays, V: tm.week, G: tm.wyear,
+      /* 12-hour clock: midnight and noon are 12, not 0. */
+      h: (tm.hour % 12) || 12,
     };
 
     if (name in nums) {
       out += String(nums[name]).padStart(width, zero ? '0' : ' ');
     } else if (name === 'W') {
       out += WDAY_NAME[tm.wday % 7];
+    } else if (name === 'M') {
+      out += MONTH_NAME[(tm.month - 1) % 12];
+    } else if (name === 'P') {
+      out += tm.hour < 12 ? 'AM' : 'PM';
     } else if (name === 'VER') {
       out += 'HEMA1';
     } else {

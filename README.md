@@ -47,6 +47,32 @@ same rotation transform, same 5×7 glyph table — so what it draws is what the
 panel will show. `node --test webui/test.mjs` guards that parity, including a
 byte-for-byte diff of the built-in face against `DEFAULT_FACE[]` in the C source.
 
+## Tests
+
+```sh
+node --test webui/test.mjs              # the web UI and the JS renderer
+make -C firmware/hema_epd_clock/test    # the pure firmware modules, on the host
+```
+
+The firmware tests compile `epd_time.c` natively against small stubs — no SDK,
+no cross toolchain, no tag. They exist mainly for the calendar arithmetic: ISO
+8601 week numbering is wrong only around new year, in years that a plausible
+implementation gets right by accident, so it is pinned to GNU `date`'s
+`%V/%G/%j` for a set of deliberately awkward dates.
+
+The same directory builds `render`, which runs a script through the real
+`epd_cmdparser.c` and `epd_gfx.c` and writes the framebuffer to stdout. Build it
+and `node --test` gains a test that diffs the JS renderer against the actual C
+rather than against a reading of it:
+
+```sh
+make -C firmware/hema_epd_clock/test render
+```
+
+It is also the tie-breaker when the panel disagrees with the preview: firmware,
+JS port and SWD test rig are three suspects, and comparing any two cannot say
+which is wrong.
+
 ### Images
 
 The **Image** tab takes an arbitrary picture — dropped, picked or pasted — and
