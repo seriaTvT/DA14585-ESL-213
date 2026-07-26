@@ -73,6 +73,18 @@ static uint16_t     s_poll_count;
 static bool         s_refreshing;
 static epd_queued_t s_queued;
 
+/* True while the panel is showing an uploaded image rather than the rendered
+ * template. The two cannot coexist: they share one framebuffer, and the script
+ * is replayed on every minute tick, so without this an image would be painted
+ * over within the minute. Ownership changes only on a write from the host -
+ * a completed image upload takes the panel, any command byte hands it back -
+ * which keeps the rule short enough to state: whoever wrote last, wins.
+ *
+ * Not persisted. After a power cycle the tag comes back as a clock, because
+ * the template is what survives in flash (see epd_store.h) and 4000 bytes of
+ * image do not fit in its sector. */
+static bool         s_image_mode;
+
 static void epd_poll_cb(void);
 
 /* Start a refresh of whatever is in the framebuffer, or queue one if the panel
@@ -155,6 +167,15 @@ static void epd_on_second(void)
         return;
     }
     last_min = tm.min;
+
+    /* An uploaded image is not a clock face and has no template behind it, so
+     * there is nothing to re-render: running the script here would regenerate
+     * the framebuffer and paint the picture away. Before this check an image
+     * lasted only until the next minute boundary, which made the whole image
+     * path close to useless - the upload worked, then silently reverted. */
+    if (s_image_mode) {
+        return;
+    }
 
     /* Don't fight an in-flight batch: if commands are still arriving the
      * flush timer is armed and will repaint shortly anyway. */
@@ -248,6 +269,13 @@ void user_on_disconnect( struct gapc_disconnect_ind const *param )
 
 static void handle_cmd_write(struct custs1_val_write_ind const *msg)
 {
+    /* Any command byte hands the panel back to the template - including a bare
+     * TIME(), which is not much of a drawing command but does imply the host
+     * wants a clock again. The flush below repaints regardless, so treating
+     * this as anything subtler would only mean the image mode flag disagreed
+     * with what is actually on the screen. */
+    s_image_mode = false;
+
     epd_cmd_feed(msg->value, msg->length);
     epd_schedule_flush();
 }
@@ -263,6 +291,12 @@ static void handle_img_write(struct custs1_val_write_ind const *msg)
     s_img_write_offset += n;
 
     if (s_img_write_offset >= EPD_BUF_SIZE) {
+        /* Only a *complete* image takes the panel. A partial upload has left
+         * the top of the framebuffer overwritten and the rest stale, so if the
+         * client vanishes mid-transfer the right thing is to stay a clock and
+         * let the next minute tick repaint over the damage. */
+        s_image_mode = true;
+
         /* Refresh what was just uploaded, not the script - re-running the
          * template would regenerate the framebuffer and discard the image. */
         epd_begin_refresh(EPD_Q_FRAMEBUFFER);
