@@ -288,7 +288,13 @@ void epd_init(bool full_lut)
     }
 }
 
-void epd_display(const uint8_t *framebuffer)
+bool epd_display_busy(void)
+{
+    /* BUSY is active-high while busy, confirmed by the Waveshare reference. */
+    return GPIO_GetPinStatus(EPD_BUSY_PORT, EPD_BUSY_PIN) ? true : false;
+}
+
+void epd_display_start(const uint8_t *framebuffer)
 {
     uint32_t i;
 
@@ -321,7 +327,12 @@ void epd_display(const uint8_t *framebuffer)
     epd_write_cmd(0x22); /* Display Update Control 2: full refresh sequence */
     epd_write_data(0xC7);
     epd_write_cmd(0x20); /* Master Activation */
-    epd_wait_busy();
+
+    /* Deliberately no epd_wait_busy() here. The panel drives BUSY high and
+     * refreshes on its own for ~2 s; the caller polls epd_display_busy() from
+     * a timer so the BLE stack keeps getting scheduled meanwhile. Everything
+     * above is just SPI - about 4 ms for the 4000-byte RAM write at 8 MHz -
+     * so returning now costs the link nothing. */
 }
 
 void epd_sleep(void)

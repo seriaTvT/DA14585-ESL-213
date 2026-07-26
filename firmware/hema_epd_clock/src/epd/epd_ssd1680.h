@@ -128,9 +128,21 @@ void epd_init(bool full_lut);
 
 /** Push a full 1bpp framebuffer (EPD_BUF_SIZE bytes, MSB-first per row,
  *  1 = white / 0 = black - matches the vendor's own canvas2bytes() packing,
- *  see PROTOCOL_NOTES.md section 6) into the panel's RAM and trigger a
- *  full-display refresh. Blocks until BUSY deasserts. */
-void epd_display(const uint8_t *framebuffer);
+ *  see PROTOCOL_NOTES.md section 6) into the panel's RAM and start a
+ *  full-display refresh.
+ *
+ *  Returns as soon as the refresh is triggered - the panel then takes ~2 s on
+ *  its own. Poll epd_display_busy() for completion; do NOT spin on it.
+ *
+ *  This is deliberately not a blocking call. The refresh outlasts the BLE
+ *  supervision timeout, so blocking through one drops any open connection: a
+ *  client could never stay connected for more than a minute (the clock's own
+ *  minute tick refreshes), which breaks SUOTA and any multi-second transfer.
+ *  Yielding between polls keeps the stack scheduled and the link alive. */
+void epd_display_start(const uint8_t *framebuffer);
+
+/** True while the panel is still refreshing. Poll from a timer, not a loop. */
+bool epd_display_busy(void);
 
 /** Put the panel into deep sleep to save power between refreshes. */
 void epd_sleep(void);

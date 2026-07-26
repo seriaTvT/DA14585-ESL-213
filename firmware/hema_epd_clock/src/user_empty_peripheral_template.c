@@ -38,29 +38,108 @@
 
 static timer_hnd s_flush_timer = EASY_TIMER_INVALID_TIMER;
 
+/* --- asynchronous refresh --------------------------------------------------
+ * The panel takes ~2 s to refresh, which is longer than BLE will wait for us.
+ * Spinning on BUSY through that meant the tag dropped every connection about
+ * 1.7 s after a push - and, because the minute tick below refreshes whether or
+ * not anyone is connected, no client could hold a link for even a minute. That
+ * is fine for a clock and fatal for anything else: SUOTA needs minutes of
+ * stable link, and a 4000-byte image upload straddles a minute boundary often
+ * enough to fail intermittently.
+ *
+ * So the refresh is driven as a state machine instead. epd_display_start()
+ * triggers the panel and returns; a poll timer then checks BUSY every
+ * EPD_POLL_DELAY, and between those callbacks the kernel scheduler runs
+ * normally and the link stays up.
+ *
+ * Only one refresh can be in flight, so a request arriving during one is
+ * queued rather than dropped - dropping it would lose whichever repaint came
+ * second, which for the minute tick means a visibly stopped clock. */
+#define EPD_POLL_DELAY      5      /* 10 ms units -> 50 ms between BUSY polls */
+#define EPD_REFRESH_TIMEOUT 100    /* polls -> 5 s, ~2.5x a real refresh      */
+
+/* What to repaint once the in-flight refresh finishes. The distinction matters
+ * because the two sources disagree about who owns the framebuffer: a script
+ * render regenerates it, while an image upload has already filled it and would
+ * be overwritten by a re-run. */
+typedef enum {
+    EPD_Q_NONE = 0,
+    EPD_Q_SCRIPT,        /* re-run the stored template, then refresh */
+    EPD_Q_FRAMEBUFFER,   /* refresh what is already in the framebuffer */
+} epd_queued_t;
+
+static timer_hnd    s_poll_timer = EASY_TIMER_INVALID_TIMER;
+static uint16_t     s_poll_count;
+static bool         s_refreshing;
+static epd_queued_t s_queued;
+
+static void epd_poll_cb(void);
+
+/* Start a refresh of whatever is in the framebuffer, or queue one if the panel
+ * is still busy with the last. */
+static void epd_begin_refresh(epd_queued_t what)
+{
+    if (s_refreshing) {
+        /* A queued script render supersedes a queued framebuffer one: it is
+         * about to regenerate the framebuffer anyway. */
+        if (what == EPD_Q_SCRIPT || s_queued == EPD_Q_NONE) {
+            s_queued = what;
+        }
+        return;
+    }
+
+    if (what == EPD_Q_SCRIPT) {
+        if (epd_cmd_script_len() == 0) {
+            return;                   /* nothing configured yet */
+        }
+        epd_cmd_run();
+    }
+
+    epd_display_start(epd_framebuffer);
+    s_refreshing = true;
+    s_poll_count = 0;
+    s_poll_timer = app_easy_timer(EPD_POLL_DELAY, epd_poll_cb);
+}
+
 /* Render the stored script and push it to the panel. */
 static void epd_render_now(void)
 {
-    if (epd_cmd_script_len() == 0) {
-        return;                       /* nothing configured yet */
+    epd_begin_refresh(EPD_Q_SCRIPT);
+}
+
+static void epd_poll_cb(void)
+{
+    s_poll_timer = EASY_TIMER_INVALID_TIMER;
+
+    /* The timeout is a safety net for a panel that never releases BUSY (wrong
+     * pin, inverted polarity, dead supply). Without it a bad build would leave
+     * s_refreshing set forever and the clock would never repaint again. */
+    if (epd_display_busy() && ++s_poll_count < EPD_REFRESH_TIMEOUT) {
+        s_poll_timer = app_easy_timer(EPD_POLL_DELAY, epd_poll_cb);
+        return;
     }
-    epd_cmd_run();
-    epd_display(epd_framebuffer);
+    s_refreshing = false;
+
+    /* Persist after rendering, not before: a template that wedges the parser
+     * should not be the one we restore on the next boot. Safe to borrow the
+     * SPI bus here - the panel is done with it, and epd_store_save() hands it
+     * back via epd_spi_claim(). This does block for the flash erase/program,
+     * but that is tens of milliseconds against the refresh's ~2 s. */
+    if (epd_cmd_take_dirty()) {
+        epd_store_save(epd_cmd_script(), epd_cmd_script_len());
+    }
+
+    if (s_queued != EPD_Q_NONE) {
+        epd_queued_t next = s_queued;
+        s_queued = EPD_Q_NONE;
+        epd_begin_refresh(next);
+    }
 }
 
 static void epd_flush_cb(void)
 {
     s_flush_timer = EASY_TIMER_INVALID_TIMER;
     epd_render_now();
-
-    /* Persist after rendering, not before: a template that wedges the parser
-     * should not be the one we restore on the next boot. Borrowing the SPI bus
-     * is safe here - the refresh above has finished with the panel, and this
-     * callback already blocks for ~2 s so a few ms of flash writing changes
-     * nothing. */
-    if (epd_cmd_take_dirty()) {
-        epd_store_save(epd_cmd_script(), epd_cmd_script_len());
-    }
 }
 
 /* Called once per second by the time base. A full refresh takes ~2 s, so we
@@ -142,6 +221,12 @@ void user_on_connection(uint8_t connection_idx, struct gapc_connection_req_ind c
     default_app_on_connection(connection_idx, param);
 }
 
+/* Running byte offset into epd_framebuffer for an in-progress image upload.
+ * The protocol carries no offset - a client just streams the whole image from
+ * the top, matching the vendor tool's own "send it all every time" behaviour -
+ * so this is the only record of how far along a transfer is. */
+static uint32_t s_img_write_offset = 0;
+
 void user_on_disconnect( struct gapc_disconnect_ind const *param )
 {
     /* Deliberately keep the script. An electronic shelf label has to go on
@@ -150,15 +235,16 @@ void user_on_disconnect( struct gapc_disconnect_ind const *param )
      * Dropping it here left the tag frozen at the last-rendered minute:
      * epd_render_now() bails on an empty script, so the face simply stopped
      * (found on hardware after a 30-minute stall). */
+
+    /* An image transfer, on the other hand, is worthless once its client is
+     * gone: the protocol carries no offset, so a half-finished upload cannot
+     * be resumed. Leaving the offset stranded mid-buffer would make the *next*
+     * transfer write its first byte into the middle of the framebuffer -
+     * silent corruption rather than an honest failure. */
+    s_img_write_offset = 0;
+
     default_app_on_disconnect(param);
 }
-
-/* Running byte offset into epd_framebuffer for an in-progress image upload.
- * Reset to 0 whenever a write lands exactly at offset 0 (i.e. the app is
- * expected to always start a fresh image transfer from the top - matches
- * the vendor tool's own "send whole image every time" behavior; there's no
- * separate "begin transfer" command in the discovered protocol). */
-static uint32_t s_img_write_offset = 0;
 
 static void handle_cmd_write(struct custs1_val_write_ind const *msg)
 {
@@ -177,7 +263,9 @@ static void handle_img_write(struct custs1_val_write_ind const *msg)
     s_img_write_offset += n;
 
     if (s_img_write_offset >= EPD_BUF_SIZE) {
-        epd_display(epd_framebuffer);
+        /* Refresh what was just uploaded, not the script - re-running the
+         * template would regenerate the framebuffer and discard the image. */
+        epd_begin_refresh(EPD_Q_FRAMEBUFFER);
         s_img_write_offset = 0;
     }
 }
