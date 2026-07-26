@@ -7,11 +7,12 @@ DA14585 BLE SoC driving an SSD1680-family e-paper panel.
 These tags are sold cheaply as surplus, but the factory firmware refuses control
 from anything but the vendor's own tooling. This repository contains firmware
 written from scratch against Renesas's official DA1458x SDK6 that takes the tag
-over completely.
+over completely, plus a browser control panel for driving it.
 
-**Status: running standalone on real hardware.** The firmware builds, is
-programmed into the tag's SPI flash, and boots and drives the panel on its own
-after a power cycle — no debugger attached.
+**Status: phase one complete.** The firmware is programmed into the tag's SPI
+flash and boots and runs standalone — no debugger attached. It keeps time, draws
+a configurable clock face, remembers it across power cuts, and accepts new faces
+or arbitrary images over Bluetooth.
 
 ## Hardware
 
@@ -20,103 +21,83 @@ after a power cycle — no debugger attached.
   122×250 (`HINK-E0213A53-FPC-A0`, the default here) and 104×212.
 - **Debug:** SWD on package pins 25 (SWDIO) and 26 (SW_CLK)
 
+## What the firmware does
+
+- Drives the panel directly — framebuffer, lines, rects, circles, a 5×7 font,
+  and four screen rotations.
+- Keeps a software clock. The DA14585 has no RTC, so a 1 Hz timer counts from a
+  2000-01-01 epoch and the host sets it on connect; it resets on power loss.
+- Stores the clock face in SPI flash, so it survives a power cut.
+- Exposes two BLE services: one for the template, one for a raw image.
+
+## Templates
+
+A face is a short script — `CLEAR`, `LINE`, `RECT`, `CIRCLE`, `FONT`, `ROTATE` —
+stored on the tag and re-run every minute. That is what makes it a clock rather
+than a picture. `{}` variables expand to the date and time, and they work in
+**numeric arguments** as well as in text: arguments are integer expressions with
+`+ - * / %`, parentheses and unary minus. So a face can draw itself rather than
+only label itself:
+
+```
+RECT(4,70,245,82,0,1,0)             a fixed frame
+RECT(4,70,4+{d}*241/{L},82,0,1,1)   filled to how far into the month we are
+```
+
+Nothing throws — a malformed expression, an unknown variable and division by
+zero all evaluate to 0. A shelf label has nowhere to report an error to, so it
+should degrade to a wrong-looking face rather than a hung one. The preview
+behaves identically, then flags it.
+
 ## Web UI
 
-[`webui/`](webui/) is a browser front-end for a flashed tag: it edits the clock
-face, previews it, and pushes it over Bluetooth. No build step, no dependencies.
+[`webui/`](webui/) edits the face, previews it live, and pushes it over
+Bluetooth. No build step, no dependencies.
 
 ```sh
 python3 -m http.server -d webui 8000   # same machine: http://localhost:8000
 python3 webui/serve.py                 # phone/LAN:    https://<your-ip>:8443
 ```
 
-Web Bluetooth is gated behind a **secure context**, which means `https://` or
-the `localhost` special case — nothing else. Plain `http.server` is therefore
-fine on the machine running it and useless from any other device: the page
-loads and `navigator.bluetooth` is simply undefined. `serve.py` serves the same
-directory over TLS with a self-signed certificate to satisfy that rule; the
-first visit from each device shows a certificate warning to click through.
+Web Bluetooth needs a **secure context** — `https://` or the `localhost` special
+case, nothing else — so plain `http.server` works on the machine running it and
+not from any other device. `serve.py` covers that with a self-signed
+certificate. A Chromium-based browser is also required; Safari and Firefox do
+not implement Web Bluetooth, which on iOS means no browser can. The page says
+which of these is the problem rather than failing blankly.
 
-A Chromium-based browser is also required — Safari and Firefox do not implement
-Web Bluetooth at all, which on iOS means no browser can. On Linux the browser
-additionally needs to reach BlueZ over D-Bus. The page says which of these is
-the problem instead of failing blankly.
-
-The preview is a direct port of the firmware's own renderer — same Bresenham,
-same rotation transform, same 5×7 glyph table — so what it draws is what the
-panel will show. `node --test webui/test.mjs` guards that parity, including a
-byte-for-byte diff of the built-in face against `DEFAULT_FACE[]` in the C source.
+The **Image** tab takes any picture — dropped, picked or pasted — and reduces it
+to one bit per pixel with Floyd–Steinberg, Atkinson, ordered Bayer or a plain
+threshold. Two firmware behaviours worth knowing: an image replaces the clock
+until a template is pushed again (they share one framebuffer, so whoever wrote
+last wins), and an image is not kept in flash, so a power cut brings back the
+clock.
 
 ## Tests
 
 ```sh
-node --test webui/test.mjs              # the web UI and the JS renderer
-make -C firmware/hema_epd_clock/test    # the pure firmware modules, on the host
+node --test webui/test.mjs                     # web UI and JS renderer
+make -C firmware/hema_epd_clock/test           # firmware modules, on the host
+make -C firmware/hema_epd_clock/test render    # + cross-language parity
 ```
 
-The firmware tests compile `epd_time.c` natively against small stubs — no SDK,
-no cross toolchain, no tag. They exist mainly for the calendar arithmetic: ISO
-8601 week numbering is wrong only around new year, in years that a plausible
-implementation gets right by accident, so it is pinned to GNU `date`'s
-`%V/%G/%j` for a set of deliberately awkward dates.
+The preview is a line-by-line port of the firmware's renderer, so it is tested
+as one: build `render` and the JS suite gains a test that runs every preset
+through the **actual** `epd_cmdparser.c` and `epd_gfx.c` compiled natively and
+diffs the framebuffers byte-for-byte. It is also the tie-breaker when the panel
+disagrees with the preview — firmware, JS port and SWD test rig are three
+suspects, and comparing any two cannot say which is wrong.
 
-The same directory builds `render`, which runs a script through the real
-`epd_cmdparser.c` and `epd_gfx.c` and writes the framebuffer to stdout. Build it
-and `node --test` gains a test that diffs the JS renderer against the actual C
-rather than against a reading of it:
-
-```sh
-make -C firmware/hema_epd_clock/test render
-```
-
-It is also the tie-breaker when the panel disagrees with the preview: firmware,
-JS port and SWD test rig are three suspects, and comparing any two cannot say
-which is wrong.
-
-### Templates
-
-A face is a short script — `CLEAR`, `LINE`, `RECT`, `CIRCLE`, `FONT`, `ROTATE`
-— stored on the tag and re-run on every minute tick, which is what makes it a
-clock rather than a picture. `{}` variables expand to the date and time, and
-they work in **numeric arguments** as well as in text: arguments are integer
-expressions with `+ - * / %`, parentheses and unary minus. So a face can draw
-itself rather than only label itself —
-
-```
-RECT(4,70,4+{L}*8,82,0,1,0)     outline: the whole month
-RECT(4,70,4+{d}*8,82,0,1,1)     fill: how far into it we are
-```
-
-Nothing throws: a malformed expression, an unknown variable and division by
-zero all evaluate to 0, because a shelf label has nowhere to report an error to
-and should degrade to a wrong-looking face rather than a hung one. The preview
-does the same, then flags it.
-
-### Images
-
-The **Image** tab takes an arbitrary picture — dropped, picked or pasted — and
-reduces it to the panel's one bit per pixel: scale to fit, adjust brightness and
-contrast, then dither. Floyd–Steinberg and Atkinson error diffusion are both
-available, plus an ordered Bayer screen and a plain threshold; Atkinson tends to
-suit portraits and line art, Floyd–Steinberg detailed photographs.
-
-The result is packed through the same `Panel` the preview uses, so the 4000
-bytes sent to the tag are exactly the bytes previewed. Two behaviours are worth
-knowing, both of them properties of the firmware rather than the page:
-
-- An image **replaces the clock** until a template is pushed again. The two
-  share one framebuffer, so whoever wrote last wins — and any command write,
-  including a bare `TIME()`, hands the panel back to the template.
-- An image is **not persisted**. The template lives in flash and survives a
-  power cut; a 4000-byte image does not fit in its sector, so a tag that loses
-  power comes back as a clock.
+The firmware tests need no SDK, no cross toolchain and no tag. They exist mainly
+for the calendar arithmetic: ISO 8601 week numbering is wrong only around New
+Year and only in some years, so it is pinned to GNU `date`'s `%V/%G/%j`.
 
 ## Documentation
 
-Development is still in progress, so the write-up is deliberately **not
-published yet** — a half-accurate hardware guide is worse than none. The
-reverse-engineering notes, build/flash guide and GPIO tracing guide are kept
-locally and will be rewritten and pushed once the firmware is feature-complete.
+Development is ongoing, so the write-up is deliberately **not published yet** —
+a half-accurate hardware guide is worse than none. The reverse-engineering
+notes, build/flash guide and GPIO tracing guide are kept locally and will be
+rewritten and pushed once the firmware is feature-complete.
 
 ## Licensing and third-party material
 

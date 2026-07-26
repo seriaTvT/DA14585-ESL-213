@@ -457,3 +457,47 @@ test('an argument list is split on top-level commas only', () => {
   assert.equal(p.get(4, 4), 0, 'rect did not start where the expression says');
   assert.equal(p.get(40, 20), 0, 'rect was truncated at the inner paren');
 });
+
+test('the month bar is symmetric and scales to the month', () => {
+  /* Two separate mistakes are guarded here, both of which shipped once:
+   * an outline computed as 4+{L}*8 overran the 250 px frame (last column 249)
+   * so its right edge was clipped away entirely, and it also made the bar
+   * itself a different size in February than in July. */
+  const MARGIN = 4;
+  const RIGHT = 249 - MARGIN;
+  const row = (secs, y) => {
+    const p = new Panel();
+    p.clear(1);
+    runScript(p, PRESETS['Month progress'], secs);
+    p.setRotation(3);
+    return p;
+  };
+
+  for (const [y, m, d, mdays] of [[2026, 7, 1, 31], [2026, 7, 26, 31],
+                                  [2026, 7, 31, 31], [2026, 2, 15, 28],
+                                  [2026, 2, 28, 28]]) {
+    const p = row(at(y, m, d, 14, 37));
+
+    /* The outline: first and last ink on its top edge. */
+    let first = -1, last = -1;
+    for (let x = 0; x < 250; x++) {
+      if (!p.get(x, 70)) { if (first < 0) first = x; last = x; }
+    }
+    assert.equal(first, MARGIN, `${y}-${m}-${d}: left margin`);
+    assert.equal(last, RIGHT, `${y}-${m}-${d}: right edge missing or clipped`);
+
+    /* The fill: the rightmost pixel of the contiguous run from the left edge.
+     * RECT is inclusive of both endpoints, so this is the x2 the expression
+     * evaluated to, not a width. */
+    let x = MARGIN;
+    while (x < 250 && !p.get(x, 76)) x++;
+    const fillRight = x - 1;
+    assert.equal(fillRight, MARGIN + Math.trunc(d * (RIGHT - MARGIN) / mdays),
+      `${y}-${m}-${d}: fill edge`);
+
+    if (d === mdays) {
+      assert.equal(fillRight, RIGHT,
+        'the last day of the month should fill the bar exactly');
+    }
+  }
+});
