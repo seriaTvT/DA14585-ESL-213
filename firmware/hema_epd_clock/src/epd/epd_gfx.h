@@ -16,6 +16,24 @@
 
 extern uint8_t epd_framebuffer[EPD_BUF_SIZE];
 
+/* ---- screen rotation -------------------------------------------------------
+ * Quarter-turns clockwise: 0 = native portrait, 1 = 90 deg, 2 = 180, 3 = 270.
+ * Odd values give landscape - 250x122 instead of 122x250 - which is how these
+ * tags normally sit on a shelf; the vendor's own ROTATE() defaults to 270.
+ *
+ * The transform is applied in the framebuffer write, so it costs nothing at
+ * push time: epd_display() still sends the same native-orientation buffer and
+ * the panel driver is untouched. (The SSD1680 cannot do this itself - its Data
+ * Entry Mode 0x11 only mirrors/flips axes, it cannot transpose them, because a
+ * RAM byte is always 8 pixels along the panel's own X axis.)
+ *
+ * All drawing coordinates are in the ROTATED frame, so bounds come from
+ * epd_gfx_width()/epd_gfx_height(), never EPD_WIDTH/EPD_HEIGHT. */
+void epd_gfx_set_rotation(uint8_t r);
+uint8_t epd_gfx_get_rotation(void);
+int16_t epd_gfx_width(void);
+int16_t epd_gfx_height(void);
+
 /* color: 0 = black, 1 = white (matches the vendor DSL's own convention,
  * see function_doc_official.txt) */
 void epd_gfx_clear(uint8_t color);

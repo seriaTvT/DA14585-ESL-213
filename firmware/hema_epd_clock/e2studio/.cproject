@@ -187,6 +187,7 @@
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../src/config&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../src/epd&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../src/custom_profile&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../src/platform&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/generate&quot;"/>
 								</option>
 								<option id="com.renesas.cdt.managedbuild.llvm.core.option.compiler.source.debugFormat.136520622" name="Debug format" superClass="com.renesas.cdt.managedbuild.llvm.core.option.compiler.source.debugFormat" useByScannerDiscovery="true" value="com.renesas.cdt.managedbuild.llvm.core.option.debug.debugFormat.Default" valueType="enumerated"/>
@@ -211,6 +212,8 @@
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_ssd1680.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_gfx.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_cmdparser.o&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_time.o&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;.\user_platform\flash_writer.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs_common.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs_task.o&quot;"/>
@@ -534,6 +537,7 @@
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../src/config&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../src/epd&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../src/custom_profile&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../src/platform&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/generate&quot;"/>
 								</option>
 								<option IS_BUILTIN_EMPTY="false" IS_VALUE_EMPTY="false" id="com.renesas.cdt.managedbuild.llvm.arm.option.compiler.macro.2124064018" name="Macro Defines (-D)" superClass="com.renesas.cdt.managedbuild.llvm.arm.option.compiler.macro" useByScannerDiscovery="false" valueType="definedSymbols">
@@ -564,6 +568,8 @@
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_ssd1680.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_gfx.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_cmdparser.o&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_time.o&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;.\user_platform\flash_writer.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs_common.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs_task.o&quot;"/>
@@ -883,6 +889,7 @@
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../src/config&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../src/epd&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../src/custom_profile&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../src/platform&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../src&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/generate&quot;"/>
 								</option>
@@ -915,6 +922,8 @@
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_ssd1680.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_gfx.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_cmdparser.o&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_time.o&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;.\user_platform\flash_writer.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs_common.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs_task.o&quot;"/>
@@ -1250,6 +1259,7 @@
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../src/config&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../src/epd&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../src/custom_profile&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../src/platform&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../src&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/generate&quot;"/>
 								</option>
@@ -1282,6 +1292,8 @@
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_ssd1680.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_gfx.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_cmdparser.o&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_time.o&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;.\user_platform\flash_writer.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs_common.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs_task.o&quot;"/>
@@ -1615,6 +1627,7 @@
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../src/config&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../src/epd&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../src/custom_profile&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../src/platform&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/../src&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${ProjDirPath}/generate&quot;"/>
 								</option>
@@ -1647,6 +1660,8 @@
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_ssd1680.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_gfx.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_cmdparser.o&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_time.o&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;.\user_platform\flash_writer.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs_common.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs_task.o&quot;"/>

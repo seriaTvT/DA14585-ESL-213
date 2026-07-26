@@ -565,6 +565,16 @@
 			<locationURI>$%7BPARENT-1-PROJECT_LOC%7D/src/platform/user_periph_setup.c</locationURI>
 		</link>
 		<link>
+			<name>user_platform/flash_writer.c</name>
+			<type>1</type>
+			<locationURI>$%7BPARENT-1-PROJECT_LOC%7D/src/platform/flash_writer.c</locationURI>
+		</link>
+		<link>
+			<name>user_platform/flash_writer.h</name>
+			<type>1</type>
+			<locationURI>$%7BPARENT-1-PROJECT_LOC%7D/src/platform/flash_writer.h</locationURI>
+		</link>
+		<link>
 			<name>user_profile/user_custs1_def.c</name>
 			<type>1</type>
 			<locationURI>$%7BPARENT-1-PROJECT_LOC%7D/src/custom_profile/user_custs1_def.c</locationURI>
@@ -613,6 +623,16 @@
 			<name>user_epd/epd_ssd1680.h</name>
 			<type>1</type>
 			<locationURI>$%7BPARENT-1-PROJECT_LOC%7D/src/epd/epd_ssd1680.h</locationURI>
+		</link>
+		<link>
+			<name>user_epd/epd_time.c</name>
+			<type>1</type>
+			<locationURI>$%7BPARENT-1-PROJECT_LOC%7D/src/epd/epd_time.c</locationURI>
+		</link>
+		<link>
+			<name>user_epd/epd_time.h</name>
+			<type>1</type>
+			<locationURI>$%7BPARENT-1-PROJECT_LOC%7D/src/epd/epd_time.h</locationURI>
 		</link>
 		<link>
 			<name>sdk_app/app_customs.c</name>

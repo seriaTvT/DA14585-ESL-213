@@ -222,7 +222,17 @@ static const struct gapm_configuration user_gapm_conf = {
 
     /// Maximal MTU. Shall be set to 23 if Legacy Pairing is used, 65 if Secure Connection is used,
     /// more if required by the application
-    .max_mtu = 23,
+    ///
+    /// Raised from the template's 23 because drawing commands are longer than
+    /// the 20 payload bytes a 23-byte MTU allows (e.g.
+    /// "RECT(10,10,100,60,0,1,1)" is 25). A client's attempt to send more in
+    /// one write falls back to a long/prepared write, which this SDK's custom
+    /// characteristic rejects with ATT "Unlikely Error" (0x0E) - observed on
+    /// hardware. 251 matches CFG_MAX_TX_PACKET_LENGTH so a whole
+    /// DEF_CMD_CHAR_LEN (128) command batch fits in a single write.
+    /// The parser also reassembles across writes, so this is an optimisation,
+    /// not a correctness requirement.
+    .max_mtu = 251,
 
     /// Device Address Type
     .addr_type = APP_CFG_ADDR_TYPE(USER_CFG_ADDRESS_MODE),

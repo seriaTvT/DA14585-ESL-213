@@ -16,14 +16,95 @@
 #include "epd_cmdparser.h"
 #include "epd_gfx.h"
 #include "epd_ssd1680.h"
+#include "app_easy_timer.h"
+#include "epd_time.h"
+
+/* --- deferred panel refresh ------------------------------------------------
+ * A full refresh takes ~2 s, and a client sends a batch of drawing commands
+ * as many small writes (an ATT write carries only MTU-3 bytes). Refreshing
+ * per write would mean one 2 s refresh per fragment and a visibly flickering
+ * panel, so instead each write (re)arms a short timer and the panel is pushed
+ * once, EPD_FLUSH_DELAY after the last command byte arrives.
+ *
+ * This also keeps us compatible with the vendor's esl_clock.php, which just
+ * streams its command list with no explicit "commit" command - the discovered
+ * DSL has no such command to key off. */
+#define EPD_FLUSH_DELAY   40   /* app_easy_timer units are 10 ms -> 400 ms */
+
+static timer_hnd s_flush_timer = EASY_TIMER_INVALID_TIMER;
+
+/* Render the stored script and push it to the panel. */
+static void epd_render_now(void)
+{
+    if (epd_cmd_script_len() == 0) {
+        return;                       /* nothing configured yet */
+    }
+    epd_cmd_run();
+    epd_display(epd_framebuffer);
+}
+
+static void epd_flush_cb(void)
+{
+    s_flush_timer = EASY_TIMER_INVALID_TIMER;
+    epd_render_now();
+}
+
+/* Called once per second by the time base. A full refresh takes ~2 s, so we
+ * only repaint when the displayed minute actually changes - re-rendering
+ * every second would leave the panel permanently mid-refresh. */
+static void epd_on_second(void)
+{
+    static uint8_t last_min = 0xFF;
+    epd_tm_t tm;
+
+    epd_time_get(&tm);
+    if (tm.min == last_min) {
+        return;
+    }
+    last_min = tm.min;
+
+    /* Don't fight an in-flight batch: if commands are still arriving the
+     * flush timer is armed and will repaint shortly anyway. */
+    if (s_flush_timer == EASY_TIMER_INVALID_TIMER) {
+        epd_render_now();
+    }
+}
+
+static void epd_schedule_flush(void)
+{
+    if (s_flush_timer != EASY_TIMER_INVALID_TIMER) {
+        app_easy_timer_cancel(s_flush_timer);
+    }
+    s_flush_timer = app_easy_timer(EPD_FLUSH_DELAY, epd_flush_cb);
+}
 
 void user_on_connection(uint8_t connection_idx, struct gapc_connection_req_ind const *param)
 {
+    /* Arm - don't perform - a script replace. A client is expected to send its
+     * whole template, so its bytes must not land underneath the previous one;
+     * but a client that connects and sends nothing must leave the current face
+     * alone. epd_cmd_begin_batch() defers the clear to the first write. */
+    epd_cmd_begin_batch();
+
+    /* Start the 1 Hz software clock here, NOT from an app-init hook: a timer
+     * armed during app init never fires (app_easy_timer returns a handle that
+     * reads as valid, so the failure is silent - verified on hardware by
+     * watching the seconds counter over SWD). Connect time is also the
+     * natural place: the DA14585 has no RTC, so the clock is meaningless
+     * until a host sets it with TIME() over this very connection.
+     * epd_time_init() re-arms, so repeat connections are harmless. */
+    epd_time_init(epd_on_second);
     default_app_on_connection(connection_idx, param);
 }
 
 void user_on_disconnect( struct gapc_disconnect_ind const *param )
 {
+    /* Deliberately keep the script. An electronic shelf label has to go on
+     * displaying - and, since the script is replayed on the minute tick, go on
+     * *updating* - long after the host that configured it has gone away.
+     * Dropping it here left the tag frozen at the last-rendered minute:
+     * epd_render_now() bails on an empty script, so the face simply stopped
+     * (found on hardware after a 30-minute stall). */
     default_app_on_disconnect(param);
 }
 
@@ -36,13 +117,8 @@ static uint32_t s_img_write_offset = 0;
 
 static void handle_cmd_write(struct custs1_val_write_ind const *msg)
 {
-    epd_cmd_process(msg->value, msg->length);
-    /* The vendor firmware appears to push the framebuffer to the panel
-     * after each applied command batch (see PROTOCOL_NOTES.md section 5
-     * sample templates, which are sent as one big multi-line batch) rather
-     * than after every single line, so do the same here: one refresh per
-     * BLE write. */
-    epd_display(epd_framebuffer);
+    epd_cmd_feed(msg->value, msg->length);
+    epd_schedule_flush();
 }
 
 static void handle_img_write(struct custs1_val_write_ind const *msg)
