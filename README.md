@@ -26,13 +26,21 @@ after a power cycle — no debugger attached.
 face, previews it, and pushes it over Bluetooth. No build step, no dependencies.
 
 ```sh
-python3 -m http.server -d webui 8000   # then open http://localhost:8000
+python3 -m http.server -d webui 8000   # same machine: http://localhost:8000
+python3 webui/serve.py                 # phone/LAN:    https://<your-ip>:8443
 ```
 
-Web Bluetooth needs a secure context and a Chromium-based browser, so
-`http://localhost` or `https://` — opening `index.html` as a `file://` URL will
-not work. On Linux, Bluetooth access also requires the browser to reach BlueZ
-over D-Bus.
+Web Bluetooth is gated behind a **secure context**, which means `https://` or
+the `localhost` special case — nothing else. Plain `http.server` is therefore
+fine on the machine running it and useless from any other device: the page
+loads and `navigator.bluetooth` is simply undefined. `serve.py` serves the same
+directory over TLS with a self-signed certificate to satisfy that rule; the
+first visit from each device shows a certificate warning to click through.
+
+A Chromium-based browser is also required — Safari and Firefox do not implement
+Web Bluetooth at all, which on iOS means no browser can. On Linux the browser
+additionally needs to reach BlueZ over D-Bus. The page says which of these is
+the problem instead of failing blankly.
 
 The preview is a direct port of the firmware's own renderer — same Bresenham,
 same rotation transform, same 5×7 glyph table — so what it draws is what the

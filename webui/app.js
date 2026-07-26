@@ -3,7 +3,7 @@
  */
 import { Panel, runScript, paint, tagSecondsNow, tagTime } from './epd.js';
 import { PRESETS } from './presets.js';
-import { Tag } from './ble.js';
+import { Tag, bluetoothProblem } from './ble.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -238,7 +238,23 @@ $('sync').addEventListener('click', async () => {
 $('editor').value = lastLoaded;
 refreshConnState();
 render();
-log('Ready. Connect a tag to push a face to it.', 'dim');
+
+/* Say up front if pushing cannot work, rather than letting someone design a
+ * face and only discover it when they press Connect. The editor and preview
+ * are still perfectly useful without Bluetooth, so this disables the transport
+ * and leaves everything else alone. */
+const btProblem = bluetoothProblem();
+if (btProblem) {
+  log(btProblem, 'err');
+  $('connect').disabled = true;
+  $('statusText').textContent = 'Bluetooth unavailable';
+  const banner = document.createElement('div');
+  banner.className = 'note err';
+  banner.textContent = btProblem;
+  $('notes').before(banner);
+} else {
+  log('Ready. Connect a tag to push a face to it.', 'dim');
+}
 
 /* Tick the preview so {S} and the minute rollover animate. Cheap: the whole
  * render is a few thousand pixel writes. */

@@ -31,6 +31,33 @@ export const FLUSH_DELAY_MS = 400;
  * so a slow link still gets the benign reading. */
 const REFRESH_DROP_WINDOW_MS = 8000;
 
+/**
+ * Why Web Bluetooth is unusable here, or null if it should work.
+ *
+ * The two causes look identical from JS - navigator.bluetooth is simply
+ * undefined either way - but they need completely different fixes, so they are
+ * worth telling apart. The insecure-origin case is the one people actually hit:
+ * loading the page from another device over plain http:// silently disables the
+ * API, because only https:// and localhost count as secure contexts.
+ */
+export function bluetoothProblem() {
+  if (navigator.bluetooth) return null;
+
+  if (!window.isSecureContext) {
+    return `This page is not a secure context (${location.origin}), so the `
+         + 'browser disables Web Bluetooth. Reach it over https:// or as '
+         + 'http://localhost - serve.py sets up the https case for phones and '
+         + 'other machines on the LAN.';
+  }
+
+  /* Secure context and still no API: the browser genuinely lacks it. Safari
+   * and Firefox do not implement Web Bluetooth at all, and on iOS every
+   * browser is Safari underneath, so no iPhone can run this page. */
+  return 'This browser does not implement Web Bluetooth. Chrome, Edge or Opera '
+       + 'on desktop or Android will work; Safari and Firefox will not, which '
+       + 'on iOS means no browser can.';
+}
+
 export class Tag extends EventTarget {
   constructor() {
     super();
@@ -54,11 +81,8 @@ export class Tag extends EventTarget {
   _state() { this.dispatchEvent(new Event('state')); }
 
   async connect() {
-    if (!navigator.bluetooth) {
-      throw new Error(
-        'Web Bluetooth unavailable. Use Chrome, Edge or Opera over ' +
-        'https:// or http://localhost (not file://).');
-    }
+    const problem = bluetoothProblem();
+    if (problem) throw new Error(problem);
 
     this._log('Requesting device…');
     this.device = await navigator.bluetooth.requestDevice({
