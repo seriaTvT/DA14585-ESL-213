@@ -25,11 +25,13 @@ export const DEVICE_NAME = 'HemaEPD-Clock';
  * budget the chunk loop is working inside. */
 export const FLUSH_DELAY_MS = 400;
 
-/* A disconnect this soon after our last write is the refresh, not a fault.
- * The drop lands ~1.7 s after the last byte (400 ms flush timer, then the
- * blocking refresh outruns the supervision timeout); the window is generous
- * so a slow link still gets the benign reading. */
-const REFRESH_DROP_WINDOW_MS = 8000;
+/* The panel refresh used to block the tag for ~2 s and drop the link about
+ * 1.7 s after every push, so this file treated a disconnect there as routine.
+ * The firmware now polls BUSY from a timer instead (epd_display_start /
+ * epd_display_busy), and a link survives repeated refreshes - measured at
+ * 150 s across three of them - so a drop is a real event again and is
+ * reported plainly. ensureConnected() stays: range and interference still
+ * exist, and reconnecting costs no user gesture. */
 
 /**
  * Why Web Bluetooth is unusable here, or null if it should work.
@@ -67,9 +69,6 @@ export class Tag extends EventTarget {
      * firmware permits both; without-response is markedly faster because it
      * does not wait for an ATT ack per 20-byte fragment. */
     this.writeWithoutResponse = false;
-    /* When our last byte went out, so a following disconnect can be told apart
-     * from a real one - see the gattserverdisconnected handler. */
-    this.lastWriteAt = 0;
   }
 
   get connected() { return !!this.device?.gatt?.connected; }
@@ -95,15 +94,7 @@ export class Tag extends EventTarget {
 
     this.device.addEventListener('gattserverdisconnected', () => {
       this.char = null;
-      /* A drop right after a push is the panel refresh, not a fault: the
-       * refresh blocks the CPU for ~2 s, which outlasts the link's supervision
-       * timeout, so the tag always drops us. Measured at ~1.7 s after the last
-       * byte. Nothing is lost - the tag has the template by then - so this is
-       * reported as routine and the next action silently reconnects. */
-      const refreshing = Date.now() - this.lastWriteAt < REFRESH_DROP_WINDOW_MS;
-      this._log(refreshing
-        ? 'Tag dropped the link to refresh the panel (expected).'
-        : 'Disconnected.', refreshing ? 'dim' : 'warn');
+      this._log('Disconnected.', 'warn');
       this._state();
     });
 
@@ -152,8 +143,6 @@ export class Tag extends EventTarget {
   }
 
   async disconnect() {
-    /* Stops the disconnect handler calling this an expected refresh drop. */
-    this.lastWriteAt = 0;
     if (this.device?.gatt?.connected) this.device.gatt.disconnect();
     this.char = null;
     this._state();
@@ -170,7 +159,6 @@ export class Tag extends EventTarget {
     await this.ensureConnected();
 
     const bytes = new TextEncoder().encode(text);
-    this.lastWriteAt = Date.now();
     for (let off = 0; off < bytes.length; off += chunk) {
       const slice = bytes.slice(off, off + chunk);
       /* writeValue() is the deprecated spelling, still the only one in some
@@ -182,7 +170,6 @@ export class Tag extends EventTarget {
       } else {
         await this.char.writeValue(slice);
       }
-      this.lastWriteAt = Date.now();
       onProgress?.(Math.min(off + chunk, bytes.length), bytes.length);
     }
     return bytes.length;

@@ -134,9 +134,8 @@ function refreshConnState() {
   $('connect').textContent = paired ? 'Forget tag' : 'Connect';
 
   /* Enabled once a tag has been chosen, not only while the link is up: the
-   * tag drops us on every panel refresh, and the actions reconnect for
-   * themselves. Greying them out for those seconds would make the UI feel
-   * broken when nothing is wrong. */
+   * actions reconnect for themselves, so greying them out during a transient
+   * drop would make the UI feel broken when nothing is wrong. */
   $('push').disabled = !paired;
   $('sync').disabled = !paired;
 }
