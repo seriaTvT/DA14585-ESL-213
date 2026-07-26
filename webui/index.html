@@ -107,6 +107,39 @@
   .counter { font: 12px var(--mono); color: var(--dim); margin-left: auto; }
   .counter.over { color: var(--err); font-weight: 600; }
 
+  /* --- tabs --------------------------------------------------------- */
+  .tabs { display: flex; gap: 4px; margin-bottom: 14px; }
+  .tab {
+    font-size: 12px; font-weight: 650; letter-spacing: .07em;
+    text-transform: uppercase; color: var(--dim);
+    padding: 6px 12px; border: 1px solid transparent; background: none;
+  }
+  .tab.on {
+    color: var(--ink); background: var(--bg); border-color: var(--edge);
+  }
+
+  /* --- image --------------------------------------------------------- */
+  .drop {
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    padding: 26px 16px; text-align: center; cursor: pointer;
+    border: 1.5px dashed var(--edge); border-radius: 10px;
+    color: var(--dim); font-size: 13px;
+  }
+  .drop:hover, .drop.over { border-color: var(--accent); color: var(--ink); }
+  .drop b { color: var(--ink); font-size: 14px; font-weight: 600; }
+  .drop.loaded { padding: 14px 16px; }
+
+  .ctl { display: grid; grid-template-columns: 92px 1fr auto; gap: 9px 10px;
+         align-items: center; margin-top: 14px; }
+  .ctl > label { font-size: 13px; color: var(--dim); }
+  .ctl select { width: 100%; }
+  .ctl input[type=range] { width: 100%; accent-color: var(--accent); }
+  .ctl .val {
+    font: 12px var(--mono); color: var(--dim); min-width: 3.2em; text-align: right;
+  }
+  .ctl .span2 { grid-column: 2 / -1; display: flex; gap: 16px; flex-wrap: wrap; }
+  .ctl[disabled] { opacity: .45; pointer-events: none; }
+
   /* --- diagnostics -------------------------------------------------- */
   .notes { margin-top: 12px; display: grid; gap: 6px; }
   .note {
@@ -191,7 +224,12 @@
   </section>
 
   <section>
-    <h2>Template</h2>
+    <div class="tabs">
+      <button class="tab on" id="tabTemplate">Template</button>
+      <button class="tab" id="tabImage">Image</button>
+    </div>
+
+    <div id="paneTemplate">
     <div class="row">
       <select id="preset">
         <option value="">Load a preset…</option>
@@ -203,6 +241,55 @@
       <textarea id="editor" spellcheck="false"></textarea>
     </div>
     <div class="notes" id="notes"></div>
+    </div>
+
+    <div id="paneImage" hidden>
+      <label class="drop" id="drop">
+        <b>Drop an image here</b>
+        <span>or click to choose — you can also paste one</span>
+        <input type="file" id="file" accept="image/*" hidden>
+      </label>
+
+      <div class="ctl" id="imgCtl" disabled>
+        <label for="fit">Fit</label>
+        <select id="fit"></select>
+        <span></span>
+
+        <label for="ditherSel">Dither</label>
+        <select id="ditherSel"></select>
+        <span></span>
+
+        <label for="brightness">Brightness</label>
+        <input type="range" id="brightness" min="-100" max="100" value="0">
+        <span class="val" id="brightnessVal">0</span>
+
+        <label for="contrast">Contrast</label>
+        <input type="range" id="contrast" min="-100" max="100" value="0">
+        <span class="val" id="contrastVal">0</span>
+
+        <label for="threshold">Threshold</label>
+        <input type="range" id="threshold" min="0" max="255" value="128">
+        <span class="val" id="thresholdVal">128</span>
+
+        <span></span>
+        <div class="span2">
+          <label class="check"><input type="checkbox" id="landscape" checked> landscape</label>
+          <label class="check"><input type="checkbox" id="invert"> invert</label>
+          <button id="imgReset">Reset</button>
+        </div>
+      </div>
+
+      <p class="hint">
+        The panel is one bit per pixel, so tone is faked with dithering — try
+        <b>Atkinson</b> for portraits and line art, <b>Floyd–Steinberg</b> for
+        detailed photos. <b>Threshold</b> only matters when the dither is
+        <i>Ordered</i> or <i>Threshold</i>.
+      </p>
+      <p class="hint">
+        An image replaces the clock until you push a template again, and it is
+        <b>not</b> kept in flash — a power cut brings back the stored face.
+      </p>
+    </div>
 
     <details class="ref">
       <summary>Command reference</summary>

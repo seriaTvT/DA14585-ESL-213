@@ -47,6 +47,25 @@ same rotation transform, same 5×7 glyph table — so what it draws is what the
 panel will show. `node --test webui/test.mjs` guards that parity, including a
 byte-for-byte diff of the built-in face against `DEFAULT_FACE[]` in the C source.
 
+### Images
+
+The **Image** tab takes an arbitrary picture — dropped, picked or pasted — and
+reduces it to the panel's one bit per pixel: scale to fit, adjust brightness and
+contrast, then dither. Floyd–Steinberg and Atkinson error diffusion are both
+available, plus an ordered Bayer screen and a plain threshold; Atkinson tends to
+suit portraits and line art, Floyd–Steinberg detailed photographs.
+
+The result is packed through the same `Panel` the preview uses, so the 4000
+bytes sent to the tag are exactly the bytes previewed. Two behaviours are worth
+knowing, both of them properties of the firmware rather than the page:
+
+- An image **replaces the clock** until a template is pushed again. The two
+  share one framebuffer, so whoever wrote last wins — and any command write,
+  including a bare `TIME()`, hands the panel back to the template.
+- An image is **not persisted**. The template lives in flash and survives a
+  power cut; a 4000-byte image does not fit in its sector, so a tag that loses
+  power comes back as a clock.
+
 ## Documentation
 
 Development is still in progress, so the write-up is deliberately **not

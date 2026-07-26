@@ -17,6 +17,8 @@ import { dirname, join } from 'node:path';
 import { Panel, runScript, expandVars, tagTime, tagSecondsNow, textWidth }
   from './epd.js';
 import { PRESETS } from './presets.js';
+import { dither, toPanel, surface, DITHERS } from './image.js';
+import { IMAGE_BYTES } from './ble.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PARSER_C = join(HERE,
@@ -157,3 +159,96 @@ test("FONT's quoted text may contain commas", () => {
     for (let x = 0; x < 18; x++) if (!p.get(x, y)) ink++;
   assert.ok(ink > 0, 'nothing drawn');
 });
+
+/* ------------------------------------------------------------------ */
+/* Image pipeline                                                      */
+/*                                                                     */
+/* rasterize() needs a canvas and is not exercised here; everything     */
+/* after it - dithering and packing - is pure and is where a mistake    */
+/* would be invisible in the preview but wrong on the panel.            */
+/* ------------------------------------------------------------------ */
+
+const flat = (w, h, v) => new Float32Array(w * h).fill(v);
+
+test('the image framebuffer is exactly what the tag waits for', () => {
+  /* The protocol has no header and no length: the tag refreshes on the
+   * EPD_BUF_SIZE'th byte, so a packing bug that produced one byte too few
+   * would simply hang the transfer forever. */
+  const { w, h, rot } = surface(true);
+  const p = toPanel(new Uint8Array(w * h), w, h, rot);
+  assert.equal(p.fb.length, IMAGE_BYTES);
+  assert.equal(IMAGE_BYTES, 4000);
+});
+
+test('both orientations cover the whole panel', () => {
+  for (const landscape of [true, false]) {
+    const { w, h } = surface(landscape);
+    assert.equal(w * h, 122 * 250);
+  }
+  assert.deepEqual(surface(true), { w: 250, h: 122, rot: 3 });
+  assert.deepEqual(surface(false), { w: 122, h: 250, rot: 0 });
+});
+
+test('every dither maps flat black and flat white to solid output', () => {
+  /* An off-by-one in a threshold comparison usually survives on a photo and
+   * only shows up as speckle in what should be clean paper or clean ink. */
+  for (const mode of Object.keys(DITHERS)) {
+    const white = dither(flat(40, 40, 255), 40, 40, { dither: mode });
+    const black = dither(flat(40, 40, 0), 40, 40, { dither: mode });
+    assert.ok(white.every((v) => v === 1), `${mode} speckled a white field`);
+    assert.ok(black.every((v) => v === 0), `${mode} speckled a black field`);
+  }
+});
+
+test('error diffusion keeps the average tone', () => {
+  /* The point of dithering: a flat 40% grey has no 40% to draw, so it has to
+   * come out as roughly 40% of the pixels lit instead. */
+  for (const mode of ['floyd-steinberg', 'atkinson']) {
+    const bits = dither(flat(64, 64, 0.4 * 255), 64, 64, { dither: mode });
+    const lit = bits.reduce((a, b) => a + b, 0) / bits.length;
+    assert.ok(Math.abs(lit - 0.4) < 0.06,
+      `${mode} rendered 40% grey as ${(lit * 100).toFixed(1)}% white`);
+  }
+});
+
+test('ordered dither screens a flat mid grey instead of blanking it', () => {
+  /* Bayer is the one mode that must *not* collapse mid grey to a solid, and
+   * the threshold control has to still bias it. */
+  const bits = dither(flat(64, 64, 128), 64, 64, { dither: 'ordered' });
+  const lit = bits.reduce((a, b) => a + b, 0) / bits.length;
+  assert.ok(lit > 0.3 && lit < 0.7, `mid grey came out ${lit}`);
+
+  const dark = dither(flat(64, 64, 128), 64, 64,
+                      { dither: 'ordered', threshold: 200 });
+  assert.ok(dark.reduce((a, b) => a + b, 0) / dark.length < lit);
+});
+
+test('the threshold control splits where it says it does', () => {
+  const opts = { dither: 'threshold', threshold: 100 };
+  assert.equal(dither(flat(4, 4, 99), 4, 4, opts)[0], 0);
+  assert.equal(dither(flat(4, 4, 100), 4, 4, opts)[0], 1);
+});
+
+test('packing survives the rotation transform', () => {
+  /* toPanel() goes through Panel.set() so the rotation is the firmware's own.
+   * This checks a landscape image comes back out of the panel unrotated -
+   * i.e. that the write and the read agree, corners included. */
+  const { w, h, rot } = surface(true);
+  const bits = new Uint8Array(w * h).fill(1);
+  const marks = [[0, 0], [w - 1, 0], [0, h - 1], [w - 1, h - 1], [7, 3]];
+  for (const [x, y] of marks) bits[y * w + x] = 0;
+
+  const p = toPanel(bits, w, h, rot);
+  for (const [x, y] of marks) {
+    assert.equal(p.get(x, y), 0, `mark at ${x},${y} moved or vanished`);
+  }
+  let ink = 0;
+  for (const b of p.fb) ink += 8 - popcount(b);
+  assert.equal(ink, marks.length, 'stray pixels outside the marks');
+});
+
+function popcount(b) {
+  let n = 0;
+  for (let i = 0; i < 8; i++) if (b & (1 << i)) n++;
+  return n;
+}

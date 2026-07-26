@@ -17,7 +17,21 @@
 export const CMD_SERVICE = '00001f10-0000-1000-8000-00805f9b34fb';
 export const CMD_CHAR    = '00001f1f-0000-1000-8000-00805f9b34fb';
 
+/* The image service, from the same header. These are random 128-bit UUIDs
+ * rather than Bluetooth-base ones, so they look nothing like the pair above:
+ *   DEF_IMG_SVC_UUID_128  {0x38,0x9a,...,0x18,0x13}
+ *     -> 13187b10-eba9-a3ba-044e-83d3217d9a38
+ *   DEF_IMG_CHAR_UUID_128 {0xfe,0x82,...,0x64,0x4b}
+ *     -> 4b646063-6264-f3a7-8941-e65356ea82fe */
+export const IMG_SERVICE = '13187b10-eba9-a3ba-044e-83d3217d9a38';
+export const IMG_CHAR    = '4b646063-6264-f3a7-8941-e65356ea82fe';
+
 export const DEVICE_NAME = 'HemaEPD-Clock';
+
+/* EPD_BUF_SIZE: ((122 + 7) / 8) * 250. The tag refreshes when exactly this
+ * many bytes have arrived, with no header and no offset in the protocol, so a
+ * transfer that is short by even one byte simply never completes. */
+export const IMAGE_BYTES = 16 * 250;
 
 /* The firmware repaints EPD_FLUSH_DELAY (400 ms) after the last byte lands,
  * so a push must not stall longer than that mid-script or the tag would
@@ -65,6 +79,7 @@ export class Tag extends EventTarget {
     super();
     this.device = null;
     this.char = null;
+    this.imgChar = null;
     /* Set once we know which write type the characteristic offers. The
      * firmware permits both; without-response is markedly faster because it
      * does not wait for an ATT ack per 20-byte fragment. */
@@ -89,11 +104,12 @@ export class Tag extends EventTarget {
        * 128-bit service UUIDs (they do not fit alongside the name in a 31-byte
        * advertisement), so a services filter would match nothing. */
       filters: [{ namePrefix: 'HemaEPD' }],
-      optionalServices: [CMD_SERVICE],
+      optionalServices: [CMD_SERVICE, IMG_SERVICE],
     });
 
     this.device.addEventListener('gattserverdisconnected', () => {
       this.char = null;
+      this.imgChar = null;
       this._log('Disconnected.', 'warn');
       this._state();
     });
@@ -111,6 +127,17 @@ export class Tag extends EventTarget {
     const service = await server.getPrimaryService(CMD_SERVICE);
     this.char = await service.getCharacteristic(CMD_CHAR);
     this.writeWithoutResponse = this.char.properties.writeWithoutResponse;
+
+    /* The image service is optional on purpose: an older tag that predates it
+     * should still be usable for templates rather than failing to connect at
+     * all. pushImage() is what reports its absence, at the point it matters. */
+    try {
+      const imgSvc = await server.getPrimaryService(IMG_SERVICE);
+      this.imgChar = await imgSvc.getCharacteristic(IMG_CHAR);
+    } catch {
+      this.imgChar = null;
+    }
+
     this._state();
   }
 
@@ -155,23 +182,59 @@ export class Tag extends EventTarget {
    * the split point does not matter and a fixed 20-byte chunk is fine: that is
    * MTU-3 at the default 23-byte MTU, which is what the tag negotiates.
    */
-  async write(text, { chunk = 20, onProgress } = {}) {
+  async write(text, opts = {}) {
+    await this.ensureConnected();
+    const bytes = new TextEncoder().encode(text);
+    await this._stream(this.char, bytes, opts);
+    return bytes.length;
+  }
+
+  /**
+   * Send a full framebuffer to the image characteristic.
+   *
+   * The tag counts bytes and refreshes on the 4000th, so this is all-or-
+   * nothing: there is no header, no offset and no way to resume. A transfer
+   * that dies partway leaves the top of the framebuffer overwritten, which the
+   * firmware handles by staying in clock mode and repainting over it on the
+   * next minute tick - so a failure here is ugly for a moment, not sticky.
+   */
+  async pushImage(fb, { onProgress } = {}) {
     await this.ensureConnected();
 
-    const bytes = new TextEncoder().encode(text);
+    if (!this.imgChar) {
+      throw new Error('This tag has no image service - it is running firmware '
+                    + 'from before image push existed.');
+    }
+    if (fb.length !== IMAGE_BYTES) {
+      throw new Error(`Framebuffer is ${fb.length} bytes; the tag waits for `
+                    + `exactly ${IMAGE_BYTES} and would never refresh.`);
+    }
+
+    await this._stream(this.imgChar, fb, { onProgress });
+    return fb.length;
+  }
+
+  /** Fragment `bytes` across `char`, one ATT payload at a time. */
+  async _stream(char, bytes, { chunk = 20, onProgress } = {}) {
+    /* Prefer without-response: it does not wait for an ATT ack per fragment,
+     * which is worth little over the ~9 writes a template takes but turns a
+     * 200-fragment image from tens of seconds into a few. */
+    const withoutResp = this.writeWithoutResponse
+                     && char.properties.writeWithoutResponse
+                     && !!char.writeValueWithoutResponse;
+
     for (let off = 0; off < bytes.length; off += chunk) {
       const slice = bytes.slice(off, off + chunk);
       /* writeValue() is the deprecated spelling, still the only one in some
        * shipping builds; the explicit pair is preferred where present. */
-      if (this.writeWithoutResponse && this.char.writeValueWithoutResponse) {
-        await this.char.writeValueWithoutResponse(slice);
-      } else if (this.char.writeValueWithResponse) {
-        await this.char.writeValueWithResponse(slice);
+      if (withoutResp) {
+        await char.writeValueWithoutResponse(slice);
+      } else if (char.writeValueWithResponse) {
+        await char.writeValueWithResponse(slice);
       } else {
-        await this.char.writeValue(slice);
+        await char.writeValue(slice);
       }
       onProgress?.(Math.min(off + chunk, bytes.length), bytes.length);
     }
-    return bytes.length;
   }
 }

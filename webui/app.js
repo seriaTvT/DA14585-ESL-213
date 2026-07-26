@@ -4,6 +4,7 @@
 import { Panel, runScript, paint, tagSecondsNow, tagTime } from './epd.js';
 import { PRESETS } from './presets.js';
 import { Tag, bluetoothProblem } from './ble.js';
+import * as Img from './image.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -13,11 +14,21 @@ const LINE_MAX   = 128;    /* CMD_LINE_MAX   */
 const tag = new Tag();
 const panel = new Panel();
 
+/* Which pane owns the preview and the Push button. The tag can show a
+ * rendered template or an uploaded image but not both - they share one
+ * framebuffer - so the tabs are a real mode switch, not just a view. */
+let mode = 'template';
+
 /* Whether we have set the tag's clock this session. The preview always runs at
  * browser time - an unsynced tag sits at 00:00, and previewing a frozen 00:00
  * looks like a broken page rather than an unsynced clock - so the sync state is
  * surfaced in the readout instead. */
 let synced = false;
+
+/* Decoded source image and the panel it currently processes down to. The
+ * source is kept so the sliders can re-run the pipeline without re-decoding. */
+let image = null;
+let imagePanel = null;
 
 /* Strip authoring-only lines before sending.
  *
@@ -55,27 +66,31 @@ tag.addEventListener('state', () => refreshConnState());
 /* Preview                                                             */
 /* ------------------------------------------------------------------ */
 
-function render() {
-  const script = $('editor').value;
-  const secs = tagSecondsNow();
-
-  panel.setRotation(0);
-  panel.clear(1);
-  const { warnings } = runScript(panel, script, secs);
-
-  /* Fit the panel to the column without going below 1:1 or above 3x - past
-   * that the pixel grid stops reading as a screen and starts reading as art. */
+/* Fit the panel to the column without going below 1:1 or above 3x - past that
+ * the pixel grid stops reading as a screen and starts reading as art. */
+function show(p) {
   const avail = $('canvas').parentElement.clientWidth - 28;
-  const zoom = Math.max(1, Math.min(3, Math.floor(avail / panel.width)));
-  paint(panel, $('canvas'), zoom);
+  paint(p, $('canvas'), Math.max(1, Math.min(3, Math.floor(avail / p.width))));
+  $('rotOut').textContent = String(p.rot);
+  $('dims').textContent = `${p.width}×${p.height}`;
+}
 
-  const tm = tagTime(secs);
+function showClock() {
+  const tm = tagTime(tagSecondsNow());
   const hhmmss = [tm.hour, tm.min, tm.sec]
     .map((v) => String(v).padStart(2, '0')).join(':');
   $('tagClock').textContent = synced ? hhmmss : `${hhmmss} (tag not synced)`;
-  $('rotOut').textContent = String(panel.rot);
-  $('dims').textContent = `${panel.width}×${panel.height}`;
+}
 
+function render() {
+  showClock();
+  if (mode === 'image') { renderImage(); return; }
+
+  const script = $('editor').value;
+  panel.setRotation(0);
+  panel.clear(1);
+  const { warnings } = runScript(panel, script, tagSecondsNow());
+  show(panel);
   showNotes(script, warnings);
 }
 
@@ -120,6 +135,59 @@ function showNotes(script, warnings) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Image                                                               */
+/* ------------------------------------------------------------------ */
+
+/** Current settings, read straight from the controls. */
+function imageOpts() {
+  return {
+    fit: $('fit').value,
+    dither: $('ditherSel').value,
+    landscape: $('landscape').checked,
+    invert: $('invert').checked,
+    brightness: +$('brightness').value,
+    contrast: +$('contrast').value,
+    threshold: +$('threshold').value,
+  };
+}
+
+function renderImage() {
+  for (const id of ['brightness', 'contrast', 'threshold']) {
+    $(`${id}Val`).textContent = $(id).value;
+  }
+  if (!image) {
+    /* Show the frame the image will land in rather than a stale template, so
+     * switching tabs makes it obvious the preview now belongs to this pane. */
+    const { w, h, rot } = Img.surface($('landscape').checked);
+    const blank = new Panel();
+    blank.setRotation(rot);
+    blank.clear(1);
+    blank.rect(0, 0, w - 1, h - 1, 0, 1, 0);
+    imagePanel = null;
+    show(blank);
+    return;
+  }
+  imagePanel = Img.process(image, imageOpts());
+  show(imagePanel);
+}
+
+async function setImage(blob, name) {
+  try {
+    image = await Img.loadImage(blob);
+    $('imgCtl').removeAttribute('disabled');
+    $('drop').classList.add('loaded');
+    $('drop').querySelector('b').textContent = name || 'Image loaded';
+    $('drop').querySelector('span').textContent =
+      `${image.width}×${image.height} — click to replace`;
+    log(`Loaded ${name || 'image'} (${image.width}×${image.height}).`, 'ok');
+    renderImage();
+    refreshConnState();
+  } catch (err) {
+    log(err.message, 'err');
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Actions                                                             */
 /* ------------------------------------------------------------------ */
 
@@ -136,7 +204,7 @@ function refreshConnState() {
   /* Enabled once a tag has been chosen, not only while the link is up: the
    * actions reconnect for themselves, so greying them out during a transient
    * drop would make the UI feel broken when nothing is wrong. */
-  $('push').disabled = !paired;
+  $('push').disabled = !paired || (mode === 'image' && !image);
   $('sync').disabled = !paired;
 }
 
@@ -147,7 +215,7 @@ async function syncTime() {
   render();
 }
 
-async function push() {
+async function pushTemplate() {
   const body = compile($('editor').value);
   const bytes = new TextEncoder().encode(body).length;
 
@@ -158,25 +226,68 @@ async function push() {
     return;
   }
 
+  /* RESET() first, so a second push in the same connection replaces the
+   * template instead of drawing on top of it. TIME() rides along in the same
+   * batch: both are control commands the firmware applies and discards, so
+   * neither ends up in the stored face. */
+  const wantSync = $('autoSync').checked;
+  const batch = 'RESET()\n'
+              + (wantSync ? `TIME(${tagSecondsNow()})\n` : '')
+              + body;
+
+  await tag.write(batch);
+  if (wantSync) synced = true;
+
+  log(`Pushed ${bytes} bytes. The panel refreshes ~0.4 s after the last `
+    + 'byte, then takes about 2 s.', 'ok');
+  render();
+}
+
+async function pushImage() {
+  if (!imagePanel) { log('No image loaded.', 'warn'); return; }
+
+  /* Deliberately no TIME() here, whatever the auto-sync box says. A command
+   * write is what tells the firmware the template owns the panel again, so
+   * syncing the clock alongside an image would paint the image straight back
+   * off the screen. Sync before switching to this tab if the clock needs it. */
+  const btn = $('push');
+  const label = btn.textContent;
+  btn.disabled = true;
+
   try {
-    /* RESET() first, so a second push in the same connection replaces the
-     * template instead of drawing on top of it. TIME() rides along in the same
-     * batch: both are control commands the firmware applies and discards, so
-     * neither ends up in the stored face. */
-    const wantSync = $('autoSync').checked;
-    const batch = 'RESET()\n'
-                + (wantSync ? `TIME(${tagSecondsNow()})\n` : '')
-                + body;
-
-    await tag.write(batch);
-    if (wantSync) synced = true;
-
-    log(`Pushed ${bytes} bytes. The panel refreshes ~0.4 s after the last `
-      + 'byte, then takes about 2 s.', 'ok');
-    render();
-  } catch (err) {
-    log(`Push failed: ${err.message}`, 'err');
+    await tag.pushImage(imagePanel.fb, {
+      onProgress: (done, total) => {
+        btn.textContent = `${Math.round((done / total) * 100)}%`;
+      },
+    });
+    log('Image sent. The panel refreshes once the last byte lands, ~2 s.', 'ok');
+  } finally {
+    btn.textContent = label;
+    refreshConnState();
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Tabs                                                                */
+/* ------------------------------------------------------------------ */
+
+function setMode(next) {
+  mode = next;
+  const isImg = next === 'image';
+
+  $('tabTemplate').classList.toggle('on', !isImg);
+  $('tabImage').classList.toggle('on', isImg);
+  $('paneTemplate').hidden = isImg;
+  $('paneImage').hidden = !isImg;
+  document.querySelector('details.ref').hidden = isImg;
+
+  $('push').textContent = isImg ? 'Push image' : 'Push to tag';
+  /* The auto-sync box belongs to the template push; pushImage() ignores it,
+   * and leaving it visible would suggest otherwise. */
+  $('autoSync').closest('label').hidden = isImg;
+
+  refreshConnState();
+  render();
 }
 
 /* ------------------------------------------------------------------ */
@@ -207,6 +318,75 @@ $('revert').addEventListener('click', () => {
 $('editor').addEventListener('input', render);
 window.addEventListener('resize', render);
 
+$('tabTemplate').addEventListener('click', () => setMode('template'));
+$('tabImage').addEventListener('click', () => setMode('image'));
+
+/* --- image controls ------------------------------------------------- */
+
+for (const [value, text] of Object.entries(Img.FITS)) {
+  $('fit').append(new Option(text, value));
+}
+for (const [value, text] of Object.entries(Img.DITHERS)) {
+  $('ditherSel').append(new Option(text, value));
+}
+
+function applyImageDefaults() {
+  const d = Img.DEFAULTS;
+  $('fit').value = d.fit;
+  $('ditherSel').value = d.dither;
+  $('landscape').checked = d.landscape;
+  $('invert').checked = d.invert;
+  $('brightness').value = d.brightness;
+  $('contrast').value = d.contrast;
+  $('threshold').value = d.threshold;
+}
+applyImageDefaults();
+
+for (const id of ['fit', 'ditherSel', 'landscape', 'invert',
+                  'brightness', 'contrast', 'threshold']) {
+  $(id).addEventListener('input', renderImage);
+}
+$('imgReset').addEventListener('click', () => {
+  applyImageDefaults();
+  renderImage();
+});
+
+$('file').addEventListener('change', (e) => {
+  const f = e.target.files?.[0];
+  if (f) setImage(f, f.name);
+});
+
+const drop = $('drop');
+for (const type of ['dragenter', 'dragover']) {
+  drop.addEventListener(type, (e) => {
+    e.preventDefault();
+    drop.classList.add('over');
+  });
+}
+for (const type of ['dragleave', 'drop']) {
+  drop.addEventListener(type, () => drop.classList.remove('over'));
+}
+drop.addEventListener('drop', (e) => {
+  e.preventDefault();
+  const f = e.dataTransfer?.files?.[0];
+  if (f) setImage(f, f.name);
+});
+
+/* Paste anywhere on the page, not just over the drop zone - a screenshot on
+ * the clipboard is the most common way an image gets here, and hunting for a
+ * focus target first would be needless ceremony. */
+window.addEventListener('paste', (e) => {
+  if (mode !== 'image') return;
+  for (const item of e.clipboardData?.items ?? []) {
+    if (item.type.startsWith('image/')) {
+      setImage(item.getAsFile(), 'pasted image');
+      return;
+    }
+  }
+});
+
+/* --- connection ----------------------------------------------------- */
+
 $('connect').addEventListener('click', async () => {
   if (tag.device) {
     await tag.disconnect();
@@ -228,7 +408,14 @@ $('connect').addEventListener('click', async () => {
   }
 });
 
-$('push').addEventListener('click', push);
+$('push').addEventListener('click', async () => {
+  try {
+    if (mode === 'image') await pushImage();
+    else await pushTemplate();
+  } catch (err) {
+    log(`Push failed: ${err.message}`, 'err');
+  }
+});
 $('sync').addEventListener('click', async () => {
   try { await syncTime(); }
   catch (err) { log(`Sync failed: ${err.message}`, 'err'); }
@@ -256,5 +443,7 @@ if (btProblem) {
 }
 
 /* Tick the preview so {S} and the minute rollover animate. Cheap: the whole
- * render is a few thousand pixel writes. */
-setInterval(render, 1000);
+ * render is a few thousand pixel writes. Image mode is left out - nothing in
+ * it changes with the clock, and re-dithering every second would burn CPU to
+ * produce identical bytes. */
+setInterval(() => (mode === 'template' ? render() : showClock()), 1000);
