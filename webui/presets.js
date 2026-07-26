@@ -63,6 +63,19 @@ export const PRESETS = {
     "FONT(10,102,0,0,0,1,1,'WEEK {V:02d} OF {G}')\n" +
     "FONT(160,102,0,0,0,1,1,'DAY {j} / {L}')\n",
 
+  /* Draws itself rather than just labelling itself: the bar is an expression
+   * over {d} and {L}, so it grows across the month and resets on the 1st. The
+   * outline runs to 4+{L}*8, which for a 31-day month is 252 - two pixels off
+   * the right edge, and clipped rather than wrapped. */
+  'Month progress':
+    'ROTATE(3)\n' +
+    'CLEAR(1)\n' +
+    "FONT(4,4,0,0,0,1,3,'{H:02d}:{N:02d}')\n" +
+    "FONT(4,44,0,0,0,1,2,'{W} {d} {M} {y}')\n" +
+    'RECT(4,70,4+{L}*8,82,0,1,0)\n' +
+    'RECT(4,70,4+{d}*8,82,0,1,1)\n' +
+    "FONT(4,92,0,0,0,1,1,'DAY {j} OF YEAR   WEEK {V}')\n",
+
   /* Portrait, so the frame is 122x250 and the centring above does not apply. */
   'Portrait':
     'ROTATE(0)\n' +

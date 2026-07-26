@@ -57,15 +57,49 @@ static const char *const MONTH_NAME[12] = {
     "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"
 };
 
+/* Clock snapshot for the script currently being run, taken once in
+ * epd_cmd_run(). Reading the clock per reference instead would let a script
+ * that straddles a second boundary render {S} inconsistently between its own
+ * lines - and would repeat the calendar arithmetic for every variable. */
+static epd_tm_t  s_tm;
+static uint32_t  s_now;
+
+/* Value of a {} variable as a number. False for the text-valued names ({W},
+ * {M}, {P}, {VER}) and for anything unrecognised. Shared by expand_vars()
+ * and the expression parser, so a name cannot mean one thing inside FONT text
+ * and another in a coordinate. */
+static bool var_num(const char *name, int32_t *out)
+{
+    if (!name[0] || name[1]) {
+        return false;              /* every numeric name is a single letter */
+    }
+    switch (name[0]) {
+    case 'y': *out = s_tm.year;  return true;
+    case 'm': *out = s_tm.month; return true;
+    case 'd': *out = s_tm.day;   return true;
+    case 'H': *out = s_tm.hour;  return true;
+    case 'N': *out = s_tm.min;   return true;
+    case 'S': *out = s_tm.sec;   return true;
+    case 'w': *out = s_tm.wday;  return true;
+    case 'j': *out = s_tm.yday;  return true;
+    case 'L': *out = s_tm.mdays; return true;
+    case 'V': *out = s_tm.week;  return true;
+    case 'G': *out = s_tm.wyear; return true;
+    /* Midnight and noon are 12, not 0. */
+    case 'h': *out = (s_tm.hour % 12) ? (s_tm.hour % 12) : 12; return true;
+    /* Seconds since 2000. Fits int32 until 2068, which is well past the point
+     * at which a CR2032 is the limiting factor. */
+    case 'u': *out = (int32_t)s_now; return true;
+    default:  return false;
+    }
+}
+
 /* Expand {..} references in `in` into `out`. Unknown names are copied through
  * verbatim (braces included) so a typo is visible on the panel rather than
  * silently vanishing. */
 static void expand_vars(const char *in, char *out, uint16_t out_size)
 {
-    epd_tm_t tm;
     uint16_t n = 0;
-
-    epd_time_get(&tm);
 
     while (*in && n < out_size - 1) {
         if (*in != '{') {
@@ -100,34 +134,16 @@ static void expand_vars(const char *in, char *out, uint16_t out_size)
         }
         p++;                              /* skip '}' */
 
-        uint32_t num;
-        bool is_num = true;
+        int32_t num = 0;
 
-        if      (!nlen)                 { is_num = false; }
-        else if (name[0]=='y' && !name[1]) num = tm.year;
-        else if (name[0]=='m' && !name[1]) num = tm.month;
-        else if (name[0]=='d' && !name[1]) num = tm.day;
-        else if (name[0]=='H' && !name[1]) num = tm.hour;
-        else if (name[0]=='N' && !name[1]) num = tm.min;
-        else if (name[0]=='S' && !name[1]) num = tm.sec;
-        else if (name[0]=='w' && !name[1]) num = tm.wday;
-        else if (name[0]=='u' && !name[1]) num = epd_time_now();
-        else if (name[0]=='j' && !name[1]) num = tm.yday;
-        else if (name[0]=='L' && !name[1]) num = tm.mdays;
-        else if (name[0]=='V' && !name[1]) num = tm.week;
-        else if (name[0]=='G' && !name[1]) num = tm.wyear;
-        /* 12-hour clock: midnight and noon are 12, not 0. */
-        else if (name[0]=='h' && !name[1]) num = (tm.hour % 12) ? (tm.hour % 12) : 12;
-        else                                is_num = false;
-
-        if (is_num) {
-            append_uint(out, out_size, &n, num, width, zero_pad);
+        if (nlen && var_num(name, &num)) {
+            append_uint(out, out_size, &n, (uint32_t)num, width, zero_pad);
         } else if (name[0]=='W' && !name[1]) {
-            append_str(out, out_size, &n, WDAY_NAME[tm.wday % 7]);
+            append_str(out, out_size, &n, WDAY_NAME[s_tm.wday % 7]);
         } else if (name[0]=='M' && !name[1]) {
-            append_str(out, out_size, &n, MONTH_NAME[(tm.month - 1) % 12]);
+            append_str(out, out_size, &n, MONTH_NAME[(s_tm.month - 1) % 12]);
         } else if (name[0]=='P' && !name[1]) {
-            append_str(out, out_size, &n, tm.hour < 12 ? "AM" : "PM");
+            append_str(out, out_size, &n, s_tm.hour < 12 ? "AM" : "PM");
         } else if (name[0]=='V' && name[1]=='E' && name[2]=='R' && !name[3]) {
             append_str(out, out_size, &n, "HEMA1");
         } else {
@@ -149,26 +165,154 @@ static bool starts_with(const char *s, const char *prefix)
     return true;
 }
 
-/* Parses a signed decimal integer starting at *pp, advances *pp past it and
- * past a following ',' or ')' if present. Does NOT implement the vendor's
- * {}-variable / arithmetic-expression syntax - plain integer literals only. */
-static int32_t parse_int(const char **pp)
+/* ---------------------------------------------------------------------------
+ * Numeric arguments
+ *
+ * An argument is an expression, not just a literal: integers, {} variables,
+ * + - * / %, parentheses and unary minus. This is what makes the variables
+ * worth having outside FONT text - without it {d} can be printed but cannot
+ * position anything, so a progress bar across the month, a hand that tracks
+ * the hour, or a bar chart of the day are all out of reach:
+ *
+ *     RECT(4,4,4+{d}*8,12,0,1,1)      how far through the month we are
+ *     LINE(60,60,60+{H}*2,60,0,2)     a crude hour hand
+ *
+ * Deliberately simple: no functions, no comparisons, no floats. Everything is
+ * int32 and truncating, matching the panel's integer coordinate space.
+ *
+ * Malformed input yields 0 and keeps going, in line with the rest of the
+ * parser - a shelf label should degrade to a wrong-looking face, never to a
+ * hang. The two ways that could bite are guarded explicitly: division by zero
+ * (undefined in C, and on this core an invisible wrong answer) and unbounded
+ * recursion through parentheses on a 1.7 KB stack.
+ * ------------------------------------------------------------------------ */
+
+#define EXPR_MAX_DEPTH  8
+
+static int32_t parse_expr(const char **pp, uint8_t depth);
+
+/* number | {var} | '(' expr ')' | ('-'|'+') factor */
+static int32_t parse_factor(const char **pp, uint8_t depth)
 {
     const char *p = *pp;
-    bool neg = false;
     int32_t val = 0;
 
     while (*p == ' ') p++;
-    if (*p == '-') { neg = true; p++; }
+
+    if (*p == '-') {
+        *pp = p + 1;
+        return -parse_factor(pp, depth);
+    }
+    if (*p == '+') {
+        *pp = p + 1;
+        return parse_factor(pp, depth);
+    }
+
+    if (*p == '(') {
+        *pp = p + 1;
+        /* Past the cap the sub-expression evaluates to 0 rather than
+         * recursing: deep nesting is a malformed script, and overflowing the
+         * stack here would take out the framebuffer sitting next to it. */
+        val = (depth < EXPR_MAX_DEPTH) ? parse_expr(pp, (uint8_t)(depth + 1)) : 0;
+        p = *pp;
+        while (*p == ' ') p++;
+        if (*p == ')') p++;
+        *pp = p;
+        return val;
+    }
+
+    if (*p == '{') {
+        char name[12];
+        uint8_t n = 0;
+        const char *q = p + 1;
+
+        while (*q && *q != '}' && n < sizeof(name) - 1) {
+            name[n++] = *q++;
+        }
+        name[n] = '\0';
+
+        if (*q == '}') {
+            if (!var_num(name, &val)) {
+                val = 0;           /* text-valued or unknown */
+            }
+            *pp = q + 1;
+            return val;
+        }
+        /* Unterminated: step over the brace so the caller cannot spin. */
+        *pp = p + 1;
+        return 0;
+    }
+
     while (*p >= '0' && *p <= '9') {
         val = val * 10 + (*p - '0');
         p++;
     }
+    *pp = p;
+    return val;
+}
+
+static int32_t parse_term(const char **pp, uint8_t depth)
+{
+    int32_t val = parse_factor(pp, depth);
+
+    for (;;) {
+        const char *p = *pp;
+        char op;
+
+        while (*p == ' ') p++;
+        op = *p;
+        if (op != '*' && op != '/' && op != '%') {
+            break;
+        }
+        *pp = p + 1;
+
+        int32_t rhs = parse_factor(pp, depth);
+        if (op == '*') {
+            val *= rhs;
+        } else if (rhs == 0) {
+            val = 0;               /* not a trap, not a wrong answer */
+        } else if (op == '/') {
+            val /= rhs;
+        } else {
+            val %= rhs;
+        }
+    }
+    return val;
+}
+
+static int32_t parse_expr(const char **pp, uint8_t depth)
+{
+    int32_t val = parse_term(pp, depth);
+
+    for (;;) {
+        const char *p = *pp;
+        char op;
+
+        while (*p == ' ') p++;
+        op = *p;
+        if (op != '+' && op != '-') {
+            break;
+        }
+        *pp = p + 1;
+
+        int32_t rhs = parse_term(pp, depth);
+        val = (op == '+') ? (val + rhs) : (val - rhs);
+    }
+    return val;
+}
+
+/* Evaluates one argument starting at *pp, advances *pp past it and past a
+ * following ',' or ')' if present. An empty argument is 0, as before. */
+static int32_t parse_int(const char **pp)
+{
+    int32_t val = parse_expr(pp, 0);
+    const char *p = *pp;
+
     while (*p == ' ') p++;
     if (*p == ',' || *p == ')') p++;
 
     *pp = p;
-    return neg ? -val : val;
+    return val;
 }
 
 /* Parses a single-quoted string argument (for FONT's trailing 'text' arg).
@@ -524,6 +668,11 @@ void epd_cmd_run(void)
     char line[CMD_LINE_MAX];
     uint16_t line_len = 0;
     bool overflow = false;
+
+    /* One clock reading for the whole script, so every {} reference in it -
+     * in text and in coordinates alike - describes the same instant. */
+    s_now = epd_time_now();
+    epd_time_get(&s_tm);
 
     /* A client's last line often arrives without a trailing newline; commit it
      * before replaying, or it would be silently dropped. */

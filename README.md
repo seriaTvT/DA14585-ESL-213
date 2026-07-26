@@ -73,6 +73,25 @@ It is also the tie-breaker when the panel disagrees with the preview: firmware,
 JS port and SWD test rig are three suspects, and comparing any two cannot say
 which is wrong.
 
+### Templates
+
+A face is a short script — `CLEAR`, `LINE`, `RECT`, `CIRCLE`, `FONT`, `ROTATE`
+— stored on the tag and re-run on every minute tick, which is what makes it a
+clock rather than a picture. `{}` variables expand to the date and time, and
+they work in **numeric arguments** as well as in text: arguments are integer
+expressions with `+ - * / %`, parentheses and unary minus. So a face can draw
+itself rather than only label itself —
+
+```
+RECT(4,70,4+{L}*8,82,0,1,0)     outline: the whole month
+RECT(4,70,4+{d}*8,82,0,1,1)     fill: how far into it we are
+```
+
+Nothing throws: a malformed expression, an unknown variable and division by
+zero all evaluate to 0, because a shelf label has nowhere to report an error to
+and should degrade to a wrong-looking face rather than a hung one. The preview
+does the same, then flags it.
+
 ### Images
 
 The **Image** tab takes an arbitrary picture — dropped, picked or pasted — and

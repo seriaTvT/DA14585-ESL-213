@@ -326,6 +326,14 @@
         <tr><td>{H:02d}</td><td>width/zero-pad suffix, printf-style</td></tr>
       </table>
       <p class="hint">
+        Variables work in <b>numeric arguments</b> too, not just in text, and
+        arguments are expressions: <code>+ - * / %</code>, parentheses and
+        unary minus, all integer. That is what lets a face draw itself rather
+        than just label itself — <code>RECT(4,70,4+{d}*8,82,0,1,1)</code> is a
+        bar that grows across the month. Division by zero gives 0, and anything
+        malformed gives 0 rather than failing, matching the firmware.
+      </p>
+      <p class="hint">
         Values re-expand on every minute tick, which is what makes the tag a
         clock rather than a picture frame. Anything not listed here is ignored
         by the firmware — the preview flags it rather than failing silently.

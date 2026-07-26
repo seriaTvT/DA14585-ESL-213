@@ -15,7 +15,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { Panel, runScript, expandVars, tagTime, tagSecondsNow, textWidth }
+import { Panel, runScript, expandVars, tagTime, tagSecondsNow, textWidth, evalArg }
   from './epd.js';
 import { PRESETS } from './presets.js';
 import { dither, toPanel, surface, DITHERS } from './image.js';
@@ -357,6 +357,24 @@ test('the JS renderer is byte-identical to the firmware C', { skip:
     "ROTATE(3)\nCLEAR(1)\nFONT(0,0,0,0,0,1,4,'{h}{P} A,B')\n",
     /* Off-panel and degenerate input: both sides must clip, not wrap. */
     "ROTATE(3)\nCLEAR(1)\nRECT(240,110,400,400,0,1,1)\nFONT(230,0,0,0,0,1,3,'XYZ')\n",
+
+    /* Expression arguments. These are where the two implementations are most
+     * likely to drift: JS numbers are doubles and do not wrap at 32 bits, its
+     * '/' is not integer division, and division by zero is Infinity rather
+     * than the firmware's deliberate 0. */
+    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,4+{d}*8,12,0,1,1)\nLINE(60,60,60+{H}*2,60,0,2)\n",
+    "ROTATE(3)\nCLEAR(1)\nRECT((1+1)*2,4,(10+10)*2,20,0,1,1)\n",
+    "ROTATE(3)\nCLEAR(1)\nCIRCLE(125-{N},61,{L}-{d}+8,0,2,1)\n",
+    "ROTATE(3)\nCLEAR(1)\nPOINT({j}%250,{V}*2,0,1)\nRECT(0,0,{u}%200,10,0,1,1)\n",
+    /* Malformed on purpose: both must yield 0 and carry on. */
+    "ROTATE(3)\nCLEAR(1)\nRECT(1/0,{W},{nope},10%0,0,1,1)\nPOINT(-(3+4),8,0,1)\n",
+    "ROTATE(3)\nCLEAR(1)\nRECT((((((((((1+1)))))))))*4,4,80,20,0,1,1)\n",
+    /* A missing comma. The firmware stops the first argument at the space and
+     * resumes the next one at the 2, so it sees 1,2,3 - a preview that split
+     * on commas would see 1,3,0 and draw somewhere else entirely. */
+    "ROTATE(3)\nCLEAR(1)\nPOINT(1 2,3,0,1)\nRECT(8 9,4,40,20,0,1,1)\n",
+    /* Quoted text still wins over expression syntax inside it. */
+    "ROTATE(3)\nCLEAR(1)\nFONT(2,2,0,0,0,1,2,'A,B (1+2)')\n",
   ];
 
   /* A date where {V}/{G} disagree with {y}, so a parity bug in the new
@@ -377,4 +395,65 @@ test('the JS renderer is byte-identical to the firmware C', { skip:
     assert.equal(at, -1, at < 0 ? '' :
       `first difference at byte ${at} (native row ${(at / 16) | 0}) for:\n${script}`);
   }
+});
+
+/* ------------------------------------------------------------------ */
+/* Expression arguments                                                */
+/* ------------------------------------------------------------------ */
+
+test('numeric arguments evaluate expressions', () => {
+  const tm = tagTime(at(2026, 7, 26, 14, 37));   /* Sunday, day 207 */
+  const e = (s) => evalArg(s, tm);
+
+  assert.equal(e('42'), 42);
+  assert.equal(e('-7'), -7);
+  assert.equal(e('2+3*4'), 14, 'precedence');
+  assert.equal(e('(2+3)*4'), 20, 'parentheses');
+  assert.equal(e('{d}'), 26);
+  assert.equal(e('4+{d}*8'), 212);
+  assert.equal(e('{L}-{d}'), 5, 'days left in the month');
+  assert.equal(e(' 1 + 2 '), 3, 'spaces are skipped as in parse_int()');
+  assert.equal(e('10%3'), 1);
+  assert.equal(e('-(3+4)'), -7);
+  assert.equal(e('--5'), 5, 'unary minus nests');
+});
+
+test('a bad expression yields 0 rather than throwing', () => {
+  /* The firmware has nowhere to report an error to, so it renders something
+   * wrong instead of hanging. The preview must agree, or the two diverge on
+   * exactly the inputs where agreement matters most. */
+  const tm = tagTime(at(2026, 7, 26));
+  const e = (s) => evalArg(s, tm);
+
+  assert.equal(e(''), 0);
+  assert.equal(e(undefined), 0, 'a missing argument');
+  assert.equal(e('1/0'), 0, 'division by zero is 0, not a trap');
+  assert.equal(e('1%0'), 0);
+  assert.equal(e('{W}'), 0, 'a text-valued variable has no number');
+  assert.equal(e('{nope}'), 0, 'an unknown variable');
+  assert.equal(e('{unterminated'), 0);
+  assert.equal(e('+'), 0);
+  assert.equal(e('()'), 0);
+});
+
+test('deep parenthesis nesting is capped, not recursed', () => {
+  /* The firmware caps at EXPR_MAX_DEPTH to stay off a 1.7 KB stack. The exact
+   * value past the cap matters less than both sides agreeing on it, which the
+   * firmware-parity test checks; this pins that it terminates at all. */
+  const tm = tagTime(at(2026, 7, 26));
+  assert.equal(evalArg('('.repeat(200) + '1' + ')'.repeat(200), tm), 0);
+  assert.equal(evalArg('((((1+1))))', tm), 2, 'ordinary nesting still works');
+});
+
+test('an argument list is split on top-level commas only', () => {
+  /* A ')' inside an expression must not end the argument list. Getting this
+   * wrong truncates arguments in the preview that the panel renders fine. */
+  const p = new Panel();
+  p.clear(1);
+  runScript(p, 'ROTATE(3)\nCLEAR(1)\nRECT((1+1)*2,4,(10+10)*2,20,0,1,1)\n', SECS);
+
+  /* The rect spans x 4..40, y 4..20 - check a corner is inked and that the
+   * area beyond where a truncated parse would have stopped is inked too. */
+  assert.equal(p.get(4, 4), 0, 'rect did not start where the expression says');
+  assert.equal(p.get(40, 20), 0, 'rect was truncated at the inner paren');
 });

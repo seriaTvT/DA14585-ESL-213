@@ -264,6 +264,33 @@ export const TEXT_HEIGHT = (scale) => 7 * scale;
 /* {} variable expansion - the expand_vars() port.                     */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Numeric value of a {} variable, or undefined for the text-valued names
+ * ({W}, {M}, {P}, {VER}) and anything unknown.
+ *
+ * Ports var_num() in epd_cmdparser.c, and is shared with the expression
+ * evaluator for the same reason it is shared there: a name must not mean one
+ * thing inside FONT text and another in a coordinate.
+ */
+export function varNum(name, tm) {
+  switch (name) {
+    case 'y': return tm.year;
+    case 'm': return tm.month;
+    case 'd': return tm.day;
+    case 'H': return tm.hour;
+    case 'N': return tm.min;
+    case 'S': return tm.sec;
+    case 'w': return tm.wday;
+    case 'j': return tm.yday;
+    case 'L': return tm.mdays;
+    case 'V': return tm.week;
+    case 'G': return tm.wyear;
+    case 'h': return (tm.hour % 12) || 12;   /* midnight and noon are 12 */
+    case 'u': return tm.u;
+    default:  return undefined;
+  }
+}
+
 export function expandVars(input, secs) {
   const tm = tagTime(secs);
   let out = '';
@@ -278,16 +305,10 @@ export function expandVars(input, secs) {
 
     const [tok, name, zero, widthStr] = m;
     const width = widthStr ? parseInt(widthStr, 10) : 0;
-    const nums = {
-      y: tm.year, m: tm.month, d: tm.day, H: tm.hour,
-      N: tm.min, S: tm.sec, w: tm.wday, u: tm.u,
-      j: tm.yday, L: tm.mdays, V: tm.week, G: tm.wyear,
-      /* 12-hour clock: midnight and noon are 12, not 0. */
-      h: (tm.hour % 12) || 12,
-    };
+    const n = varNum(name, tm);
 
-    if (name in nums) {
-      out += String(nums[name]).padStart(width, zero ? '0' : ' ');
+    if (n !== undefined) {
+      out += String(n).padStart(width, zero ? '0' : ' ');
     } else if (name === 'W') {
       out += WDAY_NAME[tm.wday % 7];
     } else if (name === 'M') {
@@ -308,37 +329,159 @@ export function expandVars(input, secs) {
 /* Script execution - the dispatch_line() port.                        */
 /* ------------------------------------------------------------------ */
 
-/* Split a command's argument list, respecting 'quoted strings' (which may
- * legitimately contain commas). Returns raw arg text, unparsed. */
-function splitArgs(s) {
-  const args = [];
-  let cur = '', quoted = false;
+/* ------------------------------------------------------------------ */
+/* Numeric arguments - the parse_int()/parse_expr() port.              */
+/*                                                                     */
+/* Arguments are expressions: integers, {} variables, + - * / %,        */
+/* parentheses and unary minus. Everything is int32 and truncating, and  */
+/* malformed input yields 0 rather than throwing, exactly as the        */
+/* firmware does - see the header comment above parse_int() in          */
+/* epd_cmdparser.c.                                                     */
+/* ------------------------------------------------------------------ */
 
-  for (let i = 0; i < s.length; i++) {
-    const c = s[i];
-    if (quoted) {
-      if (c === "'") quoted = false; else cur += c;
-    } else if (c === "'") {
-      quoted = true;
-    } else if (c === ',') {
-      args.push(cur.trim()); cur = '';
-    } else if (c === ')') {
-      break;
-    } else {
-      cur += c;
-    }
-  }
-  args.push(cur.trim());
-  return args;
-}
+const EXPR_MAX_DEPTH = 8;
 
-const num = (a, i) => {
-  const v = parseInt(a[i], 10);
-  return Number.isNaN(v) ? 0 : v;       /* parse_int() yields 0 on garbage */
+/* Force C's int32 wrap-around; JS numbers are doubles and would not. */
+const i32 = (v) => v | 0;
+
+const skipSpace = (s, i) => {
+  while (s[i] === ' ') i++;
+  return i;
 };
 
-/* Which commands take a quoted string, and where. */
-const STRING_ARG = { FONT: 7 };
+function parseFactor(s, i, depth, tm) {
+  i = skipSpace(s, i);
+
+  if (s[i] === '-') {
+    const r = parseFactor(s, i + 1, depth, tm);
+    return { v: i32(-r.v), i: r.i };
+  }
+  if (s[i] === '+') return parseFactor(s, i + 1, depth, tm);
+
+  if (s[i] === '(') {
+    let v = 0, j = i + 1;
+    /* Past the cap the sub-expression is skipped rather than recursed, which
+     * is what the firmware does to keep off its 1.7 KB stack. */
+    if (depth < EXPR_MAX_DEPTH) {
+      const r = parseExpr(s, j, depth + 1, tm);
+      v = r.v; j = r.i;
+    }
+    j = skipSpace(s, j);
+    if (s[j] === ')') j++;
+    return { v, i: j };
+  }
+
+  if (s[i] === '{') {
+    let j = i + 1, name = '';
+    while (j < s.length && s[j] !== '}' && name.length < 11) name += s[j++];
+    if (s[j] === '}') {
+      const v = varNum(name, tm);
+      return { v: v === undefined ? 0 : i32(v), i: j + 1 };
+    }
+    return { v: 0, i: i + 1 };     /* unterminated - step over the brace */
+  }
+
+  let v = 0, j = i;
+  while (s[j] >= '0' && s[j] <= '9') {
+    v = i32(v * 10 + (s.charCodeAt(j) - 48));
+    j++;
+  }
+  return { v, i: j };
+}
+
+function parseTerm(s, i, depth, tm) {
+  let { v, i: j } = parseFactor(s, i, depth, tm);
+
+  for (;;) {
+    const k = skipSpace(s, j);
+    const op = s[k];
+    if (op !== '*' && op !== '/' && op !== '%') break;
+
+    const r = parseFactor(s, k + 1, depth, tm);
+    j = r.i;
+    if (op === '*') v = Math.imul(v, r.v);     /* exact int32, unlike v*r.v */
+    else if (r.v === 0) v = 0;                 /* divide by zero -> 0 */
+    else if (op === '/') v = i32(v / r.v);     /* truncates toward zero */
+    else v = i32(v % r.v);
+  }
+  return { v, i: j };
+}
+
+function parseExpr(s, i, depth, tm) {
+  let { v, i: j } = parseTerm(s, i, depth, tm);
+
+  for (;;) {
+    const k = skipSpace(s, j);
+    const op = s[k];
+    if (op !== '+' && op !== '-') break;
+
+    const r = parseTerm(s, k + 1, depth, tm);
+    j = r.i;
+    v = i32(op === '+' ? v + r.v : v - r.v);
+  }
+  return { v, i: j };
+}
+
+/** Evaluate one standalone argument. Missing arguments are 0, as in the
+ *  firmware. Exposed for tests; runScript() uses Args below. */
+export function evalArg(text, tm) {
+  if (text === undefined) return 0;
+  return parseExpr(text, 0, 0, tm).v;
+}
+
+/**
+ * Reads a command's arguments the way the firmware does: one cursor walking
+ * the text, each int()/str() consuming what it needs plus a trailing ',' or
+ * ')'.
+ *
+ * This is deliberately not "split on commas, then evaluate each piece". The
+ * two agree on well-formed input and diverge the moment an argument does not
+ * consume cleanly: given POINT(1 2,3,0,1) the firmware reads 1, stops at the
+ * space, and its *next* read starts at the 2 - so it sees 1,2,3 where a
+ * comma-split sees 1,3,0. Same class of drift with a ')' inside an expression.
+ * Since the whole point of this file is to be a port, it parses like the port.
+ */
+class Args {
+  constructor(text, tm) {
+    this.s = text;
+    this.i = 0;
+    this.tm = tm;
+  }
+
+  /** Ports parse_int(). */
+  int() {
+    const r = parseExpr(this.s, this.i, 0, this.tm);
+    let j = skipSpace(this.s, r.i);
+    if (this.s[j] === ',' || this.s[j] === ')') j++;
+    this.i = j;
+    return r.v;
+  }
+
+  ints(n) {
+    const out = [];
+    for (let k = 0; k < n; k++) out.push(this.int());
+    return out;
+  }
+
+  /** Ports parse_string(). CMD_TEXT_MAX is 64, so 63 chars plus a NUL. */
+  str() {
+    let j = skipSpace(this.s, this.i);
+    let out = '';
+
+    if (this.s[j] === "'") {
+      j++;
+      while (j < this.s.length && this.s[j] !== "'" && out.length < 63) {
+        out += this.s[j++];
+      }
+      if (this.s[j] === "'") j++;
+    }
+
+    j = skipSpace(this.s, j);
+    if (this.s[j] === ',' || this.s[j] === ')') j++;
+    this.i = j;
+    return out;
+  }
+}
 
 /**
  * Run a script against a panel.
@@ -348,6 +491,11 @@ const STRING_ARG = { FONT: 7 };
 export function runScript(panel, script, secs) {
   const warnings = [];
   const lines = script.split('\n');
+
+  /* One clock reading for the whole script, as epd_cmd_run() takes. Reading it
+   * per reference would let a script that straddles a second boundary render
+   * {S} inconsistently between its own lines. */
+  const tm = tagTime(secs);
 
   lines.forEach((raw, n) => {
     const line = raw.trim();
@@ -359,44 +507,51 @@ export function runScript(panel, script, secs) {
       return;
     }
     const cmd = line.slice(0, open).trim().toUpperCase();
-    const a = splitArgs(line.slice(open + 1));
+    const a = new Args(line.slice(open + 1), tm);
 
     switch (cmd) {
       case 'CLEAR':
-        panel.clear(num(a, 0));
+        panel.clear(a.int());
         break;
 
-      case 'POINT':
-        panel.set(num(a, 0), num(a, 1), num(a, 2));
+      case 'POINT': {
+        /* Four arguments are read but only three used: the firmware parses
+         * `pix` and ignores it, and the cursor has to end up in the same
+         * place either way. */
+        const [x, y, c] = a.ints(4);
+        panel.set(x, y, c);
         break;
+      }
 
-      case 'LINE':
-        panel.line(num(a, 0), num(a, 1), num(a, 2), num(a, 3),
-                   num(a, 4), num(a, 5));
+      case 'LINE': {
+        const [x1, y1, x2, y2, c, pix] = a.ints(6);
+        panel.line(x1, y1, x2, y2, c, pix);
         break;
+      }
 
-      case 'RECT':
-        panel.rect(num(a, 0), num(a, 1), num(a, 2), num(a, 3),
-                   num(a, 4), num(a, 5), num(a, 6));
+      case 'RECT': {
+        const [x1, y1, x2, y2, c, pix, fill] = a.ints(7);
+        panel.rect(x1, y1, x2, y2, c, pix, fill);
         break;
+      }
 
-      case 'CIRCLE':
-        panel.circle(num(a, 0), num(a, 1), num(a, 2),
-                     num(a, 3), num(a, 4), num(a, 5));
+      case 'CIRCLE': {
+        const [x, y, r, c, pix, fill] = a.ints(6);
+        panel.circle(x, y, r, c, pix, fill);
         break;
+      }
 
       case 'FONT': {
         /* FONT(x, y, gap, font_id, fore, back, scale, 'text').
          * gap and font_id are accepted and ignored, as in the firmware -
          * the fallback font is fixed-pitch and there is only one of it. */
-        const text = a[STRING_ARG.FONT] ?? '';
-        panel.text(num(a, 0), num(a, 1), expandVars(text, secs),
-                   num(a, 4), num(a, 5), num(a, 6));
+        const [x, y, , , fore, back, scale] = a.ints(7);
+        panel.text(x, y, expandVars(a.str(), secs), fore, back, scale);
         break;
       }
 
       case 'ROTATE': {
-        let r = num(a, 0);
+        let r = a.int();
         /* The vendor's doc defines degrees and indices in the same breath, so
          * both are accepted. */
         if (r === 90) r = 1; else if (r === 180) r = 2; else if (r === 270) r = 3;
