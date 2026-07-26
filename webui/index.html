@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HEMA EPD Clock</title>
+<style>
+  :root {
+    --bg: #14151a;      --panel: #1c1e26;   --edge: #2c2f3a;
+    --ink: #e8e9ee;     --dim: #9aa0b0;     --accent: #6ea8fe;
+    --ok: #7ee0a6;      --warn: #f0c674;    --err: #f08a8a;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f4f5f8;    --panel: #fff;      --edge: #dfe2ea;
+      --ink: #1b1d24;   --dim: #666c7a;     --accent: #2b6cd4;
+      --ok: #1a7f4b;    --warn: #97690a;    --err: #b3261e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 system-ui, -apple-system, Segoe UI, sans-serif;
+  }
+
+  header {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 14px 20px; border-bottom: 1px solid var(--edge);
+    background: var(--panel);
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 650; }
+  header .sub { color: var(--dim); font-size: 13px; }
+  header .spacer { flex: 1; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 4px 11px; border-radius: 999px; font-size: 13px;
+    border: 1px solid var(--edge); color: var(--dim);
+  }
+  .pill .dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--dim);
+  }
+  .pill.on { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+  .pill.on .dot { background: var(--ok); }
+
+  button {
+    font: inherit; font-size: 14px; padding: 8px 14px; border-radius: 8px;
+    border: 1px solid var(--edge); background: var(--panel); color: var(--ink);
+    cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary {
+    background: var(--accent); border-color: var(--accent);
+    color: #fff; font-weight: 600;
+  }
+  @media (prefers-color-scheme: light) { button.primary { color: #fff; } }
+
+  main {
+    display: grid; grid-template-columns: minmax(320px, 1fr) minmax(380px, 1.1fr);
+    gap: 18px; padding: 18px 20px; max-width: 1220px; margin: 0 auto;
+  }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+
+  section {
+    background: var(--panel); border: 1px solid var(--edge);
+    border-radius: 12px; padding: 16px;
+  }
+  section > h2 {
+    margin: 0 0 12px; font-size: 12px; font-weight: 650;
+    letter-spacing: .07em; text-transform: uppercase; color: var(--dim);
+  }
+
+  /* --- preview ------------------------------------------------------ */
+  .screen {
+    display: flex; justify-content: center; padding: 14px;
+    background: #0d0e12; border-radius: 10px; overflow-x: auto;
+  }
+  @media (prefers-color-scheme: light) { .screen { background: #22242c; } }
+  canvas { image-rendering: pixelated; display: block; max-width: 100%; }
+
+  .meta {
+    display: flex; gap: 16px; flex-wrap: wrap;
+    margin-top: 12px; font-size: 13px; color: var(--dim);
+  }
+  .meta b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .row + .row { margin-top: 10px; }
+  label.check { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--dim); }
+
+  /* --- editor ------------------------------------------------------- */
+  textarea {
+    width: 100%; min-height: 260px; resize: vertical;
+    font: 13px/1.55 var(--mono); tab-size: 2;
+    color: var(--ink); background: var(--bg);
+    border: 1px solid var(--edge); border-radius: 8px; padding: 11px;
+  }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+  select {
+    font: inherit; font-size: 13px; padding: 7px 10px; border-radius: 8px;
+    border: 1px solid var(--edge); background: var(--panel); color: var(--ink);
+  }
+
+  .counter { font: 12px var(--mono); color: var(--dim); margin-left: auto; }
+  .counter.over { color: var(--err); font-weight: 600; }
+
+  /* --- diagnostics -------------------------------------------------- */
+  .notes { margin-top: 12px; display: grid; gap: 6px; }
+  .note {
+    font: 12px/1.5 var(--mono); padding: 7px 10px; border-radius: 6px;
+    border-left: 3px solid var(--warn);
+    background: color-mix(in srgb, var(--warn) 12%, transparent);
+  }
+  .note.err { border-left-color: var(--err);
+              background: color-mix(in srgb, var(--err) 12%, transparent); }
+
+  #log {
+    font: 12px/1.6 var(--mono); max-height: 190px; overflow-y: auto;
+    margin: 0; padding: 10px; border-radius: 8px;
+    background: var(--bg); border: 1px solid var(--edge);
+  }
+  #log div { white-space: pre-wrap; word-break: break-word; }
+  #log .ok { color: var(--ok); }
+  #log .warn { color: var(--warn); }
+  #log .err { color: var(--err); }
+  #log .dim { color: var(--dim); }
+
+  .hint { font-size: 12.5px; color: var(--dim); margin: 10px 0 0; }
+  .hint code {
+    font-family: var(--mono); font-size: 12px;
+    background: var(--bg); border: 1px solid var(--edge);
+    padding: 1px 5px; border-radius: 4px;
+  }
+  details.ref { margin-top: 12px; }
+  details.ref summary { cursor: pointer; font-size: 13px; color: var(--dim); }
+  details.ref table { border-collapse: collapse; margin-top: 10px; width: 100%; }
+  details.ref td {
+    padding: 4px 8px 4px 0; font-size: 12.5px;
+    border-bottom: 1px solid var(--edge); vertical-align: top;
+  }
+  details.ref td:first-child {
+    font-family: var(--mono); white-space: nowrap; color: var(--accent);
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>HEMA EPD Clock</h1>
+  <span class="sub">250 &times; 122 &middot; 1&nbsp;bpp</span>
+  <span class="spacer"></span>
+  <span class="pill" id="status"><span class="dot"></span><span id="statusText">Disconnected</span></span>
+  <button id="connect" class="primary">Connect</button>
+</header>
+
+<main>
+  <section>
+    <h2>Preview</h2>
+    <div class="screen"><canvas id="canvas"></canvas></div>
+
+    <div class="meta">
+      <span>Tag time <b id="tagClock">--:--:--</b></span>
+      <span>Rotation <b id="rotOut">–</b></span>
+      <span>Frame <b id="dims">–</b></span>
+    </div>
+
+    <div class="row" style="margin-top:14px">
+      <button id="push" class="primary" disabled>Push to tag</button>
+      <button id="sync" disabled>Sync time</button>
+      <label class="check">
+        <input type="checkbox" id="autoSync" checked> sync clock on push
+      </label>
+    </div>
+
+    <p class="hint">
+      The tag has no RTC, so it starts at <code>00:00</code> after every power
+      cut and needs a fresh <code>TIME()</code>. The face itself is kept in
+      flash and survives.
+    </p>
+    <p class="hint">
+      Expect the link to drop a second or two after each push: the panel
+      refresh blocks the tag for ~2&nbsp;s, longer than Bluetooth will wait for
+      it. The template is already stored by then, and the next action
+      reconnects on its own.
+    </p>
+
+    <h2 style="margin-top:20px">Activity</h2>
+    <div id="log"></div>
+  </section>
+
+  <section>
+    <h2>Template</h2>
+    <div class="row">
+      <select id="preset">
+        <option value="">Load a preset…</option>
+      </select>
+      <button id="revert">Revert</button>
+      <span class="counter" id="counter">0 / 1024 B</span>
+    </div>
+    <div class="row">
+      <textarea id="editor" spellcheck="false"></textarea>
+    </div>
+    <div class="notes" id="notes"></div>
+
+    <details class="ref">
+      <summary>Command reference</summary>
+      <table>
+        <tr><td>CLEAR(c)</td><td>Fill the screen. <code>0</code> black, <code>1</code> white.</td></tr>
+        <tr><td>POINT(x,y,c,pix)</td><td>Single pixel.</td></tr>
+        <tr><td>LINE(x1,y1,x2,y2,c,pix)</td><td><code>pix</code> is stroke width.</td></tr>
+        <tr><td>RECT(x1,y1,x2,y2,c,pix,fill)</td><td><code>fill</code> 1 for solid.</td></tr>
+        <tr><td>CIRCLE(x,y,r,c,pix,fill)</td><td></td></tr>
+        <tr><td>FONT(x,y,gap,id,fore,back,scale,'text')</td>
+            <td><code>gap</code> and <code>id</code> are accepted but ignored —
+                one fixed-pitch 5&times;7 font so far. Glyph cell is
+                6&times;7 px times <code>scale</code>.</td></tr>
+        <tr><td>ROTATE(r)</td><td><code>0..3</code> or <code>0/90/180/270</code>.
+                Odd values are landscape (250&times;122).</td></tr>
+        <tr><td>TIME(s)</td><td>Seconds since 2000-01-01. Applied on arrival,
+                never stored — sent for you by <i>Sync time</i>.</td></tr>
+        <tr><td>RESET()</td><td>Begin a new template. Sent for you by
+                <i>Push</i>, so repeat pushes replace rather than stack.</td></tr>
+      </table>
+      <table style="margin-top:14px">
+        <tr><td>{H} {N} {S}</td><td>hour, minute, second</td></tr>
+        <tr><td>{y} {m} {d}</td><td>year, month, day</td></tr>
+        <tr><td>{w} {W}</td><td>weekday number, weekday name (SUN…SAT)</td></tr>
+        <tr><td>{u}</td><td>raw seconds since the 2000 epoch</td></tr>
+        <tr><td>{VER}</td><td>firmware tag — <code>HEMA1</code></td></tr>
+        <tr><td>{H:02d}</td><td>width/zero-pad suffix, printf-style</td></tr>
+      </table>
+      <p class="hint">
+        Values re-expand on every minute tick, which is what makes the tag a
+        clock rather than a picture frame. Anything not listed here is ignored
+        by the firmware — the preview flags it rather than failing silently.
+      </p>
+    </details>
+  </section>
+</main>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>

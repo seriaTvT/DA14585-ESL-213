@@ -1,0 +1,61 @@
+/*
+ * presets.js - starting-point faces.
+ *
+ * Kept out of app.js so they can be rendered headlessly by a test, which is
+ * how the "byte-identical to the firmware's default" claim below stays true
+ * rather than merely intended.
+ */
+import { textWidth } from './epd.js';
+
+/* Landscape geometry, so x centring is against a 250 px wide frame. Text is
+ * scale*(6n-1) wide for n glyphs - see textWidth(). Math.floor, not round, to
+ * match the firmware's integer division. */
+const centre = (n, scale) => Math.floor((250 - textWidth(n, scale)) / 2);
+
+export const PRESETS = {
+  /* Byte-identical to DEFAULT_FACE[] in epd_cmdparser.c, so "what the tag
+   * ships with" is always one click away - and, since a test diffs the two,
+   * stays that way if either side is edited. */
+  'Built-in default':
+    'ROTATE(3)\n' +
+    'CLEAR(1)\n' +
+    `FONT(${centre(5, 5)},25,0,0,0,1,5,'{H:02d}:{N:02d}')\n` +
+    `FONT(${centre(10, 2)},72,0,0,0,1,2,'{y}-{m:02d}-{d:02d}')\n` +
+    `FONT(${centre(3, 2)},94,0,0,0,1,2,'{W}')\n`,
+
+  'Big clock':
+    'ROTATE(3)\n' +
+    'CLEAR(1)\n' +
+    `FONT(${centre(5, 7)},22,0,0,0,1,7,'{H:02d}:{N:02d}')\n` +
+    `FONT(${centre(14, 2)},88,0,0,0,1,2,'{W} {y}-{m:02d}-{d:02d}')\n`,
+
+  'Inverted':
+    'ROTATE(3)\n' +
+    'CLEAR(0)\n' +
+    `FONT(${centre(5, 6)},24,0,0,1,0,6,'{H:02d}:{N:02d}')\n` +
+    `FONT(${centre(10, 2)},86,0,0,1,0,2,'{y}-{m:02d}-{d:02d}')\n`,
+
+  'Framed card':
+    'ROTATE(3)\n' +
+    'CLEAR(1)\n' +
+    'RECT(3,3,246,118,0,2,0)\n' +
+    'LINE(3,74,246,74,0,1)\n' +
+    `FONT(${centre(5, 6)},22,0,0,0,1,6,'{H:02d}:{N:02d}')\n` +
+    `FONT(${centre(3, 2)},84,0,0,0,1,2,'{W}')\n` +
+    `FONT(${centre(10, 2)},100,0,0,0,1,2,'{y}-{m:02d}-{d:02d}')\n`,
+
+  'With seconds':
+    'ROTATE(3)\n' +
+    'CLEAR(1)\n' +
+    `FONT(${centre(8, 4)},30,0,0,0,1,4,'{H:02d}:{N:02d}:{S:02d}')\n` +
+    `FONT(${centre(10, 2)},80,0,0,0,1,2,'{y}-{m:02d}-{d:02d}')\n`,
+
+  /* Portrait, so the frame is 122x250 and the centring above does not apply. */
+  'Portrait':
+    'ROTATE(0)\n' +
+    'CLEAR(1)\n' +
+    "FONT(16,60,0,0,0,1,3,'{H:02d}')\n" +
+    "FONT(16,100,0,0,0,1,3,'{N:02d}')\n" +
+    "FONT(13,150,0,0,0,1,1,'{y}-{m:02d}-{d:02d}')\n" +
+    "FONT(44,170,0,0,0,1,1,'{W}')\n",
+};

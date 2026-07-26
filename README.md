@@ -20,6 +20,25 @@ after a power cycle — no debugger attached.
   122×250 (`HINK-E0213A53-FPC-A0`, the default here) and 104×212.
 - **Debug:** SWD on package pins 25 (SWDIO) and 26 (SW_CLK)
 
+## Web UI
+
+[`webui/`](webui/) is a browser front-end for a flashed tag: it edits the clock
+face, previews it, and pushes it over Bluetooth. No build step, no dependencies.
+
+```sh
+python3 -m http.server -d webui 8000   # then open http://localhost:8000
+```
+
+Web Bluetooth needs a secure context and a Chromium-based browser, so
+`http://localhost` or `https://` — opening `index.html` as a `file://` URL will
+not work. On Linux, Bluetooth access also requires the browser to reach BlueZ
+over D-Bus.
+
+The preview is a direct port of the firmware's own renderer — same Bresenham,
+same rotation transform, same 5×7 glyph table — so what it draws is what the
+panel will show. `node --test webui/test.mjs` guards that parity, including a
+byte-for-byte diff of the built-in face against `DEFAULT_FACE[]` in the C source.
+
 ## Documentation
 
 Development is still in progress, so the write-up is deliberately **not
