@@ -283,8 +283,8 @@ static void dispatch_line(const char *line)
         return;
     }
 
-    /* TIME() never reaches here - it is applied and dropped as it arrives, in
-     * handle_line(), so it is neither stored nor replayed. */
+    /* TIME() and RESET() never reach here - they are applied and dropped as
+     * they arrive, in handle_line(), so they are neither stored nor replayed. */
 
     /* Unrecognized / not-yet-implemented command (CAL, CLOCK, IMG, ICON,
      * TABLE, ROTATE, MIRROR, SHOW, INV, LET, SRAND, RANDS, DATE_OFF,
@@ -388,6 +388,23 @@ static void handle_line(const char *line, uint16_t len)
         if (secs > 0) {
             epd_time_set((uint32_t)secs);
         }
+        return;
+    }
+
+    /* RESET() - start a new template, same as connecting does.
+     *
+     * Without it a client could only replace the template once per connection:
+     * epd_cmd_begin_batch() fires on connect, so a second push on the same
+     * connection appended to the first and the two faces drew on top of each
+     * other (and a few edit-push cycles overflow CMD_SCRIPT_MAX). That is the
+     * normal rhythm of an editor, so the marker is what lets one stay
+     * connected while iterating.
+     *
+     * A control command rather than a timing rule on purpose: ending a batch
+     * on a gap in the writes would depend on the connection interval, and a
+     * slow link would split one template into several. */
+    if (starts_with(line, "RESET(")) {
+        epd_cmd_begin_batch();
         return;
     }
 
