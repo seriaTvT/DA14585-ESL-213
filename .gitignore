@@ -75,3 +75,13 @@ firmware/hema_epd_clock/Keil_5/
 # community author. Install into /opt/SEGGER/JLink yourself; see the local
 # BUILD_AND_FLASH.md.
 Jflash-replacement-file/
+
+# Documentation is kept local while development is in progress. The full
+# write-up (protocol notes, build/flash guide, GPIO tracing) gets rewritten and
+# published once the firmware is feature-complete; until then only the top-level
+# README is tracked, so the public repo cannot drift out of date.
+PROTOCOL_NOTES.md
+firmware/hema_epd_clock/BUILD_AND_FLASH.md
+firmware/hema_epd_clock/GPIO_TRACING_GUIDE.md
+firmware/hema_epd_clock/README.md
+docs/
