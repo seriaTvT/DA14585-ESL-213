@@ -10,7 +10,7 @@ CC      ?= cc
 SRC      = ../src/epd
 CFLAGS   = -std=c99 -Wall -Wextra -Werror -O1 -I stub -I $(SRC)
 
-TESTS    = test_time
+TESTS    = test_time test_gfx
 TOOLS    = render
 
 .PHONY: all clean render
@@ -21,6 +21,12 @@ run-test_time: test_time
 
 test_time: test_time.c $(SRC)/epd_time.c $(SRC)/epd_time.h
 	$(CC) $(CFLAGS) -o $@ test_time.c $(SRC)/epd_time.c
+
+run-test_gfx: test_gfx
+	./$<
+
+test_gfx: test_gfx.c $(SRC)/epd_gfx.c $(SRC)/epd_gfx.h
+	$(CC) $(CFLAGS) -o $@ test_gfx.c $(SRC)/epd_gfx.c
 
 # Not part of `all`: it is a diagnostic tool, not a test. See render.c.
 render: render.c $(SRC)/epd_cmdparser.c $(SRC)/epd_gfx.c $(SRC)/epd_time.c

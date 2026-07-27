@@ -254,6 +254,27 @@ static const uint8_t *find_glyph(char c)
     return NULL; /* unknown char -> blank */
 }
 
+int16_t epd_gfx_text_width(const char *text, uint8_t scale)
+{
+    if (scale < 1) scale = 1;
+
+    int32_t n = 0;
+    for (const char *p = text; *p; p++) {
+        n++;
+    }
+    if (n == 0) {
+        return 0;              /* not -scale: there is no trailing gap to trim */
+    }
+
+    /* Each glyph is 5 px plus a 1 px gap, and the last glyph has no gap after
+     * it - so (6n - 1), scaled. Computed in 32 bits and clamped: a face is
+     * free to ask for scale=200, and the wrapped negative that would produce
+     * is exactly the kind of thing that draws in the wrong place instead of
+     * simply off-panel. */
+    int32_t w = (6 * n - 1) * (int32_t)scale;
+    return (w > 32767) ? (int16_t)32767 : (int16_t)w;
+}
+
 void epd_gfx_text(int16_t x, int16_t y, const char *text, uint8_t fore, uint8_t back, uint8_t scale)
 {
     if (scale < 1) scale = 1;

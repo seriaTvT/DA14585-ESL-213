@@ -60,4 +60,13 @@ void epd_gfx_invert(int16_t x1, int16_t y1, int16_t x2, int16_t y2);
  * glyph tables per font_id later if pixel-identical rendering matters. */
 void epd_gfx_text(int16_t x, int16_t y, const char *text, uint8_t fore, uint8_t back, uint8_t scale);
 
+/* Pixel width epd_gfx_text() will occupy: (6n - 1) * scale, since each glyph
+ * is 5 px plus a 1 px gap and the last gap is not drawn. 0 for empty text.
+ *
+ * Exists so align= can place text without the face hand-computing offsets.
+ * The current faces carry arithmetic like (250 - width) / 2 worked out by hand
+ * against the glyph metrics - which is silently wrong the moment those metrics
+ * change, and changing them is exactly what adding a second font does. */
+int16_t epd_gfx_text_width(const char *text, uint8_t scale);
+
 #endif // _EPD_GFX_H_

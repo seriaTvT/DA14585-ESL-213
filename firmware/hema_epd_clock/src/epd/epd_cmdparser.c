@@ -519,7 +519,7 @@ static const char *const OPTS_NONE[]  = { NULL };
 static const char *const OPTS_POINT[] = { "color", NULL };
 static const char *const OPTS_LINE[]  = { "color", "width", NULL };
 static const char *const OPTS_SHAPE[] = { "color", "width", "fill", NULL };
-static const char *const OPTS_FONT[]  = { "color", "bg", "scale", NULL };
+static const char *const OPTS_FONT[]  = { "color", "bg", "scale", "align", NULL };
 
 static void check_options(const char *args, const char *const *known)
 {
@@ -727,12 +727,30 @@ static void dispatch_line(const char *line)
         int32_t color = named_int(args, "color", 0);
         int32_t bg    = named_int(args, "bg", 1);
         int32_t scale = named_int(args, "scale", 1);
+        int32_t align = named_int(args, "align", 0);
         check_options(args, OPTS_FONT);
         /* Substitute {H}, {N}, {y}... here rather than at parse time, so a
          * stored script re-rendered on the minute tick picks up the new
          * time (see epd_cmd_run()). */
         expand_vars(text, expanded, sizeof(expanded));
-        epd_gfx_text((int16_t)x, (int16_t)y, expanded,
+
+        /* align= moves the anchor, it does not centre within the screen: x is
+         * the left edge at 0, the centre at 1, the right edge at 2. Anchoring
+         * is the more useful of the two - centring on the panel is just
+         * align=1 at x = width/2 - and it is the only one that works for text
+         * placed against something other than the frame.
+         *
+         * Applied after expansion, because the width of "{H:02d}:{N:02d}" is
+         * not the width of "09:41". Done here rather than in epd_gfx_text() so
+         * the primitive keeps one job; the preview does the same in its FONT
+         * case, against the same epd_gfx_text_width() rule. */
+        int16_t tx = (int16_t)x;
+        if (align != 0) {
+            int16_t w = epd_gfx_text_width(expanded, (uint8_t)scale);
+            tx = (int16_t)(tx - ((align == 1) ? w / 2 : w));
+        }
+
+        epd_gfx_text(tx, (int16_t)y, expanded,
                      (uint8_t)color, (uint8_t)bg, (uint8_t)scale);
         return;
     }

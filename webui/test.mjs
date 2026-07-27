@@ -669,6 +669,20 @@ test('the JS renderer is byte-identical to the firmware C', { skip:
     /* Computed from expressions, the way a calendar highlighting today does. */
     "ROTATE(3)\nCLEAR(1)\nINVERT(8+({d}%7)*20,30+({d}/7)*14,19,13)\n",
 
+    /* align=. The anchor shifts by a width measured after {} expansion, so
+     * these poke at both the metric and the point it is taken. */
+    "ROTATE(3)\nCLEAR(1)\nFONT(125,10,'CENTRED',align=1)\n",
+    "ROTATE(3)\nCLEAR(1)\nFONT(245,10,'RIGHT',align=2)\n",
+    "ROTATE(3)\nCLEAR(1)\nFONT(125,40,'{H:02d}:{N:02d}',scale=4,align=1)\n",
+    /* Odd widths: w/2 truncates, and both sides must truncate the same way. */
+    "ROTATE(3)\nCLEAR(1)\nFONT(125,10,'ABC',scale=3,align=1)\nFONT(125,40,'AB',scale=3,align=1)\n",
+    /* Anchored off-panel, so the clip does the rest. */
+    "ROTATE(3)\nCLEAR(1)\nFONT(0,10,'OFFLEFT',align=2)\nFONT(249,30,'OFFRIGHT',align=1)\n",
+    /* Empty text must not shift anything by -scale. */
+    "ROTATE(3)\nCLEAR(1)\nFONT(125,10,'',align=1)\nFONT(4,4,'X')\n",
+    /* Unknown align values behave as "not centre" on both sides. */
+    "ROTATE(3)\nCLEAR(1)\nFONT(125,10,'ODD',align=7)\n",
+
     /* EVERY draws nothing, but both sides must agree it is a known command -
      * if one of them warned or errored, the other's frame would still match. */
     "ROTATE(3)\nCLEAR(1)\nEVERY(60)\nFONT(4,4,'X')\n",
@@ -817,6 +831,57 @@ test('the repaint interval does not leak between scripts', { skip:
   assert.equal(after(['CLEAR(1)\nEVERY(1440)\n', 'CLEAR(1)\n']), 1,
     'the firmware kept the previous face\'s interval');
   assert.equal(after(['CLEAR(1)\nEVERY(1440)\n', 'CLEAR(1)\nEVERY(30)\n']), 30);
+});
+
+test('align= anchors text rather than centring it on the screen', () => {
+  /* Expected positions are derived from the metric here, not by re-running the
+   * renderer, so a wrong metric cannot agree with itself. */
+  const draw = (script) => {
+    const p = new Panel();
+    p.setRotation(3);
+    p.clear(1);
+    runScript(p, script, SECS);
+    /* Leftmost and rightmost inked columns. */
+    let lo = 1e9, hi = -1;
+    for (let y = 0; y < p.height; y++)
+      for (let x = 0; x < p.width; x++)
+        if (!p.get(x, y)) { lo = Math.min(lo, x); hi = Math.max(hi, x); }
+    return { lo, hi };
+  };
+
+  const w = textWidth(5, 2);                 /* 'HELLO' at scale 2 */
+  assert.equal(w, 58);
+
+  const left = draw("CLEAR(1)\nFONT(100,10,'HELLO',scale=2)\n");
+  assert.equal(left.lo, 100, 'align=0 puts x at the left edge');
+
+  const centre = draw("CLEAR(1)\nFONT(100,10,'HELLO',scale=2,align=1)\n");
+  assert.equal(centre.lo, 100 - Math.trunc(w / 2), 'align=1 centres on x');
+
+  const right = draw("CLEAR(1)\nFONT(100,10,'HELLO',scale=2,align=2)\n");
+  assert.equal(right.lo, 100 - w, 'align=2 puts the right edge at x');
+  assert.ok(right.hi < 100, 'align=2 must not draw past the anchor');
+
+  /* Centring on the panel is align=1 at the panel's own centre - the point of
+   * anchoring rather than screen-centring. */
+  const onPanel = draw("CLEAR(1)\nFONT(125,10,'HELLO',scale=2,align=1)\n");
+  const slack = 250 - w;
+  assert.equal(onPanel.lo, 125 - Math.trunc(w / 2));
+  assert.ok(Math.abs(onPanel.lo - Math.floor(slack / 2)) <= 1,
+    'centring on x=125 should land within a pixel of a hand-centred face');
+});
+
+test('an empty string has no width', () => {
+  /* (6n - 1) alone gives -scale for n = 0, which would shift an align=1 anchor
+   * the wrong way by a whole scale unit rather than leaving it alone. */
+  assert.equal(textWidth(0, 1), 0);
+  assert.equal(textWidth(0, 6), 0);
+
+  const p = new Panel();
+  p.setRotation(3);
+  p.clear(1);
+  runScript(p, "CLEAR(1)\nFONT(125,10,'',align=1)\n", SECS);
+  assert.ok(p.fb.every((b) => b === 0xff), 'empty text drew ink');
 });
 
 test('the month grid highlights today, and only today', () => {

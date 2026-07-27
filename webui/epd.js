@@ -273,7 +273,13 @@ export class Panel {
 
 /** Rendered width of `n` glyphs at `scale` - no gap after the last one.
  *  Handy for centring text, which is most of what face authoring is. */
-export function textWidth(n, scale) { return scale * (6 * n - 1); }
+/* Ports epd_gfx_text_width(). Takes a glyph count rather than the string,
+ * since every caller here already has one. 0 glyphs is 0 px - not -scale,
+ * which is what (6n-1) alone would give and what a naive port would inherit. */
+export function textWidth(n, scale) {
+  if (scale < 1) scale = 1;
+  return n === 0 ? 0 : scale * (6 * n - 1);
+}
 export const TEXT_HEIGHT = (scale) => 7 * scale;
 
 /* ------------------------------------------------------------------ */
@@ -618,7 +624,7 @@ export const OPTIONS = {
   LINE:   ['color', 'width'],
   RECT:   ['color', 'width', 'fill'],
   CIRCLE: ['color', 'width', 'fill'],
-  FONT:   ['color', 'bg', 'scale'],
+  FONT:   ['color', 'bg', 'scale', 'align'],
   ROTATE: [],
   INVERT: [],
   EVERY:  [],
@@ -709,8 +715,22 @@ export function runScript(panel, script, secs) {
          * because the command is meaningless without it. */
         const [x, y] = a.ints(2);
         const str = a.str();
-        panel.text(x, y, expandVars(str, secs),
-                   a.named('color', 0), a.named('bg', 1), a.named('scale', 1));
+        const scale = a.named('scale', 1);
+        const shown = expandVars(str, secs);
+
+        /* align= moves the anchor: x is the left edge at 0, the centre at 1,
+         * the right edge at 2. Measured after expansion, because the width of
+         * "{H:02d}:{N:02d}" is not the width of "09:41". Math.trunc to match
+         * the firmware's integer division - both floor for the positive
+         * widths this can produce, but the intent should not rest on that. */
+        const align = a.named('align', 0);
+        let tx = x;
+        if (align !== 0) {
+          const w = textWidth(shown.length, scale);
+          tx -= align === 1 ? Math.trunc(w / 2) : w;
+        }
+
+        panel.text(tx, y, shown, a.named('color', 0), a.named('bg', 1), scale);
         break;
       }
 
