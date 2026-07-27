@@ -43,6 +43,13 @@
 #include "gpio.h"
 #include "uart.h"
 
+/* Pulled in for EPD_BOARD_VARIANT_A / EPD_BITBANG: which pads the hardware SPI
+ * block gets depends on the board variant, because on variant B the panel and
+ * the boot flash share it and on variant A they do not. This has to come before
+ * the SPI section below, so it is an include rather than a comment telling the
+ * reader to define the variant first. */
+#include "epd_ssd1680.h"
+
 
 /*
  * DEFINES
@@ -88,6 +95,27 @@
 
     #define SPI_DI_PORT             GPIO_PORT_0
     #define SPI_DI_PIN              GPIO_PIN_3
+
+#elif !defined (__DA14586__) && defined (EPD_BOARD_VARIANT_A)
+    /* Variant A: the hardware SPI block serves the BOOT FLASH ONLY. The panel
+     * is bit-banged on its own pins (P0_1/P2_0, see epd_ssd1680.h), so unlike
+     * variant B nothing here is shared with it.
+     *   CS = P0_3   CLK = P0_0   MOSI/DO = P0_6   MISO/DI = P0_5
+     * DI can simply be the flash's own P0_5 here: variant B had to park it on
+     * P0_2 only because P0_5 doubled as that board's D/C line. That whole
+     * detach-and-restore dance in epd_store.c therefore becomes a no-op on this
+     * board - it reconfigures P0_5 to the function it already has. */
+    #define SPI_EN_PORT             GPIO_PORT_0
+    #define SPI_EN_PIN              GPIO_PIN_3
+
+    #define SPI_CLK_PORT            GPIO_PORT_0
+    #define SPI_CLK_PIN             GPIO_PIN_0
+
+    #define SPI_DO_PORT             GPIO_PORT_0
+    #define SPI_DO_PIN              GPIO_PIN_6
+
+    #define SPI_DI_PORT             GPIO_PORT_0
+    #define SPI_DI_PIN              GPIO_PIN_5
 
 #elif !defined (__DA14586__)
     /* EPD SPI pins recovered from the community firmware (variant B) — see

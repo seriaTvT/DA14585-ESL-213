@@ -50,11 +50,48 @@
 static void epd_cs_low(void)  { GPIO_SetInactive(EPD_CS_PORT, EPD_CS_PIN); }
 static void epd_cs_high(void) { GPIO_SetActive(EPD_CS_PORT, EPD_CS_PIN); }
 
+#if EPD_BITBANG
+
+/* Variant A drives the panel with two plain GPIOs instead of the SPI block,
+ * exactly as that board's retail firmware does. Mode 0: clock idles low, the
+ * bit is presented while SCK is low and the panel latches it on the rising
+ * edge; MSB first. Both were read off the retail driver's own bit loop rather
+ * than assumed - it tests bit 7 first and pulses SCK high-then-low per bit.
+ *
+ * No delays: a GPIO_Set* pair is several 16 MHz cycles on its own, which is
+ * far slower than the ~20 MHz this controller family accepts. */
+static void epd_tx(const uint8_t *buf, uint16_t len)
+{
+    while (len--) {
+        uint8_t b = *buf++;
+
+        for (uint8_t i = 0; i < 8; i++) {
+            if (b & 0x80) {
+                GPIO_SetActive(EPD_SDA_PORT, EPD_SDA_PIN);
+            } else {
+                GPIO_SetInactive(EPD_SDA_PORT, EPD_SDA_PIN);
+            }
+            GPIO_SetActive(EPD_SCK_PORT, EPD_SCK_PIN);
+            GPIO_SetInactive(EPD_SCK_PORT, EPD_SCK_PIN);
+            b = (uint8_t)(b << 1);
+        }
+    }
+}
+
+#else
+
+static void epd_tx(const uint8_t *buf, uint16_t len)
+{
+    spi_send(buf, len, SPI_OP_BLOCKING);
+}
+
+#endif
+
 static void epd_write_cmd(uint8_t cmd)
 {
     GPIO_SetInactive(EPD_DC_PORT, EPD_DC_PIN); /* DC low = command */
     epd_cs_low();
-    spi_send(&cmd, 1, SPI_OP_BLOCKING);
+    epd_tx(&cmd, 1);
     epd_cs_high();
 }
 
@@ -62,7 +99,7 @@ static void epd_write_data(uint8_t data)
 {
     GPIO_SetActive(EPD_DC_PORT, EPD_DC_PIN);   /* DC high = data */
     epd_cs_low();
-    spi_send(&data, 1, SPI_OP_BLOCKING);
+    epd_tx(&data, 1);
     epd_cs_high();
 }
 
@@ -70,7 +107,7 @@ static void epd_write_data_buf(const uint8_t *buf, uint16_t len)
 {
     GPIO_SetActive(EPD_DC_PORT, EPD_DC_PIN);
     epd_cs_low();
-    spi_send(buf, len, SPI_OP_BLOCKING);
+    epd_tx(buf, len);
     epd_cs_high();
 }
 
@@ -153,6 +190,22 @@ static const uint8_t epd_lut_partial[76] = {
 
 /* ---- public API ----------------------------------------------------------- */
 
+#if EPD_BITBANG
+
+/* Variant A shares nothing with the boot flash: the panel is on P0_1/P2_0 and
+ * the flash on P0_0/P0_3/P0_5/P0_6, so there is no bus to hand back. This stays
+ * as a real function rather than an empty macro because epd_store.c calls it on
+ * release and the panel's pads still have to be put back to outputs - the flash
+ * path does not touch them, but a future borrower might. */
+void epd_spi_claim(void)
+{
+    GPIO_ConfigurePin(EPD_SCK_PORT, EPD_SCK_PIN, OUTPUT, PID_GPIO, false);
+    GPIO_ConfigurePin(EPD_SDA_PORT, EPD_SDA_PIN, OUTPUT, PID_GPIO, false);
+    GPIO_ConfigurePin(EPD_DC_PORT,  EPD_DC_PIN,  OUTPUT, PID_GPIO, false);
+}
+
+#else
+
 /* The panel does not own the SPI bus outright: the boot flash hangs off the
  * same CLK (P0_0) and MOSI (P0_6), and worse, P0_5 is the panel's D/C but the
  * flash's MISO. Whoever used the bus last must therefore hand it back before
@@ -176,14 +229,39 @@ void epd_spi_claim(void)
     spi_initialize(&epd_spi_cfg);
 }
 
+#endif  /* EPD_BITBANG */
+
 void epd_gpio_init(void)
 {
+#if EPD_BITBANG
+    /* Panel clock and data as plain outputs, both idle low. */
+    GPIO_ConfigurePin(EPD_SCK_PORT, EPD_SCK_PIN, OUTPUT, PID_GPIO, false);
+    GPIO_ConfigurePin(EPD_SDA_PORT, EPD_SDA_PIN, OUTPUT, PID_GPIO, false);
+    /* Second enable line, held high for as long as the panel is in use. The
+     * retail firmware asserts it alongside PWR and never lowers it. */
+    GPIO_ConfigurePin(EPD_AUX_PORT, EPD_AUX_PIN, OUTPUT, PID_GPIO, true);
+#endif
+
     /* CS as GPIO output, idle high (inactive). Must be PID_GPIO so the
      * GPIO SET/RESET registers (used by epd_cs_low/high) actually drive it. */
     GPIO_ConfigurePin(EPD_CS_PORT,   EPD_CS_PIN,   OUTPUT, PID_GPIO, true);
     GPIO_ConfigurePin(EPD_DC_PORT,   EPD_DC_PIN,   OUTPUT, PID_GPIO, false);
     GPIO_ConfigurePin(EPD_RST_PORT,  EPD_RST_PIN,  OUTPUT, PID_GPIO, true);
-    GPIO_ConfigurePin(EPD_BUSY_PORT, EPD_BUSY_PIN, INPUT,  PID_GPIO, false);
+    /* BUSY as an input with a PULL-DOWN, not hi-Z.
+     *
+     * The retail firmware configures its BUSY pin this way (mode 0x0200,
+     * confirmed by reading the pin back after calling its own panel init), and
+     * the reason is worth keeping: BUSY is active-high, so a hi-Z input on a
+     * panel that is not driving the line floats high and reads as **busy
+     * forever**. That turns "the panel is not connected" into "the panel is
+     * permanently mid-refresh" - epd_display_busy() never returns false, the
+     * refresh never completes, and every wait here burns its full timeout.
+     * Diagnosing that cost most of a session on the variant-A tag.
+     *
+     * With a pull-down the same fault reads as idle, which is both the safer
+     * failure and the honest one. On a healthy panel the line is driven either
+     * way, so this costs nothing. */
+    GPIO_ConfigurePin(EPD_BUSY_PORT, EPD_BUSY_PIN, INPUT_PULLDOWN, PID_GPIO, false);
     /* Assert the panel power-enable exactly as the stock firmware does
      * (P2_3 high). Without this the booster/supply may stay off. */
     GPIO_ConfigurePin(EPD_PWR_PORT,  EPD_PWR_PIN,  OUTPUT, PID_GPIO, true);
@@ -320,7 +398,7 @@ void epd_display_start(const uint8_t *framebuffer)
 #if EPD_INVERT_OUTPUT
         b = (uint8_t)~b;
 #endif
-        spi_send(&b, 1, SPI_OP_BLOCKING);
+        epd_tx(&b, 1);
     }
     epd_cs_high();
 

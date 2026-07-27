@@ -74,10 +74,19 @@ void GPIO_reservations(void)
     RESERVE_GPIO(UART2_TX, UART2_TX_PORT, UART2_TX_PIN, PID_UART2_TX);
 #endif
 
-    /* EPD SPI bus */
-    RESERVE_GPIO(EPD_SCK,  SPI_CLK_PORT, SPI_CLK_PIN, PID_SPI_CLK);
-    RESERVE_GPIO(EPD_MOSI, SPI_DO_PORT,  SPI_DO_PIN,  PID_SPI_DO);
-    RESERVE_GPIO(EPD_MISO, SPI_DI_PORT,  SPI_DI_PIN,  PID_SPI_DI);
+    /* Hardware SPI pads. On variant B these are shared with the panel; on
+     * variant A they belong to the boot flash alone (see user_periph_setup.h). */
+    RESERVE_GPIO(SPI_CLK,  SPI_CLK_PORT, SPI_CLK_PIN, PID_SPI_CLK);
+    RESERVE_GPIO(SPI_MOSI, SPI_DO_PORT,  SPI_DO_PIN,  PID_SPI_DO);
+    RESERVE_GPIO(SPI_MISO, SPI_DI_PORT,  SPI_DI_PIN,  PID_SPI_DI);
+
+#if EPD_BITBANG
+    /* Variant A drives the panel's clock and data as plain GPIOs, plus a
+     * second enable line held high. */
+    RESERVE_GPIO(EPD_SCK, EPD_SCK_PORT, EPD_SCK_PIN, PID_GPIO);
+    RESERVE_GPIO(EPD_SDA, EPD_SDA_PORT, EPD_SDA_PIN, PID_GPIO);
+    RESERVE_GPIO(EPD_AUX, EPD_AUX_PORT, EPD_AUX_PIN, PID_GPIO);
+#endif
 
     /* EPD control lines - all plain GPIO (see epd_ssd1680.h) */
     RESERVE_GPIO(EPD_CS,   EPD_CS_PORT,   EPD_CS_PIN,   PID_GPIO);
@@ -107,9 +116,9 @@ void set_pad_functions(void)
     GPIO_ConfigurePin(UART2_TX_PORT, UART2_TX_PIN, OUTPUT, PID_UART2_TX, false);
 #endif
 
-    // Configure the SPI bus pins used to talk to the EPD controller.
-    // CLK = P0_0, DO/MOSI = P0_6 (both hardware SPI functions). DI/MISO is
-    // unused by the write-only panel (parked on P0_2, see user_periph_setup.h).
+    // Configure the hardware SPI bus pins. On variant B these carry the panel
+    // as well as the boot flash; on variant A they are the flash's alone and
+    // the panel is bit-banged elsewhere (see user_periph_setup.h).
     // CS is NOT configured here — it's driven as a plain GPIO by the EPD
     // driver (epd_gpio_init / EPD_CS in epd_ssd1680.h), on P2_1.
     GPIO_ConfigurePin(SPI_CLK_PORT, SPI_CLK_PIN, OUTPUT, PID_SPI_CLK, false);

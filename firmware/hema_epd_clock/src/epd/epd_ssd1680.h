@@ -51,7 +51,86 @@
 #define EPD_BUF_SIZE     (EPD_WIDTH_BYTES * EPD_HEIGHT)
 
 /* ------------------------------------------------------------------------
- * GPIO pin assignments — RECOVERED FROM THE COMMUNITY FIRMWARE.
+ * BOARD VARIANT — set exactly one.
+ *
+ * Two ESL boards exist carrying the same DA14585 and the same SSD1680-family
+ * panel, wired differently. The community firmware chose between them at
+ * runtime from a stored config byte; we choose at build time.
+ *
+ *   VARIANT B  the first tag studied here. Pin map recovered from the
+ *              community firmware and confirmed by continuity-testing the FPC
+ *              connector back to the package.
+ *   VARIANT A  the tag that arrived still running the original retail
+ *              firmware. Pin map read straight out of that firmware's own
+ *              live pin table at 0x07FD4428 in a SysRAM dump — see
+ *              hema-local/re/newtag/README.md. Only CS is shared with B.
+ *
+ * GETTING THIS WRONG IS INVISIBLE AT BOOT. The tag starts, advertises and
+ * accepts commands exactly as normal; the panel simply never changes. That is
+ * precisely what happened when a variant-B build was flashed to the variant-A
+ * tag, so if a board goes quiet on the panel alone, check this first.
+ * ---------------------------------------------------------------------- */
+#if !defined(EPD_BOARD_VARIANT_A) && !defined(EPD_BOARD_VARIANT_B)
+    /* Default: the variant-A tag, which is the one on the bench. */
+    #define EPD_BOARD_VARIANT_A
+#endif
+
+#if defined(EPD_BOARD_VARIANT_A)
+
+/* ------------------------------------------------------------------------
+ * VARIANT A pin map, read from the retail firmware's own table.
+ *
+ *   EPD signal   DA14585 GPIO   table entry
+ *   ----------   ------------   -----------
+ *   SCK            P0_1           +0x06
+ *   SDA (MOSI)     P2_0           +0x08
+ *   D/C            P0_7           +0x0A
+ *   CS             P2_1           +0x00
+ *   RST            P1_0           +0x04   (the only entry ever pulsed low)
+ *   BUSY (input)   P1_1           +0x0C
+ *   enable         P2_3           +0x0E   (held high)
+ *   enable         P2_2           +0x02   (held high — note B drives it LOW)
+ *
+ * The panel is bit-banged here rather than driven by the hardware SPI block,
+ * following the retail firmware, which bit-bangs these same two pins. It costs
+ * nothing on this board and buys a real simplification: the panel pins are
+ * disjoint from the boot flash's (P0_0/P0_3/P0_5/P0_6), so unlike variant B
+ * there is no bus to share and no D/C-versus-MISO collision on P0_5.
+ * ---------------------------------------------------------------------- */
+#define EPD_BITBANG      1
+
+#define EPD_SCK_PORT     GPIO_PORT_0
+#define EPD_SCK_PIN      GPIO_PIN_1
+
+#define EPD_SDA_PORT     GPIO_PORT_2
+#define EPD_SDA_PIN      GPIO_PIN_0
+
+#define EPD_DC_PORT      GPIO_PORT_0
+#define EPD_DC_PIN       GPIO_PIN_7
+
+#define EPD_RST_PORT     GPIO_PORT_1
+#define EPD_RST_PIN      GPIO_PIN_0
+
+#define EPD_BUSY_PORT    GPIO_PORT_1
+#define EPD_BUSY_PIN     GPIO_PIN_1
+
+#define EPD_CS_PORT      GPIO_PORT_2
+#define EPD_CS_PIN       GPIO_PIN_1
+
+#define EPD_PWR_PORT     GPIO_PORT_2
+#define EPD_PWR_PIN      GPIO_PIN_3
+
+/* Second enable line. Variant B's firmware drives its P2_2 low and we leave it
+ * alone there; variant A's retail firmware holds it high, so we do too. */
+#define EPD_AUX_PORT     GPIO_PORT_2
+#define EPD_AUX_PIN      GPIO_PIN_2
+
+#else   /* EPD_BOARD_VARIANT_B */
+
+#define EPD_BITBANG      0
+
+/* ------------------------------------------------------------------------
+ * VARIANT B pin assignments — RECOVERED FROM THE COMMUNITY FIRMWARE.
  *
  * These are no longer guesses. They were extracted from the community
  * `5_hema_clock_down_high_V1.57.bin` by decompiling both the pin-setup
@@ -73,9 +152,8 @@
  *   PWR-enable     P2_3           18    (driven high by the stock firmware)
  *   aux (unknown)  P2_2           13    (driven low by the stock firmware)
  *
- * For the "variant A" alternative (config byte != 0): SCK=P0_1, MOSI=P2_0,
- * D/C=P0_7, CS=P2_1, BUSY=P1_1. If a build with the values below shows
- * nothing on the panel, variant A is the thing to try next.
+ * SCK and MOSI here are the hardware SPI block's pads (see
+ * user_periph_setup.h), shared with the boot flash.
  * ---------------------------------------------------------------------- */
 #ifndef EPD_DC_PORT
 #define EPD_DC_PORT      GPIO_PORT_0
@@ -107,6 +185,8 @@
 #define EPD_PWR_PORT     GPIO_PORT_2
 #define EPD_PWR_PIN      GPIO_PIN_3     /* QFN40 pin 18 */
 #endif
+
+#endif  /* board variant */
 
 /* ------------------------------------------------------------------------
  * API
