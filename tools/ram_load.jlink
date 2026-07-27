@@ -1,0 +1,74 @@
+// ---------------------------------------------------------------------------
+// DA14585 - load an image into SysRAM and run it, via J-Link Commander.
+//
+//   JLinkExe -device Cortex-M0 -if SWD -speed 4000 -autoconnect 1 \
+//            -CommanderScript ram_load.jlink
+//
+// Build-independent: no hardcoded MSP/PC. See "the second reset" below.
+//
+// Cortex-M0 has no VTOR, so the vector table must sit at address 0 -> the
+// remap of address 0 to SysRAM is mandatory, not cosmetic. Without it every
+// interrupt vectors into ROM, and the BLE stack is interrupt-driven.
+// ---------------------------------------------------------------------------
+
+r
+h
+
+// Freeze the watchdog early: if the image faults we want the core to stay
+// halted for inspection, not be reset back into the stock SPI-flash firmware
+// (which destroys the evidence and looks like "our image never ran").
+w2 0x50003300, 0x0008
+
+// >>> EDIT THIS PATH <<< (J-Link Commander scripts do not expand env vars or
+// ~, so it has to be a literal absolute path to your build output.)
+loadfile /path/to/DA145xx_SDK/6.0.22.1401/projects/target_apps/template/hema_epd_clock/e2studio/DA14585/hema_epd_clock.elf
+
+// --- the second reset -------------------------------------------------------
+// 'loadfile' resets BEFORE it downloads, so the core latched MSP/PC from
+// whatever image was in RAM at the time (usually the stock firmware). Running
+// from those stale values jumps into the middle of a different program.
+//
+// Resetting again AFTER the download makes the core re-latch MSP/PC from the
+// freshly-written vector table - which is why this script needs no hardcoded
+// entry values (they shift on every build).
+//
+// Safe because SYS_CTRL_REG's address-0 remap lives in the always-on domain
+// and survives SYSRESETREQ: address 0 still points at SysRAM, so the boot ROM
+// never runs and never reloads the SPI-flash firmware. Verified on hardware.
+r
+h
+
+// Re-assert after that reset: freeze watchdog + remap (SDK's own init values).
+w2 0x50003300, 0x0008
+w2 0x50003102, 0x0001
+w2 0x50003100, 0x0005
+w2 0x50000012, 0x00A2
+
+// Sanity check: word0 = initial MSP, word1 = reset handler (bit0 = Thumb).
+// These should match the image you just built, not the stock firmware.
+mem32 0x07FC0000, 2
+
+g
+
+// ---------------------------------------------------------------------------
+// Diagnostics, if the panel does not update:
+//
+//   mem16 0x50003040, 1   P2_DATA - bit0 = BUSY. It should read high (000B
+//                         with CS+PWR set) for ~1.6 s during a refresh, then
+//                         drop back to 000A. Poll it every ~150 ms while the
+//                         firmware boots. No BUSY pulse at all = the panel is
+//                         not being driven.
+//
+//   mem16 0x50003006, 1   P0_0 mode, expect 0307 (output, PID 7 = SPI_CLK)
+//   mem16 0x50003010, 1   P0_5 mode, expect 0300 (output GPIO = DC)
+//   mem16 0x50003012, 1   P0_6 mode, expect 0306 (output, PID 6 = SPI_DO)
+//   mem16 0x50003014, 1   P0_7 mode, expect 0300 (output GPIO = RST)
+//   mem16 0x50003046, 1   P2_0 mode, expect 0000 (input  GPIO = BUSY)
+//   mem16 0x50003048, 1   P2_1 mode, expect 0300 (output GPIO = CS)
+//   mem16 0x5000304C, 1   P2_3 mode, expect 0300 (output GPIO = PWR)
+//   mem16 0x50001200, 1   SPI_CTRL, expect 1011 (SPI on, master, 8-bit, 8MHz)
+//
+// If the core sits at a fixed PC inside GPIO_ConfigurePin, that is the SDK's
+// pin-allocation monitor hitting __BKPT(0) - a pin was configured without
+// being declared in GPIO_reservations() (user_periph_setup.c).
+// ---------------------------------------------------------------------------

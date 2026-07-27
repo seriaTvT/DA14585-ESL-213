@@ -30,6 +30,63 @@ or arbitrary images over Bluetooth.
 - Stores the clock face in SPI flash, so it survives a power cut.
 - Exposes two BLE services: one for the template, one for a raw image.
 
+## Building and flashing
+
+No IDE required — the e² studio project is only a wrapper around a makefile.
+
+**1. Get the SDK.** Download DA145xx SDK6 (6.0.22.1401) from Renesas; it is not
+redistributable, so it is not vendored here. Generate the project and drop the
+sources in:
+
+```sh
+python3 tools/gen_e2studio_project.py --sdk /path/to/DA145xx_SDK/6.0.22.1401
+```
+
+**2. Build.** The makefile lives under the generated project:
+
+```sh
+make -C <sdk>/projects/target_apps/template/hema_epd_clock/e2studio/DA14585 all -j4
+```
+
+Output is `hema_epd_clock.bin` — a raw linker image, vector table first.
+
+**3. Flash.** A raw `.bin` at flash offset 0 will **not** boot this tag. Its
+secondary bootloader is in OTP, ignores offset 0, and instead reads a product
+header to find two SUOTA image banks, picks the newest valid one and copies it
+to SysRAM. So the image has to be wrapped in a bank:
+
+```sh
+tools/flash.sh <stock_dump.bin> <path/to>/hema_epd_clock.bin
+```
+
+That wraps the build into bank 1 (`tools/mksuota.py`), leaves the stock image in
+bank 2 as a fallback, and programs the lot with J-Link Commander. Then
+**power-cycle the tag** — an SWD reset does not re-run the bootloader's bank
+scan, so the previous image keeps running until the power actually drops.
+
+Flashing needs the community J-Link device definition that exposes the DA14585's
+QSPI bank (`JLinkDevices.xml` plus Dialog's `jtag_programmer.axf`, installed into
+`/opt/SEGGER/JLink`). Without it `device DA14585` has no flash bank at all.
+
+**Iterating without flashing.** For a quick edit/test loop, load straight into
+SysRAM instead — non-destructive, and it reverts on the next power cut:
+
+```sh
+# edit the loadfile path inside the script first
+JLinkExe -device Cortex-M0 -if SWD -speed 4000 -autoconnect 1 \
+         -CommanderScript tools/ram_load.jlink
+```
+
+Order matters there and is counter-intuitive: `loadfile` performs an implicit
+reset, and any reset clears the address-0 remap, so the remap writes have to
+come **after** the download. Cortex-M0 has no VTOR, so the vector table must
+physically live at address 0 — without the remap every interrupt vectors into
+ROM and the BLE stack never runs.
+
+> Anything loaded into RAM is gone on the next power cut. If new firmware seems
+> to be ignored — variables rendering as literal `{M}` text, say — the tag is
+> almost certainly booting the older image still in its flash.
+
 ## Templates
 
 A face is a short script — `CLEAR`, `LINE`, `RECT`, `CIRCLE`, `FONT`, `ROTATE` —
