@@ -81,7 +81,15 @@ static bool var_num(const char *name, int32_t *out)
     case 'N': *out = s_tm.min;   return true;
     case 'S': *out = s_tm.sec;   return true;
     case 'w': *out = s_tm.wday;  return true;
+    /* Lower case is the position, upper case the length it runs against:
+     * {d}/{D} within the month, {j}/{J} within the year. */
     case 'j': *out = s_tm.yday;  return true;
+    case 'J': *out = s_tm.ydays; return true;
+    case 'D': *out = s_tm.mdays; return true;
+    /* {D} was called {L} before the pairing above existed. Kept, and kept out
+     * of the docs, so a face already stored on a tag survives a reflash - an
+     * unknown name renders as the literal "{L}" on the panel, which would be a
+     * visible break for a tag nobody is holding. */
     case 'L': *out = s_tm.mdays; return true;
     case 'V': *out = s_tm.week;  return true;
     case 'G': *out = s_tm.wyear; return true;

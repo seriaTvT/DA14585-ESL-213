@@ -103,8 +103,12 @@ only label itself:
 
 ```
 RECT(4,70,245,82,0,1,0)             a fixed frame
-RECT(4,70,4+{d}*241/{L},82,0,1,1)   filled to how far into the month we are
+RECT(4,70,4+{d}*241/{D},82,0,1,1)   filled to how far into the month we are
 ```
+
+Lower case is a position, upper case the length it runs against — `{d}` of `{D}`
+days this month, `{j}` of `{J}` days this year — so a progress bar retargets
+from month to year by changing the case of two letters.
 
 Nothing throws — a malformed expression, an unknown variable and division by
 zero all evaluate to 0. A shelf label has nowhere to report an error to, so it

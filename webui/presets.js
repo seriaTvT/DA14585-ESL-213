@@ -61,18 +61,21 @@ export const PRESETS = {
     'LINE(10,30,239,30,0,1)\n' +          /* 239 = 249 - 10, so both margins match */
     `FONT(${centre(5, 6)},44,0,0,0,1,6,'{H:02d}:{N:02d}')\n` +
     "FONT(10,102,0,0,0,1,1,'WEEK {V:02d} OF {G}')\n" +
-    "FONT(160,102,0,0,0,1,1,'DAY {j} / {L}')\n",
+    /* Right-aligned against the same 239 the rule above ends at. Always 11
+     * glyphs: {j} is padded to 3, and {J} is 365 or 366 - so the alignment
+     * holds all year rather than only after the 9th of January. */
+    `FONT(${240 - textWidth(11, 1)},102,0,0,0,1,1,'DAY {j:03d}/{J}')\n`,
 
   /* Draws itself rather than just labelling itself: the fill is an expression
-   * over {d} and {L}, so it grows across the month and resets on the 1st.
+   * over {d} and {D}, so it grows across the month and resets on the 1st.
    *
    * The frame is fixed at x 4..245 - a 4 px margin at both ends of the 250 px
    * landscape frame, whose last column is 249. Scaling the frame by the month
-   * length instead (4+{L}*8) both overran the right edge in a 31-day month and
+   * length instead (4+{D}*8) both overran the right edge in a 31-day month and
    * made the bar itself change size between February and July, which is the
    * opposite of what a progress bar should do.
    *
-   * {d}*241/{L} multiplies before dividing on purpose: the arithmetic is
+   * {d}*241/{D} multiplies before dividing on purpose: the arithmetic is
    * integer, so dividing first would collapse the fraction to 0 or 1 and the
    * bar would jump rather than creep. */
   'Month progress':
@@ -81,8 +84,8 @@ export const PRESETS = {
     "FONT(4,4,0,0,0,1,3,'{H:02d}:{N:02d}')\n" +
     "FONT(4,44,0,0,0,1,2,'{W} {d} {M} {y}')\n" +
     'RECT(4,70,245,82,0,1,0)\n' +
-    'RECT(4,70,4+{d}*241/{L},82,0,1,1)\n' +
-    "FONT(4,92,0,0,0,1,1,'DAY {j} OF YEAR   WEEK {V}')\n",
+    'RECT(4,70,4+{d}*241/{D},82,0,1,1)\n' +
+    "FONT(4,92,0,0,0,1,1,'DAY {j} OF {J}   WEEK {V}')\n",
 
   /* Portrait, so the frame is 122x250 and the centring above does not apply. */
   'Portrait':

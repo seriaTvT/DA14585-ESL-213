@@ -32,6 +32,7 @@ typedef struct {
      * rather than computed at the point of use: they cost a few dozen cycles
      * once per repaint, and a face may reference several of them. */
     uint16_t yday;   /* day of year, 1-366          */
+    uint16_t ydays;  /* days in this year, 365/366  */
     uint8_t  mdays;  /* days in this month, 28-31   */
     uint8_t  week;   /* ISO 8601 week number, 1-53  */
     uint16_t wyear;  /* ISO week-numbering year     */

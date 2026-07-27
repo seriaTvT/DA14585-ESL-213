@@ -114,6 +114,7 @@ export function tagTime(secs) {
   const leap = isLeap(year);
 
   const yday = MDAYS_BEFORE[month - 1] + day + (leap && month > 2 ? 1 : 0);
+  const ydays = leap ? 366 : 365;
   const mdays = MDAYS[month - 1] + (leap && month === 2 ? 1 : 0);
 
   /* ISO 8601: weeks run Monday-Sunday and belong to the year holding their
@@ -131,7 +132,7 @@ export function tagTime(secs) {
   }
 
   return {
-    year, month, day, wday, yday, mdays, week, wyear,
+    year, month, day, wday, yday, ydays, mdays, week, wyear,
     hour: d.getUTCHours(), min: d.getUTCMinutes(), sec: d.getUTCSeconds(),
     u: secs,
   };
@@ -281,7 +282,13 @@ export function varNum(name, tm) {
     case 'N': return tm.min;
     case 'S': return tm.sec;
     case 'w': return tm.wday;
+    /* Lower case is the position, upper case the length it runs against:
+     * {d}/{D} within the month, {j}/{J} within the year. */
     case 'j': return tm.yday;
+    case 'J': return tm.ydays;
+    case 'D': return tm.mdays;
+    /* {D} was called {L} before the pairing above existed - see the same case
+     * in var_num() for why it is still accepted and still undocumented. */
     case 'L': return tm.mdays;
     case 'V': return tm.week;
     case 'G': return tm.wyear;

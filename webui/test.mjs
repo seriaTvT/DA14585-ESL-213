@@ -298,6 +298,41 @@ test('days in month tracks leap years', () => {
   }
 });
 
+test('days in year tracks leap years, on the same rule as the month', () => {
+  /* Same century-vs-400 cases as above, so {J} cannot pass by hardcoding 365
+   * while {D} keeps the real leap test. */
+  assert.equal(tagTime(at(2024, 6, 1)).ydays, 366);
+  assert.equal(tagTime(at(2026, 6, 1)).ydays, 365);
+  assert.equal(tagTime(at(2000, 6, 1)).ydays, 366);  // divisible by 400
+  assert.equal(tagTime(at(2100, 6, 1)).ydays, 365);  // divisible by 100, not 400
+
+  /* {J} is the bound {j} actually reaches - the pairing is only worth having
+   * if the last day of the year lands exactly on it. */
+  for (const y of [2024, 2026, 2000, 2100]) {
+    const tm = tagTime(at(y, 12, 31));
+    assert.equal(tm.yday, tm.ydays, `${y}-12-31 is the last day of the year`);
+  }
+});
+
+test('lower case is the position, upper case the length', () => {
+  /* The scheme the DSL documents: {d} of {D}, {j} of {J}. A leap February is
+   * the one date where getting either backwards is visible. */
+  assert.equal(expandVars('{d}/{D} {j}/{J}', at(2024, 2, 29)), '29/29 60/366');
+  assert.equal(expandVars('{d}/{D} {j}/{J}', at(2026, 2, 28)), '28/28 59/365');
+});
+
+test('{L} still means what {D} means', () => {
+  /* Undocumented, deliberately kept: a face stored on a tag before the rename
+   * must not start rendering the literal "{L}" after a reflash. */
+  for (const [y, m] of [[2024, 2], [2026, 2], [2026, 7], [2026, 4]]) {
+    assert.equal(expandVars('{L}', at(y, m, 1)), expandVars('{D}', at(y, m, 1)),
+      `${y}-${m}`);
+  }
+  const tm = tagTime(at(2026, 7, 26));
+  assert.equal(evalArg('4+{d}*241/{L}', tm), evalArg('4+{d}*241/{D}', tm),
+    'the alias resolves in expressions too, not just in text');
+});
+
 test('the 12-hour clock never shows hour zero', () => {
   /* The bug this guards is {h} rendering midnight as 0 and noon as 0. */
   const h = (hh) => expandVars('{h}{P}', at(2026, 7, 26, hh));
@@ -352,6 +387,7 @@ test('the JS renderer is byte-identical to the firmware C', { skip:
   const scripts = [
     ...Object.values(PRESETS),
     "ROTATE(1)\nCLEAR(0)\nFONT(2,2,0,0,1,0,1,'{W} {M} {j} {V} {G} {L}')\n",
+    "ROTATE(1)\nCLEAR(0)\nFONT(2,2,0,0,1,0,1,'{d}/{D} {j}/{J} {L}')\n",
     "ROTATE(2)\nCLEAR(1)\nCIRCLE(60,60,40,0,2,0)\nRECT(5,5,50,30,0,1,1)\n",
     "ROTATE(3)\nCLEAR(1)\nLINE(-20,-20,300,200,0,3)\nPOINT(249,121,0,1)\n",
     "ROTATE(3)\nCLEAR(1)\nFONT(0,0,0,0,0,1,4,'{h}{P} A,B')\n",
@@ -365,6 +401,7 @@ test('the JS renderer is byte-identical to the firmware C', { skip:
     "ROTATE(3)\nCLEAR(1)\nRECT(4,4,4+{d}*8,12,0,1,1)\nLINE(60,60,60+{H}*2,60,0,2)\n",
     "ROTATE(3)\nCLEAR(1)\nRECT((1+1)*2,4,(10+10)*2,20,0,1,1)\n",
     "ROTATE(3)\nCLEAR(1)\nCIRCLE(125-{N},61,{L}-{d}+8,0,2,1)\n",
+    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,4+{j}*241/{J},12,0,1,1)\nPOINT({D},{J}%250,0,1)\n",
     "ROTATE(3)\nCLEAR(1)\nPOINT({j}%250,{V}*2,0,1)\nRECT(0,0,{u}%200,10,0,1,1)\n",
     /* Malformed on purpose: both must yield 0 and carry on. */
     "ROTATE(3)\nCLEAR(1)\nRECT(1/0,{W},{nope},10%0,0,1,1)\nPOINT(-(3+4),8,0,1)\n",
@@ -377,23 +414,31 @@ test('the JS renderer is byte-identical to the firmware C', { skip:
     "ROTATE(3)\nCLEAR(1)\nFONT(2,2,0,0,0,1,2,'A,B (1+2)')\n",
   ];
 
-  /* A date where {V}/{G} disagree with {y}, so a parity bug in the new
-   * variables cannot hide behind an ordinary day. */
-  const secs = Math.floor(Date.UTC(2027, 0, 1, 9, 5, 0) / 1000) - 946684800;
+  /* Both awkward dates, not one: 2027-01-01 is where {V}/{G} disagree with
+   * {y}, and 2024-02-29 is where {D} and {J} both take their leap value. A
+   * parity bug in the calendar variables cannot hide behind an ordinary day
+   * on either. */
+  const dates = [
+    Math.floor(Date.UTC(2027, 0, 1, 9, 5, 0) / 1000) - 946684800,
+    Math.floor(Date.UTC(2024, 1, 29, 9, 5, 0) / 1000) - 946684800,
+  ];
 
-  for (const script of scripts) {
-    const c = execFileSync(RENDER, [String(secs)], {
-      input: script, maxBuffer: 1 << 20,
-    });
+  for (const secs of dates) {
+    for (const script of scripts) {
+      const c = execFileSync(RENDER, [String(secs)], {
+        input: script, maxBuffer: 1 << 20,
+      });
 
-    const p = new Panel();
-    p.clear(1);
-    runScript(p, script, secs);
+      const p = new Panel();
+      p.clear(1);
+      runScript(p, script, secs);
 
-    assert.equal(c.length, p.fb.length);
-    const at = c.findIndex((b, i) => b !== p.fb[i]);
-    assert.equal(at, -1, at < 0 ? '' :
-      `first difference at byte ${at} (native row ${(at / 16) | 0}) for:\n${script}`);
+      assert.equal(c.length, p.fb.length);
+      const at = c.findIndex((b, i) => b !== p.fb[i]);
+      assert.equal(at, -1, at < 0 ? '' :
+        `first difference at byte ${at} (native row ${(at / 16) | 0}) ` +
+        `at t=${secs} for:\n${script}`);
+    }
   }
 });
 

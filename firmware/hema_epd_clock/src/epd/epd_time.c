@@ -143,6 +143,7 @@ void epd_time_get(epd_tm_t *tm)
     bool leap = is_leap(tm->year);
     tm->yday  = (uint16_t)(MDAYS_BEFORE[tm->month - 1] + tm->day
                            + ((leap && tm->month > 2) ? 1 : 0));
+    tm->ydays = leap ? 366 : 365;
     tm->mdays = (uint8_t)(MDAYS[tm->month - 1]
                           + ((leap && tm->month == 2) ? 1 : 0));
     iso_week(tm);

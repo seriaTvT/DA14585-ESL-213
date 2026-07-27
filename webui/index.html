@@ -316,8 +316,10 @@
         <tr><td>{y} {m} {d}</td><td>year, month, day</td></tr>
         <tr><td>{M}</td><td>month name (JAN…DEC)</td></tr>
         <tr><td>{w} {W}</td><td>weekday number, weekday name (SUN…SAT)</td></tr>
-        <tr><td>{j}</td><td>day of the year, 1–366</td></tr>
-        <tr><td>{L}</td><td>days in this month, 28–31</td></tr>
+        <tr><td>{j} {J}</td><td>day of the year (1–366), days in this year
+                (365 or 366)</td></tr>
+        <tr><td>{D}</td><td>days in this month, 28–31 — the length {d} runs
+                against, as {J} is for {j}</td></tr>
         <tr><td>{V} {G}</td><td>ISO 8601 week number and its week-year. Early
                 January can belong to week 52/53 of the <i>previous</i> year,
                 which is why the year is separate from {y}.</td></tr>
