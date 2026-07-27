@@ -102,9 +102,15 @@ than a picture. `{}` variables expand to the date and time, and they work in
 only label itself:
 
 ```
-RECT(4,70,245,82,0,1,0)             a fixed frame
-RECT(4,70,4+{d}*241/{D},82,0,1,1)   filled to how far into the month we are
+RECT(4,70,245,82)                        a fixed frame
+RECT(4,70,4+{d}*241/{D},82,fill=1)       filled to how far into the month we are
 ```
+
+The geometry a command cannot do without is positional; everything else —
+colour, stroke width, fill, text scale — is written by name and may be left
+out. An option added later therefore cannot disturb a face already stored on a
+tag, and leaving one out can no longer slide every later argument into the
+wrong slot.
 
 Lower case is a position, upper case the length it runs against — `{d}` of `{D}`
 days this month, `{j}` of `{J}` days this year — so a progress bar retargets

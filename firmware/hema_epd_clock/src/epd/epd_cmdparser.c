@@ -6,6 +6,7 @@
 #include "epd_gfx.h"
 #include "epd_time.h"
 #include <stdbool.h>
+#include <stddef.h>
 
 #define CMD_LINE_MAX   128
 #define CMD_TEXT_MAX   64
@@ -324,10 +325,128 @@ static int32_t parse_expr(const char **pp, uint8_t depth)
     return val;
 }
 
-/* Evaluates one argument starting at *pp, advances *pp past it and past a
- * following ',' or ')' if present. An empty argument is 0, as before. */
+/* ---------------------------------------------------------------------------
+ * Argument lists
+ *
+ *     COMMAND(pos, pos, ..., name=value, ...)
+ *
+ * The geometry a command cannot do without stays positional, because that is
+ * how it reads: RECT(4,4,60,20). Everything else - colour, stroke width, fill,
+ * text scale - is written by name and may be left out.
+ *
+ * This replaces a purely positional list inherited from the vendor's function
+ * reference, which had three problems. Two slots per command were parsed and
+ * thrown away because their documentation listed them. Omitting any argument
+ * slid every later one into the wrong slot, and since a malformed argument
+ * evaluates to 0 rather than complaining, the result was a face that drew in
+ * the wrong place with nothing to say why. And no option could ever be added
+ * without renumbering the ones after it.
+ *
+ * Named arguments fix all three, and the third is the one that matters: an
+ * option added later cannot disturb a face already stored on a tag.
+ *
+ * A name is unambiguous because no expression can begin with a letter -
+ * parse_factor() consumes digits, '{', '(', '+' and '-' and nothing else - so
+ * an argument starting with an identifier followed by '=' is always a named
+ * one, never the start of an expression.
+ *
+ * Options are looked up by re-scanning the argument text per option rather
+ * than being collected into a struct first. A line is at most CMD_LINE_MAX and
+ * a command has at most a handful of options, so the scanning is free; a
+ * struct big enough to hold them would not be, on a 0x700 stack with the
+ * framebuffer next to it.
+ * ------------------------------------------------------------------------- */
+
+static bool is_name_start(char c)
+{
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_';
+}
+
+static bool is_name_char(char c)
+{
+    return is_name_start(c) || (c >= '0' && c <= '9');
+}
+
+/* True if the cursor is looking at `name=`, i.e. the positional arguments have
+ * run out. Positional reads stop here rather than consuming the option, so a
+ * command whose caller omitted a positional still finds its options by name. */
+static bool at_named(const char *p)
+{
+    p = skip_ws(p);
+    if (!is_name_start(*p)) {
+        return false;
+    }
+    while (is_name_char(*p)) p++;
+    p = skip_ws(p);
+    return *p == '=';
+}
+
+/* Value of `name=` in an argument list, or NULL if absent.
+ *
+ * Only matches at the start of a top-level argument, so neither a quoted
+ * string ("FONT(...,'scale=3')") nor anything nested in parentheses can be
+ * mistaken for an option. The trailing '=' check is what stops "color" from
+ * matching "colors=1". */
+static const char *find_named(const char *args, const char *name)
+{
+    const char *p = args;
+    bool arg_start = true;
+    bool in_str = false;
+    uint8_t depth = 0;
+
+    while (*p) {
+        if (in_str) {
+            if (*p == '\'') in_str = false;
+            p++;
+            continue;
+        }
+
+        if (arg_start) {
+            const char *q = skip_ws(p);
+            const char *n = name;
+
+            while (*n && *q == *n) { q++; n++; }
+            if (*n == '\0') {
+                q = skip_ws(q);
+                if (*q == '=') {
+                    return q + 1;
+                }
+            }
+            arg_start = false;
+        }
+
+        if (*p == '\'') { in_str = true; p++; continue; }
+        if (*p == '(') { depth++; p++; continue; }
+        if (*p == ')') {
+            if (depth == 0) return NULL;      /* end of the argument list */
+            depth--; p++; continue;
+        }
+        if (*p == ',' && depth == 0) { arg_start = true; p++; continue; }
+        p++;
+    }
+    return NULL;
+}
+
+/* An option's value as a number, or `dflt` if it was not given. The value is a
+ * full expression, so `scale=1+{d}%2` is as valid as `scale=2`. */
+static int32_t named_int(const char *args, const char *name, int32_t dflt)
+{
+    const char *v = find_named(args, name);
+
+    if (v == NULL) {
+        return dflt;
+    }
+    return parse_expr(&v, 0);
+}
+
+/* Evaluates one positional argument starting at *pp, advances *pp past it and
+ * past a following ',' or ')' if present. An empty argument is 0, as before. */
 static int32_t parse_int(const char **pp)
 {
+    if (at_named(*pp)) {
+        return 0;                  /* an option - not ours to consume */
+    }
+
     int32_t val = parse_expr(pp, 0);
     const char *p = *pp;
 
@@ -338,12 +457,17 @@ static int32_t parse_int(const char **pp)
     return val;
 }
 
-/* Parses a single-quoted string argument (for FONT's trailing 'text' arg).
+/* Parses a single-quoted string argument (FONT's text).
  * Writes up to out_size-1 bytes into out, NUL-terminated. */
 static void parse_string(const char **pp, char *out, uint16_t out_size)
 {
     const char *p = *pp;
     uint16_t n = 0;
+
+    if (at_named(p)) {
+        out[0] = '\0';             /* text omitted; leave the option alone */
+        return;
+    }
 
     while (*p == ' ') p++;
     if (*p == '\'') {
@@ -373,82 +497,90 @@ static void dispatch_line(const char *line)
         return;
     }
 
+    /* POINT(x, y, color=)
+     * The vendor's $pix and $type are gone rather than kept and ignored: a fat
+     * point is LINE(x,y,x,y,width=n), which goes through the same draw_blob(),
+     * and $type never meant anything here. */
     if (starts_with(line, "POINT(")) {
-        p = line + 6;
+        const char *args = line + 6;
+        p = args;
         int32_t x = parse_int(&p);
         int32_t y = parse_int(&p);
-        int32_t color = parse_int(&p);
-        int32_t pix = parse_int(&p);
-        /* $type (last arg) intentionally ignored - no distinct point
-         * "types" implemented yet, matches nothing being documented
-         * beyond size for POINT in function_doc_official.txt. */
-        (void)pix;
+        int32_t color = named_int(args, "color", 0);
         epd_gfx_set_pixel((int16_t)x, (int16_t)y, (uint8_t)color);
         return;
     }
 
+    /* LINE(x1, y1, x2, y2, color=, width=) */
     if (starts_with(line, "LINE(")) {
-        p = line + 5;
+        const char *args = line + 5;
+        p = args;
         int32_t x1 = parse_int(&p);
         int32_t y1 = parse_int(&p);
         int32_t x2 = parse_int(&p);
         int32_t y2 = parse_int(&p);
-        int32_t color = parse_int(&p);
-        int32_t pix = parse_int(&p);
+        int32_t color = named_int(args, "color", 0);
+        int32_t width = named_int(args, "width", 1);
         epd_gfx_line((int16_t)x1, (int16_t)y1, (int16_t)x2, (int16_t)y2,
-                     (uint8_t)color, (uint8_t)pix);
+                     (uint8_t)color, (uint8_t)width);
         return;
     }
 
+    /* RECT(x1, y1, x2, y2, color=, width=, fill=) */
     if (starts_with(line, "RECT(")) {
-        p = line + 5;
+        const char *args = line + 5;
+        p = args;
         int32_t x1 = parse_int(&p);
         int32_t y1 = parse_int(&p);
         int32_t x2 = parse_int(&p);
         int32_t y2 = parse_int(&p);
-        int32_t color = parse_int(&p);
-        int32_t pix = parse_int(&p);
-        int32_t type = parse_int(&p);
+        int32_t color = named_int(args, "color", 0);
+        int32_t width = named_int(args, "width", 1);
+        int32_t fill  = named_int(args, "fill", 0);
         epd_gfx_rect((int16_t)x1, (int16_t)y1, (int16_t)x2, (int16_t)y2,
-                     (uint8_t)color, (uint8_t)pix, (uint8_t)type);
+                     (uint8_t)color, (uint8_t)width, (uint8_t)fill);
         return;
     }
 
+    /* CIRCLE(x, y, r, color=, width=, fill=) */
     if (starts_with(line, "CIRCLE(")) {
-        p = line + 7;
+        const char *args = line + 7;
+        p = args;
         int32_t x = parse_int(&p);
         int32_t y = parse_int(&p);
         int32_t r = parse_int(&p);
-        int32_t color = parse_int(&p);
-        int32_t pix = parse_int(&p);
-        int32_t type = parse_int(&p);
+        int32_t color = named_int(args, "color", 0);
+        int32_t width = named_int(args, "width", 1);
+        int32_t fill  = named_int(args, "fill", 0);
         epd_gfx_circle((int16_t)x, (int16_t)y, (int16_t)r,
-                       (uint8_t)color, (uint8_t)pix, (uint8_t)type);
+                       (uint8_t)color, (uint8_t)width, (uint8_t)fill);
         return;
     }
 
+    /* FONT(x, y, 'text', color=, bg=, scale=)
+     * The text is the third positional rather than the eighth: it is the one
+     * argument the command is meaningless without, so it belongs with the
+     * geometry. The vendor's $g (character spacing, never applied - this font
+     * is fixed pitch) and $font_id (there was only ever one font) are gone.
+     * bg defaults to 1 because epd_gfx_text() paints the whole glyph cell, so
+     * text is opaque; fore=1/bg=0 is how a face draws white on black. */
     if (starts_with(line, "FONT(")) {
-        p = line + 5;
+        const char *args = line + 5;
+        p = args;
         int32_t x = parse_int(&p);
         int32_t y = parse_int(&p);
-        int32_t g = parse_int(&p);          /* char spacing - not applied by
-                                                the fallback font (fixed
-                                                pitch), accepted for
-                                                compatibility */
-        int32_t font_id = parse_int(&p);    /* ignored - only one built-in
-                                                fallback font exists so far */
-        int32_t fore = parse_int(&p);
-        int32_t back = parse_int(&p);
-        int32_t scale = parse_int(&p);
         char text[CMD_TEXT_MAX];
         char expanded[CMD_TEXT_MAX];
         parse_string(&p, text, sizeof(text));
-        (void)g; (void)font_id;
+        int32_t color = named_int(args, "color", 0);
+        int32_t bg    = named_int(args, "bg", 1);
+        int32_t scale = named_int(args, "scale", 1);
         /* Substitute {H}, {N}, {y}... here rather than at parse time, so a
          * stored script re-rendered on the minute tick picks up the new
          * time (see epd_cmd_run()). */
         expand_vars(text, expanded, sizeof(expanded));
-        epd_gfx_text((int16_t)x, (int16_t)y, expanded, (uint8_t)fore, (uint8_t)back, (uint8_t)scale);
+        epd_gfx_text((int16_t)x, (int16_t)y, expanded,
+                     (uint8_t)color, (uint8_t)bg, (uint8_t)scale);
         return;
     }
 
@@ -537,9 +669,9 @@ void epd_cmd_begin_batch(void)
 static const char DEFAULT_FACE[] =
     "ROTATE(3)\n"
     "CLEAR(1)\n"
-    "FONT(52,25,0,0,0,1,5,'{H:02d}:{N:02d}')\n"   /* 5 glyphs @5 -> 145 wide */
-    "FONT(66,72,0,0,0,1,2,'{y}-{m:02d}-{d:02d}')\n"  /* 10 @2 -> 118 */
-    "FONT(108,94,0,0,0,1,2,'{W}')\n";             /* 3 @2 -> 34 */
+    "FONT(52,25,'{H:02d}:{N:02d}',scale=5)\n"     /* 5 glyphs @5 -> 145 wide */
+    "FONT(66,72,'{y}-{m:02d}-{d:02d}',scale=2)\n" /* 10 @2 -> 118 */
+    "FONT(108,94,'{W}',scale=2)\n";               /* 3 @2 -> 34 */
 
 void epd_cmd_load_default(void)
 {

@@ -448,6 +448,67 @@ export function evalArg(text, tm) {
  * comma-split sees 1,3,0. Same class of drift with a ')' inside an expression.
  * Since the whole point of this file is to be a port, it parses like the port.
  */
+const NAME_RE = /^[A-Za-z_][A-Za-z_0-9]*/;
+
+/** Ports at_named(): is the cursor looking at `name=` rather than a value?
+ *  No expression can begin with a letter, so this is never ambiguous. */
+function atNamed(s, i) {
+  const rest = s.slice(skipSpace(s, i));
+  const m = NAME_RE.exec(rest);
+  return m ? /^\s*=/.test(rest.slice(m[0].length)) : false;
+}
+
+/**
+ * Ports find_named(): the index just past `name=`, or -1.
+ *
+ * Only matches at the start of a top-level argument, so a quoted string
+ * ("FONT(...,'scale=3')") and anything inside parentheses are both immune. The
+ * '=' check is what keeps "color" from matching "colors=1".
+ */
+function findNamed(args, name) {
+  let argStart = true, inStr = false, depth = 0, i = 0;
+
+  while (i < args.length) {
+    const c = args[i];
+
+    if (inStr) {
+      if (c === "'") inStr = false;
+      i++;
+      continue;
+    }
+
+    if (argStart) {
+      let j = skipSpace(args, i);
+      if (args.startsWith(name, j)) {
+        j = skipSpace(args, j + name.length);
+        if (args[j] === '=') return j + 1;
+      }
+      argStart = false;
+    }
+
+    if (c === "'") { inStr = true; i++; continue; }
+    if (c === '(') { depth++; i++; continue; }
+    if (c === ')') {
+      if (depth === 0) return -1;          /* end of the argument list */
+      depth--; i++; continue;
+    }
+    if (c === ',' && depth === 0) { argStart = true; i++; continue; }
+    i++;
+  }
+  return -1;
+}
+
+/**
+ * Reads a command's arguments the way the firmware does: one cursor walking the
+ * positional list, plus a re-scan per named option.
+ *
+ * The cursor walk is deliberately not "split on commas, then evaluate each
+ * piece". The two agree on well-formed input and diverge the moment an argument
+ * does not consume cleanly: given POINT(1 2,3) the firmware reads 1, stops at
+ * the space, and its *next* read starts at the 2 - so it sees 1,2 where a
+ * comma-split sees 1,3. Same class of drift with a ')' inside an expression.
+ * Since the whole point of this file is to be a port, it parses like the port.
+ */
 class Args {
   constructor(text, tm) {
     this.s = text;
@@ -455,8 +516,9 @@ class Args {
     this.tm = tm;
   }
 
-  /** Ports parse_int(). */
+  /** Ports parse_int(). Stops at an option rather than consuming it. */
   int() {
+    if (atNamed(this.s, this.i)) return 0;
     const r = parseExpr(this.s, this.i, 0, this.tm);
     let j = skipSpace(this.s, r.i);
     if (this.s[j] === ',' || this.s[j] === ')') j++;
@@ -472,6 +534,7 @@ class Args {
 
   /** Ports parse_string(). CMD_TEXT_MAX is 64, so 63 chars plus a NUL. */
   str() {
+    if (atNamed(this.s, this.i)) return '';
     let j = skipSpace(this.s, this.i);
     let out = '';
 
@@ -488,13 +551,64 @@ class Args {
     this.i = j;
     return out;
   }
+
+  /** Ports named_int(): an option's value, or `dflt` if it was not given. */
+  named(name, dflt) {
+    const at = findNamed(this.s, name);
+    return at < 0 ? dflt : parseExpr(this.s, at, 0, this.tm).v;
+  }
+
+  /**
+   * Every option name actually present, for the preview's benefit only - the
+   * firmware never enumerates them, it only ever looks up the ones it wants.
+   * Used to tell an author that `colour=` will be ignored, which is otherwise
+   * indistinguishable from it having had no effect.
+   */
+  names() {
+    const out = [];
+    let argStart = true, inStr = false, depth = 0, i = 0;
+
+    while (i < this.s.length) {
+      const c = this.s[i];
+      if (inStr) { if (c === "'") inStr = false; i++; continue; }
+
+      if (argStart) {
+        const j = skipSpace(this.s, i);
+        const m = NAME_RE.exec(this.s.slice(j));
+        if (m && /^\s*=/.test(this.s.slice(j + m[0].length))) out.push(m[0]);
+        argStart = false;
+      }
+
+      if (c === "'") { inStr = true; i++; continue; }
+      if (c === '(') { depth++; i++; continue; }
+      if (c === ')') { if (depth === 0) break; depth--; i++; continue; }
+      if (c === ',' && depth === 0) { argStart = true; i++; continue; }
+      i++;
+    }
+    return out;
+  }
 }
 
 /* Every command dispatch_line() and handle_line() recognise. Used only to tell
  * a case mistake ("rect(") apart from a genuinely unknown command, which are
  * the same silent no-op on the tag but very different mistakes to make. */
-const COMMANDS = new Set(['CLEAR', 'POINT', 'LINE', 'RECT', 'CIRCLE', 'FONT',
-                          'ROTATE', 'TIME', 'RESET']);
+/* The options each command understands. The firmware never enumerates these -
+ * it looks up the ones it wants and ignores the rest, because it has nowhere
+ * to report a typo to. Here they exist so the preview can say that `colour=`
+ * will do nothing, which on the panel is indistinguishable from having done
+ * nothing. Keep in step with named_int() in dispatch_line(). */
+const OPTIONS = {
+  CLEAR:  [],
+  POINT:  ['color'],
+  LINE:   ['color', 'width'],
+  RECT:   ['color', 'width', 'fill'],
+  CIRCLE: ['color', 'width', 'fill'],
+  FONT:   ['color', 'bg', 'scale'],
+  ROTATE: [],
+  TIME:   [],
+  RESET:  [],
+};
+const COMMANDS = new Set(Object.keys(OPTIONS));
 
 /**
  * Run a script against a panel.
@@ -540,38 +654,38 @@ export function runScript(panel, script, secs) {
         break;
 
       case 'POINT': {
-        /* Four arguments are read but only three used: the firmware parses
-         * `pix` and ignores it, and the cursor has to end up in the same
-         * place either way. */
-        const [x, y, c] = a.ints(4);
-        panel.set(x, y, c);
+        const [x, y] = a.ints(2);
+        panel.set(x, y, a.named('color', 0));
         break;
       }
 
       case 'LINE': {
-        const [x1, y1, x2, y2, c, pix] = a.ints(6);
-        panel.line(x1, y1, x2, y2, c, pix);
+        const [x1, y1, x2, y2] = a.ints(4);
+        panel.line(x1, y1, x2, y2, a.named('color', 0), a.named('width', 1));
         break;
       }
 
       case 'RECT': {
-        const [x1, y1, x2, y2, c, pix, fill] = a.ints(7);
-        panel.rect(x1, y1, x2, y2, c, pix, fill);
+        const [x1, y1, x2, y2] = a.ints(4);
+        panel.rect(x1, y1, x2, y2, a.named('color', 0),
+                   a.named('width', 1), a.named('fill', 0));
         break;
       }
 
       case 'CIRCLE': {
-        const [x, y, r, c, pix, fill] = a.ints(6);
-        panel.circle(x, y, r, c, pix, fill);
+        const [x, y, r] = a.ints(3);
+        panel.circle(x, y, r, a.named('color', 0),
+                     a.named('width', 1), a.named('fill', 0));
         break;
       }
 
       case 'FONT': {
-        /* FONT(x, y, gap, font_id, fore, back, scale, 'text').
-         * gap and font_id are accepted and ignored, as in the firmware -
-         * the fallback font is fixed-pitch and there is only one of it. */
-        const [x, y, , , fore, back, scale] = a.ints(7);
-        panel.text(x, y, expandVars(a.str(), secs), fore, back, scale);
+        /* FONT(x, y, 'text', color=, bg=, scale=). The text is positional
+         * because the command is meaningless without it. */
+        const [x, y] = a.ints(2);
+        const str = a.str();
+        panel.text(x, y, expandVars(str, secs),
+                   a.named('color', 0), a.named('bg', 1), a.named('scale', 1));
         break;
       }
 
@@ -598,6 +712,23 @@ export function runScript(panel, script, secs) {
               + 'case-sensitive, and the tag will ignore this line'
             : `${cmd}() is not implemented - the tag will ignore it`,
         });
+        return;
+    }
+
+    /* An option the command does not read is silently dropped by the tag, so
+     * it is worth more than a shrug here: a misspelt or misplaced option looks
+     * exactly like one that had no visible effect. */
+    const known = OPTIONS[cmd];
+    for (const opt of a.names()) {
+      if (!known.includes(opt)) {
+        warnings.push({
+          line: n + 1, text: line,
+          msg: known.length
+            ? `${cmd}() has no ${opt}= option - it accepts `
+              + `${known.map((k) => `${k}=`).join(', ')}`
+            : `${cmd}() takes no options, so ${opt}= is ignored`,
+        });
+      }
     }
   });
 

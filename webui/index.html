@@ -295,14 +295,18 @@
       <summary>Command reference</summary>
       <table>
         <tr><td>CLEAR(c)</td><td>Fill the screen. <code>0</code> black, <code>1</code> white.</td></tr>
-        <tr><td>POINT(x,y,c,pix)</td><td>Single pixel.</td></tr>
-        <tr><td>LINE(x1,y1,x2,y2,c,pix)</td><td><code>pix</code> is stroke width.</td></tr>
-        <tr><td>RECT(x1,y1,x2,y2,c,pix,fill)</td><td><code>fill</code> 1 for solid.</td></tr>
-        <tr><td>CIRCLE(x,y,r,c,pix,fill)</td><td></td></tr>
-        <tr><td>FONT(x,y,gap,id,fore,back,scale,'text')</td>
-            <td><code>gap</code> and <code>id</code> are accepted but ignored —
-                one fixed-pitch 5&times;7 font so far. Glyph cell is
-                6&times;7 px times <code>scale</code>.</td></tr>
+        <tr><td>POINT(x,y,<i>color=</i>)</td><td>Single pixel. A fat one is
+                <code>LINE(x,y,x,y,width=n)</code>.</td></tr>
+        <tr><td>LINE(x1,y1,x2,y2,<i>color= width=</i>)</td>
+            <td><code>width</code> is the stroke, default 1.</td></tr>
+        <tr><td>RECT(x1,y1,x2,y2,<i>color= width= fill=</i>)</td>
+            <td><code>fill=1</code> for solid.</td></tr>
+        <tr><td>CIRCLE(x,y,r,<i>color= width= fill=</i>)</td><td></td></tr>
+        <tr><td>FONT(x,y,'text',<i>color= bg= scale=</i>)</td>
+            <td>One fixed-pitch 5&times;7 font so far. Glyph cell is
+                6&times;7 px times <code>scale</code>. <code>bg</code> defaults
+                to 1, so text is opaque — use <code>color=1</code> with
+                <code>bg=0</code> for white on black.</td></tr>
         <tr><td>ROTATE(r)</td><td><code>0..3</code> or <code>0/90/180/270</code>.
                 Odd values are landscape (250&times;122).</td></tr>
         <tr><td>TIME(s)</td><td>Seconds since 2000-01-01. Applied on arrival,
@@ -331,7 +335,7 @@
         Variables work in <b>numeric arguments</b> too, not just in text, and
         arguments are expressions: <code>+ - * / %</code>, parentheses and
         unary minus, all integer. That is what lets a face draw itself rather
-        than just label itself — <code>RECT(4,70,4+{d}*8,82,0,1,1)</code> is a
+        than just label itself — <code>RECT(4,70,4+{d}*8,82,fill=1)</code> is a
         bar that grows across the month. Division by zero gives 0, and anything
         malformed gives 0 rather than failing, matching the firmware.
       </p>

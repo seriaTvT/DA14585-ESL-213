@@ -155,7 +155,7 @@ test('indentation is formatting, not a syntax error', () => {
   const p = new Panel();
   p.clear(1);
   const { warnings } = runScript(p,
-    'ROTATE(3)\n  CLEAR(1)\n\tRECT(4,4,40,20,0,1,1)\n', SECS);
+    'ROTATE(3)\n  CLEAR(1)\n\tRECT(4,4,40,20,fill=1)\n', SECS);
   assert.deepEqual(warnings, []);
   assert.equal(p.get(4, 4), 0, 'the indented RECT did not draw');
 });
@@ -181,11 +181,86 @@ test('a space before the paren is not a command', () => {
   assert.ok(p.fb.every((b) => b === 0xff));
 });
 
+test('an option is not swallowed as a positional', () => {
+  /* The point of the whole redesign: under the old purely positional list,
+   * leaving an argument out slid every later one into the wrong slot and the
+   * face drew somewhere else with nothing to say why. Here the missing
+   * positionals read 0 and the option is still found by name. */
+  const p = new Panel();
+  p.clear(1);
+  runScript(p, 'ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30,fill=1)\n', SECS);
+  assert.equal(p.get(30, 20), 0, 'the rect did not fill');
+  assert.equal(p.get(70, 20), 1, 'the fill ran past the rect');
+});
+
+test('options may appear in any order and be left out', () => {
+  const render = (script) => {
+    const p = new Panel();
+    p.clear(1);
+    runScript(p, script, SECS);
+    return Buffer.from(p.fb);
+  };
+  const a = render('ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30,color=0,width=2,fill=0)\n');
+  const b = render('ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30,width=2)\n');
+  const c = render('ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30,fill=0,width=2,color=0)\n');
+  assert.deepEqual(a, b, 'omitting an option did not fall back to its default');
+  assert.deepEqual(a, c, 'option order changed the result');
+});
+
+test("a '=' inside quoted text is text", () => {
+  /* find_named() has to skip quoted regions, or a face that prints "scale=9"
+   * would silently resize itself.
+   *
+   * The comma inside the quotes is the whole point and is not decoration: the
+   * scan only looks for an option at the start of an argument, so a quoted
+   * "scale=9" with no comma before it is never at one and passes even with the
+   * quote handling removed. It takes a comma *inside* the string to push the
+   * fake option to an argument boundary. Found by mutation - the first version
+   * of this test passed against a deliberately broken findNamed(). */
+  const p = new Panel();
+  p.clear(1);
+  const { warnings } = runScript(p,
+    "ROTATE(3)\nCLEAR(1)\nFONT(2,2,'A,scale=9',scale=2)\n", SECS);
+  assert.deepEqual(warnings, []);
+
+  /* At scale=2 the 9 glyphs of "A,scale=9" are 2*(6*9-1) = 106 px wide, so
+   * column 110 is clear. At scale=9 they would be 477 and cover it. */
+  assert.equal(p.get(110, 2), 1, 'text rendered wider than scale=2 allows');
+});
+
+test('an option name must match whole, not by prefix', () => {
+  const p = new Panel();
+  p.clear(1);
+  const { warnings } = runScript(p,
+    'ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30,colors=1)\n', SECS);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0].msg, /no colors= option/);
+  /* "colors" must not have satisfied the lookup for "color". */
+  assert.equal(p.get(4, 4), 0, 'the outline vanished, so colors= was read as color=');
+});
+
+test('an unknown option is reported rather than silently dropped', () => {
+  const p = new Panel();
+  const { warnings } = runScript(p, 'CLEAR(1)\nRECT(1,1,9,9,nope=1)\n', SECS);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0].msg, /RECT\(\) has no nope= option.*color=, width=, fill=/);
+
+  const { warnings: w2 } = runScript(new Panel(), 'CLEAR(1,scale=2)\n', SECS);
+  assert.match(w2[0].msg, /CLEAR\(\) takes no options/);
+});
+
+test('an option value is a full expression', () => {
+  const p = new Panel();
+  p.clear(1);
+  runScript(p, 'ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30,fill=(1+1)/2)\n', SECS);
+  assert.equal(p.get(30, 20), 0, 'fill=(1+1)/2 did not evaluate to 1');
+});
+
 test('a bare CR ends a line, as epd_cmd_run() has it', () => {
   const p = new Panel();
   p.clear(1);
   const { warnings } = runScript(p,
-    'ROTATE(3)\rCLEAR(1)\rRECT(4,4,40,20,0,1,1)\n', SECS);
+    'ROTATE(3)\rCLEAR(1)\rRECT(4,4,40,20,fill=1)\n', SECS);
   assert.deepEqual(warnings, []);
   assert.equal(p.get(4, 4), 0);
 });
@@ -195,7 +270,7 @@ test("FONT's quoted text may contain commas", () => {
    * arguments and the text would silently truncate. */
   const p = new Panel();
   p.clear(1);
-  runScript(p, "ROTATE(3)\nFONT(0,0,0,0,0,1,1,'A,B')\n", SECS);
+  runScript(p, "ROTATE(3)\nFONT(0,0,'A,B')\n", SECS);
   let ink = 0;
   for (let y = 0; y < 7; y++)
     for (let x = 0; x < 18; x++) if (!p.get(x, y)) ink++;
@@ -427,32 +502,56 @@ test('the JS renderer is byte-identical to the firmware C', { skip:
    * clipping, odd rotations, the new calendar variables, quoting. */
   const scripts = [
     ...Object.values(PRESETS),
-    "ROTATE(1)\nCLEAR(0)\nFONT(2,2,0,0,1,0,1,'{W} {M} {j} {V} {G} {L}')\n",
-    "ROTATE(1)\nCLEAR(0)\nFONT(2,2,0,0,1,0,1,'{d}/{D} {j}/{J} {L}')\n",
-    "ROTATE(2)\nCLEAR(1)\nCIRCLE(60,60,40,0,2,0)\nRECT(5,5,50,30,0,1,1)\n",
-    "ROTATE(3)\nCLEAR(1)\nLINE(-20,-20,300,200,0,3)\nPOINT(249,121,0,1)\n",
-    "ROTATE(3)\nCLEAR(1)\nFONT(0,0,0,0,0,1,4,'{h}{P} A,B')\n",
+    "ROTATE(1)\nCLEAR(0)\nFONT(2,2,'{W} {M} {j} {V} {G} {L}',color=1,bg=0)\n",
+    "ROTATE(1)\nCLEAR(0)\nFONT(2,2,'{d}/{D} {j}/{J} {L}',color=1,bg=0)\n",
+    "ROTATE(2)\nCLEAR(1)\nCIRCLE(60,60,40,width=2)\nRECT(5,5,50,30,fill=1)\n",
+
+    /* Named arguments. The cursor walk and the per-option re-scan have to agree
+     * about where an argument starts, so these poke at the seam between them. */
+    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30,fill=1,color=0,width=2)\n",
+    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30,width=2,fill=1)\n",   /* order swapped */
+    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30, fill = 1 , color = 0 )\n",  /* spaces */
+    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30,fill=1+{d}%2,width={m}/4)\n", /* exprs */
+    /* An option where a positional was expected: the positional reads 0 and
+     * the option is still found, rather than being eaten as a coordinate. */
+    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,fill=1)\nCIRCLE(60,60,color=1)\n",
+    "ROTATE(3)\nCLEAR(1)\nFONT(20,20,scale=4)\n",       /* text omitted */
+    "ROTATE(3)\nCLEAR(1)\nFONT(20,20,'HI',scale=4,bg=0,color=1)\n",
+    /* A '=' inside quoted text is text, not an option - and the comma inside
+     * the quotes is load-bearing, since only an argument boundary can be
+     * mistaken for the start of an option. See the unit test of the same name. */
+    "ROTATE(3)\nCLEAR(1)\nFONT(2,2,'A,scale=9,fill=1',scale=2)\n",
+    "ROTATE(3)\nCLEAR(1)\nFONT(2,2,'X,color=1',color=0,scale=2)\n",
+    /* Prefix collision: neither "colors" nor "fills" is an option, so both
+     * commands draw with their defaults. */
+    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30,colors=1,fills=1)\n",
+    /* Unknown options are ignored, not fatal - the tag has nowhere to say so. */
+    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30,nope=7,fill=1)\n",
+    /* A malformed option value is 0, like every other malformed argument. */
+    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30,fill=,width=1/0)\n",
+    "ROTATE(3)\nCLEAR(1)\nLINE(-20,-20,300,200,width=3)\nPOINT(249,121)\n",
+    "ROTATE(3)\nCLEAR(1)\nFONT(0,0,'{h}{P} A,B',scale=4)\n",
     /* Off-panel and degenerate input: both sides must clip, not wrap. */
-    "ROTATE(3)\nCLEAR(1)\nRECT(240,110,400,400,0,1,1)\nFONT(230,0,0,0,0,1,3,'XYZ')\n",
+    "ROTATE(3)\nCLEAR(1)\nRECT(240,110,400,400,fill=1)\nFONT(230,0,'XYZ',scale=3)\n",
 
     /* Expression arguments. These are where the two implementations are most
      * likely to drift: JS numbers are doubles and do not wrap at 32 bits, its
      * '/' is not integer division, and division by zero is Infinity rather
      * than the firmware's deliberate 0. */
-    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,4+{d}*8,12,0,1,1)\nLINE(60,60,60+{H}*2,60,0,2)\n",
-    "ROTATE(3)\nCLEAR(1)\nRECT((1+1)*2,4,(10+10)*2,20,0,1,1)\n",
+    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,4+{d}*8,12,fill=1)\nLINE(60,60,60+{H}*2,60,width=2)\n",
+    "ROTATE(3)\nCLEAR(1)\nRECT((1+1)*2,4,(10+10)*2,20,fill=1)\n",
     "ROTATE(3)\nCLEAR(1)\nCIRCLE(125-{N},61,{L}-{d}+8,0,2,1)\n",
-    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,4+{j}*241/{J},12,0,1,1)\nPOINT({D},{J}%250,0,1)\n",
-    "ROTATE(3)\nCLEAR(1)\nPOINT({j}%250,{V}*2,0,1)\nRECT(0,0,{u}%200,10,0,1,1)\n",
+    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,4+{j}*241/{J},12,fill=1)\nPOINT({D},{J}%250)\n",
+    "ROTATE(3)\nCLEAR(1)\nPOINT({j}%250,{V}*2)\nRECT(0,0,{u}%200,10,fill=1)\n",
     /* Malformed on purpose: both must yield 0 and carry on. */
-    "ROTATE(3)\nCLEAR(1)\nRECT(1/0,{W},{nope},10%0,0,1,1)\nPOINT(-(3+4),8,0,1)\n",
-    "ROTATE(3)\nCLEAR(1)\nRECT((((((((((1+1)))))))))*4,4,80,20,0,1,1)\n",
+    "ROTATE(3)\nCLEAR(1)\nRECT(1/0,{W},{nope},10%0,fill=1)\nPOINT(-(3+4),8)\n",
+    "ROTATE(3)\nCLEAR(1)\nRECT((((((((((1+1)))))))))*4,4,80,20,fill=1)\n",
     /* A missing comma. The firmware stops the first argument at the space and
      * resumes the next one at the 2, so it sees 1,2,3 - a preview that split
      * on commas would see 1,3,0 and draw somewhere else entirely. */
-    "ROTATE(3)\nCLEAR(1)\nPOINT(1 2,3,0,1)\nRECT(8 9,4,40,20,0,1,1)\n",
+    "ROTATE(3)\nCLEAR(1)\nPOINT(1 2,3)\nRECT(8 9,4,40,20,fill=1)\n",
     /* Quoted text still wins over expression syntax inside it. */
-    "ROTATE(3)\nCLEAR(1)\nFONT(2,2,0,0,0,1,2,'A,B (1+2)')\n",
+    "ROTATE(3)\nCLEAR(1)\nFONT(2,2,'A,B (1+2)',scale=2)\n",
 
     /* Malformed *lines*, as opposed to malformed arguments above. Every one of
      * these disagreed before it was listed here: the JS trimmed and
@@ -461,21 +560,21 @@ test('the JS renderer is byte-identical to the firmware C', { skip:
      * and a lone CR previewed as one broken line where the tag ran two. The
      * lesson is that the well-formed scripts above cannot catch a divergence
      * in how a line is *recognised* - only deliberately ugly input can. */
-    "ROTATE(3)\nCLEAR(1)\n  RECT(4,4,40,20,0,1,1)\n",       /* indented */
-    "ROTATE(3)\nCLEAR(1)\n\tRECT(4,4,40,20,0,1,1)\n",       /* tab-indented */
+    "ROTATE(3)\nCLEAR(1)\n  RECT(4,4,40,20,fill=1)\n",       /* indented */
+    "ROTATE(3)\nCLEAR(1)\n\tRECT(4,4,40,20,fill=1)\n",       /* tab-indented */
     "ROTATE(3)\nCLEAR(1)\nrect(4,4,40,20,0,1,1)\n",         /* wrong case */
     "ROTATE(3)\nCLEAR(1)\nRect(4,4,40,20,0,1,1)\n",
     "ROTATE(3)\nCLEAR(1)\nRECT (4,4,40,20,0,1,1)\n",        /* space before ( */
-    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,40,20,0,1,1)   \n",      /* trailing space */
-    "ROTATE(3)\nCLEAR(1)\rRECT(4,4,40,20,0,1,1)\n",         /* bare CR */
-    "ROTATE(3)\r\nCLEAR(1)\r\nRECT(4,4,40,20,0,1,1)\r\n",   /* CRLF */
-    "ROTATE(3)\nCLEAR(1)\n# a note\nRECT(4,4,40,20,0,1,1)\n",
-    "ROTATE(3)\n\n\nCLEAR(1)\nRECT(4,4,40,20,0,1,1)\n",     /* blank lines */
-    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,40,20,0,1,1)",           /* no final \n */
-    "ROTATE(3)\nCLEAR(1)\nRECT\nRECT(4,4,40,20,0,1,1)\n",   /* no ( at all */
+    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,40,20,fill=1)   \n",      /* trailing space */
+    "ROTATE(3)\nCLEAR(1)\rRECT(4,4,40,20,fill=1)\n",         /* bare CR */
+    "ROTATE(3)\r\nCLEAR(1)\r\nRECT(4,4,40,20,fill=1)\r\n",   /* CRLF */
+    "ROTATE(3)\nCLEAR(1)\n# a note\nRECT(4,4,40,20,fill=1)\n",
+    "ROTATE(3)\n\n\nCLEAR(1)\nRECT(4,4,40,20,fill=1)\n",     /* blank lines */
+    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,40,20,fill=1)",           /* no final \n */
+    "ROTATE(3)\nCLEAR(1)\nRECT\nRECT(4,4,40,20,fill=1)\n",   /* no ( at all */
     /* A longer name that merely starts with a command's letters. Matching on
      * "RECT" rather than "RECT(" would draw a rectangle here. */
-    "ROTATE(3)\nCLEAR(1)\nRECTANGLE(4,4,40,20,0,1,1)\n",
+    "ROTATE(3)\nCLEAR(1)\nRECTANGLE(4,4,40,20,fill=1)\n",
     /* Too few and too many arguments: missing ones read as 0, extra ones are
      * never read. RECT() collapses to a single pixel at the origin under the
      * corner form - worth pinning, because it is exactly the case that becomes
@@ -566,7 +665,7 @@ test('an argument list is split on top-level commas only', () => {
    * wrong truncates arguments in the preview that the panel renders fine. */
   const p = new Panel();
   p.clear(1);
-  runScript(p, 'ROTATE(3)\nCLEAR(1)\nRECT((1+1)*2,4,(10+10)*2,20,0,1,1)\n', SECS);
+  runScript(p, 'ROTATE(3)\nCLEAR(1)\nRECT((1+1)*2,4,(10+10)*2,20,fill=1)\n', SECS);
 
   /* The rect spans x 4..40, y 4..20 - check a corner is inked and that the
    * area beyond where a truncated parse would have stopped is inked too. */
