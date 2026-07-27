@@ -276,6 +276,14 @@ static void handle_cmd_write(struct custs1_val_write_ind const *msg)
      * with what is actually on the screen. */
     s_image_mode = false;
 
+    /* And abandon any half-finished upload, for the same reason the disconnect
+     * path does. The image protocol carries no offset, so a transfer that a
+     * command interrupts cannot be resumed; leaving the offset stranded
+     * mid-buffer would make the *next* upload write its first byte into the
+     * middle of the framebuffer. A client that gives up on an image and sends a
+     * template instead is the ordinary way to reach this, not an edge case. */
+    s_img_write_offset = 0;
+
     epd_cmd_feed(msg->value, msg->length);
     epd_schedule_flush();
 }
