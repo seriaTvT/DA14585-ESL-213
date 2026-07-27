@@ -519,7 +519,7 @@ static const char *const OPTS_NONE[]  = { NULL };
 static const char *const OPTS_POINT[] = { "color", NULL };
 static const char *const OPTS_LINE[]  = { "color", "width", NULL };
 static const char *const OPTS_SHAPE[] = { "color", "width", "fill", NULL };
-static const char *const OPTS_FONT[]  = { "color", "bg", "scale", "align",
+static const char *const OPTS_TEXT[]  = { "color", "bg", "scale", "align",
                                           "font", NULL };
 
 static void check_options(const char *args, const char *const *known)
@@ -710,14 +710,22 @@ static void dispatch_line(const char *line)
         return;
     }
 
-    /* FONT(x, y, 'text', color=, bg=, scale=)
+    /* TEXT(x, y, 'text', color=, bg=, scale=, align=, font=)
+     *
+     * Called FONT() until this release, which is the vendor's name and was
+     * always wrong: it draws a string, and a command called FONT that is not
+     * how you choose a font leaves font= looking like a synonym for it. The
+     * rename is what frees font= to be the selector. An old face saying FONT()
+     * is reported as an unknown command rather than quietly drawing nothing -
+     * and a stored one never gets that far, because the store version bump
+     * falls it back to the built-in face first.
      * The text is the third positional rather than the eighth: it is the one
      * argument the command is meaningless without, so it belongs with the
      * geometry. The vendor's $g (character spacing, never applied - this font
      * is fixed pitch) and $font_id (there was only ever one font) are gone.
      * bg defaults to 1 because epd_gfx_text() paints the whole glyph cell, so
      * text is opaque; fore=1/bg=0 is how a face draws white on black. */
-    if (starts_with(line, "FONT(")) {
+    if (starts_with(line, "TEXT(")) {
         const char *args = line + 5;
         p = args;
         int32_t x = parse_int(&p);
@@ -730,7 +738,7 @@ static void dispatch_line(const char *line)
         int32_t scale = named_int(args, "scale", 1);
         int32_t align = named_int(args, "align", 0);
         int32_t font  = named_int(args, "font", EPD_FONT_5X7);
-        check_options(args, OPTS_FONT);
+        check_options(args, OPTS_TEXT);
         /* Substitute {H}, {N}, {y}... here rather than at parse time, so a
          * stored script re-rendered on the minute tick picks up the new
          * time (see epd_cmd_run()). */
@@ -768,13 +776,26 @@ static void dispatch_line(const char *line)
         p = args;
         int32_t r = parse_int(&p);
         check_options(args, OPTS_NONE);
+
+        /* Degrees, and only degrees. The vendor's list accepted an index too -
+         * so ROTATE(3) meant 270 - and the two spellings overlap at exactly
+         * the values a reader is most likely to get wrong: 0 is 0 either way,
+         * 1 and 2 and 3 are quarter-turns as an index and very nearly nothing
+         * as degrees. A face saying ROTATE(3) and meaning landscape is the
+         * single most likely thing to survive from an old script, so it is
+         * refused and reported rather than silently taken as 3 degrees and
+         * rounded to none.
+         *
+         * The rotation is left as it was, which for a fresh script is 0 - not
+         * "nearest quarter-turn", because guessing here would put the face
+         * sideways and give the author nothing to go on. */
         switch (r) {
-        case 90:  r = 1; break;
-        case 180: r = 2; break;
-        case 270: r = 3; break;
-        default:  break;              /* already an index, or 0 */
+        case 0:   epd_gfx_set_rotation(0); break;
+        case 90:  epd_gfx_set_rotation(1); break;
+        case 180: epd_gfx_set_rotation(2); break;
+        case 270: epd_gfx_set_rotation(3); break;
+        default:  note_err(EPD_ERR_BAD_ARG); break;
         }
-        epd_gfx_set_rotation((uint8_t)r);
         return;
     }
 
@@ -877,12 +898,16 @@ void epd_cmd_begin_batch(void)
  *
  * Unset, the clock reads 00:00 on 2000-01-01 (the epoch), matching the stock
  * firmware's cold-boot behaviour; a host re-syncs with TIME() on connect. */
+/* Centred on x=125, the middle of the 250px landscape frame, rather than at
+ * offsets worked out from the glyph metrics by hand. The old face carried a
+ * note like "5 glyphs @5 -> 145 wide" beside each line and an x derived from
+ * it, all of which silently became wrong the moment a second font existed. */
 static const char DEFAULT_FACE[] =
-    "ROTATE(3)\n"
+    "ROTATE(270)\n"
     "CLEAR(1)\n"
-    "FONT(52,25,'{H:02d}:{N:02d}',scale=5)\n"     /* 5 glyphs @5 -> 145 wide */
-    "FONT(66,72,'{y}-{m:02d}-{d:02d}',scale=2)\n" /* 10 @2 -> 118 */
-    "FONT(108,94,'{W}',scale=2)\n";               /* 3 @2 -> 34 */
+    "TEXT(125,18,'{H:02d}:{N:02d}',font=1,scale=2,align=1)\n"
+    "TEXT(125,78,'{y}-{m:02d}-{d:02d}',scale=2,align=1)\n"
+    "TEXT(125,100,'{W}',scale=2,align=1)\n";
 
 void epd_cmd_load_default(void)
 {

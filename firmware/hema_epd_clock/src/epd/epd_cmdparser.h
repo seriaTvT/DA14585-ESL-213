@@ -115,6 +115,7 @@ typedef enum {
     EPD_ERR_UNKNOWN_OPT,    /* `name=` the command does not read           */
     EPD_ERR_LINE_TOO_LONG,  /* over CMD_LINE_MAX; dropped whole            */
     EPD_ERR_SCRIPT_FULL,    /* the batch overran the script buffer         */
+    EPD_ERR_BAD_ARG,        /* an argument the command cannot make sense of */
 } epd_err_t;
 
 /** Length of the status report written by epd_cmd_status(). */

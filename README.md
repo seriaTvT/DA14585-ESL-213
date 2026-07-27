@@ -112,9 +112,10 @@ ROM and the BLE stack never runs.
 
 ## Templates
 
-A face is a short script — `CLEAR`, `LINE`, `RECT`, `CIRCLE`, `FONT`, `ROTATE`,
+A face is a short script — `CLEAR`, `LINE`, `RECT`, `CIRCLE`, `TEXT`, `ROTATE`,
 `INVERT`, `EVERY` — stored on the tag and re-run every minute. That is what
-makes it a clock rather than a picture. `{}` variables expand to the date and time, and they work in
+makes it a clock rather than a picture. `{}` variables expand to the date and
+time, and they work in
 **numeric arguments** as well as in text: arguments are integer expressions with
 `+ - * / %`, parentheses and unary minus. So a face can draw itself rather than
 only label itself:
@@ -139,6 +140,24 @@ zero all evaluate to 0. A shelf label has nowhere to report an error to, so it
 should degrade to a wrong-looking face rather than a hung one. The preview
 behaves identically, then flags it.
 
+### Two renames worth knowing
+
+`FONT()` is now **`TEXT()`**. It draws a string; a command called FONT that is
+not how you pick a font left `font=` looking like a synonym for it.
+
+`ROTATE()` takes **degrees only** — `0`, `90`, `180`, `270`. It used to accept
+a quarter-turn index as well, so `ROTATE(3)` meant 270°, and the two spellings
+overlapped at exactly the values a reader gets wrong. `ROTATE(3)` is now
+refused and reported rather than silently taken as 3° and rounded to none, and
+the rotation is left alone rather than guessed at.
+
+Both are silent failures rather than loud ones on a tag with no host in range —
+a stored `FONT()` line just stops drawing, and a stored `ROTATE(3)` face comes
+back portrait. That is what the store's version field is for: a face saved
+under the old grammar is rejected at boot and the tag falls back to its
+built-in face, rather than restoring something that renders wrongly. Re-push
+and it is stored under the new version.
+
 ### Highlighting
 
 `INVERT(x, y, w, h)` flips every pixel in a box — width and height, not a
@@ -160,12 +179,12 @@ today is `{w}` by definition, and the row is how many weeks it sits from the
 
 ### Placing and sizing text
 
-`FONT` takes `align=` — `0` left (the default), `1` centre, `2` right. It moves
+`TEXT` takes `align=` — `0` left (the default), `1` centre, `2` right. It moves
 the **anchor**, so `x` is whichever edge you named rather than a left edge:
 
 ```
-FONT(125,20,'{H:02d}:{N:02d}',align=1)     centred on the panel's middle
-FONT(245,4,'{W}',align=2)                  right-aligned against a margin
+TEXT(125,20,'{H:02d}:{N:02d}',align=1)     centred on the panel's middle
+TEXT(245,4,'{W}',align=2)                  right-aligned against a margin
 ```
 
 Anchoring subsumes centring on the screen — that is `align=1` at `x = 125` —

@@ -5,12 +5,11 @@
  * how the "byte-identical to the firmware's default" claim below stays true
  * rather than merely intended.
  */
-import { textWidth } from './epd.js';
-
-/* Landscape geometry, so x centring is against a 250 px wide frame. Text is
- * scale*(6n-1) wide for n glyphs - see textWidth(). Math.floor, not round, to
- * match the firmware's integer division. */
-const centre = (n, scale) => Math.floor((250 - textWidth(n, scale)) / 2);
+/* Landscape geometry throughout, so the frame is 250x122 and its middle is
+ * x=125. Faces centre with align=1 against that rather than with offsets
+ * computed from the glyph metrics, which is what this file used to do and
+ * what stopped being correct the moment a second font existed. */
+const MID = 125;
 
 /* ---- month grid -----------------------------------------------------------
  * Built by a loop rather than written out, because the 31 lines differ only in
@@ -37,7 +36,7 @@ function monthGrid() {
      * end of the month, so the number is simply pushed off the panel and
      * clipped - February stops at 28 without a conditional. */
     const off = n >= 29 ? `+(${n}/({D}+1))*200` : '';
-    s += `FONT(8+${dayCol(n)}*34,32+${dayRow(n)}*14${off},'${n}')\n`;
+    s += `TEXT(8+${dayCol(n)}*34,32+${dayRow(n)}*14${off},'${n}')\n`;
   }
   return s;
 }
@@ -47,54 +46,55 @@ export const PRESETS = {
    * ships with" is always one click away - and, since a test diffs the two,
    * stays that way if either side is edited. */
   'Built-in default':
-    'ROTATE(3)\n' +
+    'ROTATE(270)\n' +
     'CLEAR(1)\n' +
-    `FONT(${centre(5, 5)},25,'{H:02d}:{N:02d}',scale=5)\n` +
-    `FONT(${centre(10, 2)},72,'{y}-{m:02d}-{d:02d}',scale=2)\n` +
-    `FONT(${centre(3, 2)},94,'{W}',scale=2)\n`,
+    `TEXT(${MID},18,'{H:02d}:{N:02d}',font=1,scale=2,align=1)\n` +
+    `TEXT(${MID},78,'{y}-{m:02d}-{d:02d}',scale=2,align=1)\n` +
+    `TEXT(${MID},100,'{W}',scale=2,align=1)\n`,
 
+  /* Nothing but the time, as large as the panel takes. font=1 at scale 2 is
+   * 168x48 for HH:MM; scale 3 would be 252 wide against a 250 px frame, so
+   * this is the ceiling rather than a preference. Centred on both axes:
+   * (122 - 48) / 2 = 37. */
   'Big clock':
-    'ROTATE(3)\n' +
+    'ROTATE(270)\n' +
     'CLEAR(1)\n' +
-    `FONT(${centre(5, 7)},22,'{H:02d}:{N:02d}',scale=7)\n` +
-    `FONT(${centre(14, 2)},88,'{W} {y}-{m:02d}-{d:02d}',scale=2)\n`,
+    `TEXT(${MID},37,'{H:02d}:{N:02d}',font=1,scale=2,align=1)\n`,
 
   'Inverted':
-    'ROTATE(3)\n' +
+    'ROTATE(270)\n' +
     'CLEAR(0)\n' +
-    `FONT(${centre(5, 6)},24,'{H:02d}:{N:02d}',color=1,bg=0,scale=6)\n` +
-    `FONT(${centre(10, 2)},86,'{y}-{m:02d}-{d:02d}',color=1,bg=0,scale=2)\n`,
+    `TEXT(${MID},20,'{H:02d}:{N:02d}',font=1,scale=2,color=1,bg=0,align=1)\n` +
+    `TEXT(${MID},86,'{y}-{m:02d}-{d:02d}',color=1,bg=0,scale=2,align=1)\n`,
 
   'Framed card':
-    'ROTATE(3)\n' +
+    'ROTATE(270)\n' +
     'CLEAR(1)\n' +
     'RECT(3,3,246,118,width=2)\n' +
     'LINE(3,74,246,74)\n' +
-    `FONT(${centre(5, 6)},22,'{H:02d}:{N:02d}',scale=6)\n` +
-    `FONT(${centre(3, 2)},84,'{W}',scale=2)\n` +
-    `FONT(${centre(10, 2)},100,'{y}-{m:02d}-{d:02d}',scale=2)\n`,
+    `TEXT(${MID},20,'{H:02d}:{N:02d}',font=1,scale=2,align=1)\n` +
+    `TEXT(${MID},84,'{W}',scale=2,align=1)\n` +
+    `TEXT(${MID},100,'{y}-{m:02d}-{d:02d}',scale=2,align=1)\n`,
 
+  /* Seconds rule out the large font - it has no 'S' problem, but eight glyphs
+   * at font=1 would be 271 px wide. The 5x7 font at scale 4 fits. */
   'With seconds':
-    'ROTATE(3)\n' +
+    'ROTATE(270)\n' +
     'CLEAR(1)\n' +
-    `FONT(${centre(8, 4)},30,'{H:02d}:{N:02d}:{S:02d}',scale=4)\n` +
-    `FONT(${centre(10, 2)},80,'{y}-{m:02d}-{d:02d}',scale=2)\n`,
+    `TEXT(${MID},30,'{H:02d}:{N:02d}:{S:02d}',scale=4,align=1)\n` +
+    `TEXT(${MID},80,'{y}-{m:02d}-{d:02d}',scale=2,align=1)\n`,
 
-  /* Shows off the calendar variables. Widths are fixed rather than centred:
-   * {M} and {W} are always three glyphs, and {j}/{V} are padded, so the line
-   * does not reflow as the date changes - a face that shifts sideways on the
-   * 1st of the month looks broken even though it is not. */
+  /* Shows off the calendar variables. The two bottom labels are anchored to
+   * the margins rather than centred - align=0 on the left, align=2 on the
+   * right - so they stay put as the numbers change width. */
   'Calendar':
-    'ROTATE(3)\n' +
+    'ROTATE(270)\n' +
     'CLEAR(1)\n' +
-    "FONT(10,8,'{W} {d:02d} {M} {y}',scale=2)\n" +
-    'LINE(10,30,239,30)\n' +          /* 239 = 249 - 10, so both margins match */
-    `FONT(${centre(5, 6)},44,'{H:02d}:{N:02d}',scale=6)\n` +
-    "FONT(10,102,'WEEK {V:02d} OF {G}')\n" +
-    /* Right-aligned against the same 239 the rule above ends at. Always 11
-     * glyphs: {j} is padded to 3, and {J} is 365 or 366 - so the alignment
-     * holds all year rather than only after the 9th of January. */
-    `FONT(${240 - textWidth(11, 1)},102,'DAY {j:03d}/{J}')\n`,
+    "TEXT(10,8,'{W} {d:02d} {M} {y}',scale=2)\n" +
+    'LINE(10,30,239,30)\n' +         /* 239 = 249 - 10, so both margins match */
+    `TEXT(${MID},44,'{H:02d}:{N:02d}',font=1,scale=2,align=1)\n` +
+    "TEXT(10,102,'WEEK {V:02d} OF {G}')\n" +
+    "TEXT(239,102,'DAY {j:03d}/{J}',align=2)\n",
 
   /* Draws itself rather than just labelling itself: the fill is an expression
    * over {d} and {D}, so it grows across the month and resets on the 1st.
@@ -109,13 +109,13 @@ export const PRESETS = {
    * integer, so dividing first would collapse the fraction to 0 or 1 and the
    * bar would jump rather than creep. */
   'Month progress':
-    'ROTATE(3)\n' +
+    'ROTATE(270)\n' +
     'CLEAR(1)\n' +
-    "FONT(4,4,'{H:02d}:{N:02d}',scale=3)\n" +
-    "FONT(4,44,'{W} {d} {M} {y}',scale=2)\n" +
+    "TEXT(4,4,'{H:02d}:{N:02d}',scale=3)\n" +
+    "TEXT(4,44,'{W} {d} {M} {y}',scale=2)\n" +
     'RECT(4,70,245,82)\n' +
     'RECT(4,70,4+{d}*241/{D},82,fill=1)\n' +
-    "FONT(4,92,'DAY {j} OF {J}   WEEK {V}')\n",
+    "TEXT(4,92,'DAY {j} OF {J}   WEEK {V}')\n",
 
   /* A real month grid, with today boxed out.
    *
@@ -133,21 +133,23 @@ export const PRESETS = {
    * refreshes a day redrawing identical pixels - by far the most expensive
    * thing this tag does. */
   'Month grid':
-    'ROTATE(3)\n' +
+    'ROTATE(270)\n' +
     'CLEAR(1)\n' +
     'EVERY(1440)\n' +
-    `FONT(${centre(8, 2)},2,'{M} {y}',scale=2)\n` +
-    "FONT(8,20,'S  M  T  W  T  F  S')\n" +
+    `TEXT(${MID},2,'{M} {y}',scale=2,align=1)\n` +
+    "TEXT(8,20,'S  M  T  W  T  F  S')\n" +
     'LINE(4,29,245,29)\n' +
     monthGrid() +
     `INVERT(6+{w}*34,30+((${FIRST_COL}+{d}-1)/7)*14,20,13)\n`,
 
-  /* Portrait, so the frame is 122x250 and the centring above does not apply. */
+  /* Portrait, so the frame is 122x250 and MID does not apply - 61 is the
+   * middle here. Hours and minutes stack because HH:MM will not fit across
+   * 122 px at a size worth having. */
   'Portrait':
     'ROTATE(0)\n' +
     'CLEAR(1)\n' +
-    "FONT(16,60,'{H:02d}',scale=3)\n" +
-    "FONT(16,100,'{N:02d}',scale=3)\n" +
-    "FONT(13,150,'{y}-{m:02d}-{d:02d}')\n" +
-    "FONT(44,170,'{W}')\n",
+    "TEXT(61,56,'{H:02d}',font=1,scale=2,align=1)\n" +
+    "TEXT(61,108,'{N:02d}',font=1,scale=2,align=1)\n" +
+    "TEXT(61,170,'{y}-{m:02d}-{d:02d}',align=1)\n" +
+    "TEXT(61,186,'{W}',align=1)\n",
 };

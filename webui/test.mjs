@@ -170,7 +170,7 @@ test('indentation is formatting, not a syntax error', () => {
   const p = new Panel();
   p.clear(1);
   const { warnings } = runScript(p,
-    'ROTATE(3)\n  CLEAR(1)\n\tRECT(4,4,40,20,fill=1)\n', SECS);
+    'ROTATE(270)\n  CLEAR(1)\n\tRECT(4,4,40,20,fill=1)\n', SECS);
   assert.deepEqual(warnings, []);
   assert.equal(p.get(4, 4), 0, 'the indented RECT did not draw');
 });
@@ -181,7 +181,7 @@ test('a wrong-case command says so instead of "not implemented"', () => {
    * a command that plainly exists sends the author looking in the wrong place. */
   const p = new Panel();
   p.clear(1);
-  const { warnings } = runScript(p, 'ROTATE(3)\nrect(4,4,40,20,0,1,1)\n', SECS);
+  const { warnings } = runScript(p, 'ROTATE(270)\nrect(4,4,40,20,0,1,1)\n', SECS);
   assert.equal(warnings.length, 1);
   assert.match(warnings[0].msg, /must be written RECT\(\).*case-sensitive/);
   assert.ok(p.fb.every((b) => b === 0xff), 'a rejected command still drew');
@@ -191,7 +191,7 @@ test('a space before the paren is not a command', () => {
   /* The firmware matches the literal prefix "RECT(", so "RECT (" is nothing. */
   const p = new Panel();
   p.clear(1);
-  const { warnings } = runScript(p, 'ROTATE(3)\nRECT (4,4,40,20,0,1,1)\n', SECS);
+  const { warnings } = runScript(p, 'ROTATE(270)\nRECT (4,4,40,20,0,1,1)\n', SECS);
   assert.equal(warnings.length, 1);
   assert.ok(p.fb.every((b) => b === 0xff));
 });
@@ -203,7 +203,7 @@ test('an option is not swallowed as a positional', () => {
    * positionals read 0 and the option is still found by name. */
   const p = new Panel();
   p.clear(1);
-  runScript(p, 'ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30,fill=1)\n', SECS);
+  runScript(p, 'ROTATE(270)\nCLEAR(1)\nRECT(4,4,60,30,fill=1)\n', SECS);
   assert.equal(p.get(30, 20), 0, 'the rect did not fill');
   assert.equal(p.get(70, 20), 1, 'the fill ran past the rect');
 });
@@ -215,9 +215,9 @@ test('options may appear in any order and be left out', () => {
     runScript(p, script, SECS);
     return Buffer.from(p.fb);
   };
-  const a = render('ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30,color=0,width=2,fill=0)\n');
-  const b = render('ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30,width=2)\n');
-  const c = render('ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30,fill=0,width=2,color=0)\n');
+  const a = render('ROTATE(270)\nCLEAR(1)\nRECT(4,4,60,30,color=0,width=2,fill=0)\n');
+  const b = render('ROTATE(270)\nCLEAR(1)\nRECT(4,4,60,30,width=2)\n');
+  const c = render('ROTATE(270)\nCLEAR(1)\nRECT(4,4,60,30,fill=0,width=2,color=0)\n');
   assert.deepEqual(a, b, 'omitting an option did not fall back to its default');
   assert.deepEqual(a, c, 'option order changed the result');
 });
@@ -235,7 +235,7 @@ test("a '=' inside quoted text is text", () => {
   const p = new Panel();
   p.clear(1);
   const { warnings } = runScript(p,
-    "ROTATE(3)\nCLEAR(1)\nFONT(2,2,'A,scale=9',scale=2)\n", SECS);
+    "ROTATE(270)\nCLEAR(1)\nTEXT(2,2,'A,scale=9',scale=2)\n", SECS);
   assert.deepEqual(warnings, []);
 
   /* At scale=2 the 9 glyphs of "A,scale=9" are 2*(6*9-1) = 106 px wide, so
@@ -247,7 +247,7 @@ test('an option name must match whole, not by prefix', () => {
   const p = new Panel();
   p.clear(1);
   const { warnings } = runScript(p,
-    'ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30,colors=1)\n', SECS);
+    'ROTATE(270)\nCLEAR(1)\nRECT(4,4,60,30,colors=1)\n', SECS);
   assert.equal(warnings.length, 1);
   assert.match(warnings[0].msg, /no colors= option/);
   /* "colors" must not have satisfied the lookup for "color". */
@@ -281,7 +281,7 @@ test('the option tables agree with the firmware', () => {
     assert.deepEqual(new Set(OPTIONS[cmd]), new Set(opts),
       `${cmd}(): epd.js and epd_cmdparser.c disagree about its options`);
   }
-  for (const cmd of ['CLEAR', 'POINT', 'LINE', 'RECT', 'CIRCLE', 'FONT', 'ROTATE']) {
+  for (const cmd of ['CLEAR', 'POINT', 'LINE', 'RECT', 'CIRCLE', 'TEXT', 'ROTATE']) {
     assert.ok(cmd in wired, `${cmd}() is not checked for unknown options`);
   }
 });
@@ -323,7 +323,7 @@ test('the firmware reports what it made of a script', () => {
   assert.equal(s.count, 2);
 
   /* The quoting rule again, from the firmware's own side this time. */
-  assert.equal(st("FONT(2,2,'A,scale=9',scale=2)\n").code, OK);
+  assert.equal(st("TEXT(2,2,'A,scale=9',scale=2)\n").code, OK);
 
   /* CRLF is one line ending. Counting it as two would put every reported line
    * number past the first one out by a line, in a file an editor shows as
@@ -351,6 +351,22 @@ test('the firmware reports what it made of a script', () => {
 
   /* But indentation must not hide a real typo. */
   assert.equal(st('CLEAR(1)\n   NOPE(1)\n').code, UNKNOWN_CMD);
+
+  /* The renamed command is an unknown command to the tag - there is no alias,
+   * deliberately, so a face still saying FONT() is reported rather than half
+   * working. */
+  assert.equal(st("CLEAR(1)\nFONT(4,4,'HI')\n").code, UNKNOWN_CMD);
+
+  /* A ROTATE that is not a quarter turn is its own error, not "unknown
+   * command" - the command exists and the argument is the problem, and an
+   * author told the wrong one of those looks in the wrong place. */
+  const BAD_ARG = 5;
+  let r = st('ROTATE(3)\nCLEAR(1)\n');
+  assert.equal(r.code, BAD_ARG, 'EPD_ERR_BAD_ARG');
+  assert.equal(r.line, 1);
+  for (const d of [0, 90, 180, 270]) {
+    assert.equal(st(`ROTATE(${d})\nCLEAR(1)\n`).code, OK, `ROTATE(${d})`);
+  }
 });
 
 test('an unknown option is reported rather than silently dropped', () => {
@@ -366,7 +382,7 @@ test('an unknown option is reported rather than silently dropped', () => {
 test('an option value is a full expression', () => {
   const p = new Panel();
   p.clear(1);
-  runScript(p, 'ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30,fill=(1+1)/2)\n', SECS);
+  runScript(p, 'ROTATE(270)\nCLEAR(1)\nRECT(4,4,60,30,fill=(1+1)/2)\n', SECS);
   assert.equal(p.get(30, 20), 0, 'fill=(1+1)/2 did not evaluate to 1');
 });
 
@@ -374,17 +390,17 @@ test('a bare CR ends a line, as epd_cmd_run() has it', () => {
   const p = new Panel();
   p.clear(1);
   const { warnings } = runScript(p,
-    'ROTATE(3)\rCLEAR(1)\rRECT(4,4,40,20,fill=1)\n', SECS);
+    'ROTATE(270)\rCLEAR(1)\rRECT(4,4,40,20,fill=1)\n', SECS);
   assert.deepEqual(warnings, []);
   assert.equal(p.get(4, 4), 0);
 });
 
-test("FONT's quoted text may contain commas", () => {
+test("TEXT's quoted text may contain commas", () => {
   /* The arg splitter has to respect quoting, or 'A,B' would be split into two
    * arguments and the text would silently truncate. */
   const p = new Panel();
   p.clear(1);
-  runScript(p, "ROTATE(3)\nFONT(0,0,'A,B')\n", SECS);
+  runScript(p, "ROTATE(270)\nTEXT(0,0,'A,B')\n", SECS);
   let ink = 0;
   for (let y = 0; y < 7; y++)
     for (let x = 0; x < 18; x++) if (!p.get(x, y)) ink++;
@@ -616,112 +632,112 @@ test('the JS renderer is byte-identical to the firmware C', { skip:
    * clipping, odd rotations, the new calendar variables, quoting. */
   const scripts = [
     ...Object.values(PRESETS),
-    "ROTATE(1)\nCLEAR(0)\nFONT(2,2,'{W} {M} {j} {V} {G} {L}',color=1,bg=0)\n",
-    "ROTATE(1)\nCLEAR(0)\nFONT(2,2,'{d}/{D} {j}/{J} {L}',color=1,bg=0)\n",
-    "ROTATE(2)\nCLEAR(1)\nCIRCLE(60,60,40,width=2)\nRECT(5,5,50,30,fill=1)\n",
+    "ROTATE(90)\nCLEAR(0)\nTEXT(2,2,'{W} {M} {j} {V} {G} {L}',color=1,bg=0)\n",
+    "ROTATE(90)\nCLEAR(0)\nTEXT(2,2,'{d}/{D} {j}/{J} {L}',color=1,bg=0)\n",
+    "ROTATE(180)\nCLEAR(1)\nCIRCLE(60,60,40,width=2)\nRECT(5,5,50,30,fill=1)\n",
 
     /* Named arguments. The cursor walk and the per-option re-scan have to agree
      * about where an argument starts, so these poke at the seam between them. */
-    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30,fill=1,color=0,width=2)\n",
-    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30,width=2,fill=1)\n",   /* order swapped */
-    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30, fill = 1 , color = 0 )\n",  /* spaces */
-    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30,fill=1+{d}%2,width={m}/4)\n", /* exprs */
+    "ROTATE(270)\nCLEAR(1)\nRECT(4,4,60,30,fill=1,color=0,width=2)\n",
+    "ROTATE(270)\nCLEAR(1)\nRECT(4,4,60,30,width=2,fill=1)\n",   /* order swapped */
+    "ROTATE(270)\nCLEAR(1)\nRECT(4,4,60,30, fill = 1 , color = 0 )\n",  /* spaces */
+    "ROTATE(270)\nCLEAR(1)\nRECT(4,4,60,30,fill=1+{d}%2,width={m}/4)\n", /* exprs */
     /* An option where a positional was expected: the positional reads 0 and
      * the option is still found, rather than being eaten as a coordinate. */
-    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,fill=1)\nCIRCLE(60,60,color=1)\n",
-    "ROTATE(3)\nCLEAR(1)\nFONT(20,20,scale=4)\n",       /* text omitted */
-    "ROTATE(3)\nCLEAR(1)\nFONT(20,20,'HI',scale=4,bg=0,color=1)\n",
+    "ROTATE(270)\nCLEAR(1)\nRECT(4,4,fill=1)\nCIRCLE(60,60,color=1)\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(20,20,scale=4)\n",       /* text omitted */
+    "ROTATE(270)\nCLEAR(1)\nTEXT(20,20,'HI',scale=4,bg=0,color=1)\n",
     /* A '=' inside quoted text is text, not an option - and the comma inside
      * the quotes is load-bearing, since only an argument boundary can be
      * mistaken for the start of an option. See the unit test of the same name. */
-    "ROTATE(3)\nCLEAR(1)\nFONT(2,2,'A,scale=9,fill=1',scale=2)\n",
-    "ROTATE(3)\nCLEAR(1)\nFONT(2,2,'X,color=1',color=0,scale=2)\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(2,2,'A,scale=9,fill=1',scale=2)\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(2,2,'X,color=1',color=0,scale=2)\n",
     /* Prefix collision: neither "colors" nor "fills" is an option, so both
      * commands draw with their defaults. */
-    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30,colors=1,fills=1)\n",
+    "ROTATE(270)\nCLEAR(1)\nRECT(4,4,60,30,colors=1,fills=1)\n",
     /* Unknown options are ignored, not fatal - the tag has nowhere to say so. */
-    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30,nope=7,fill=1)\n",
+    "ROTATE(270)\nCLEAR(1)\nRECT(4,4,60,30,nope=7,fill=1)\n",
     /* A malformed option value is 0, like every other malformed argument. */
-    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,60,30,fill=,width=1/0)\n",
-    "ROTATE(3)\nCLEAR(1)\nLINE(-20,-20,300,200,width=3)\nPOINT(249,121)\n",
-    "ROTATE(3)\nCLEAR(1)\nFONT(0,0,'{h}{P} A,B',scale=4)\n",
+    "ROTATE(270)\nCLEAR(1)\nRECT(4,4,60,30,fill=,width=1/0)\n",
+    "ROTATE(270)\nCLEAR(1)\nLINE(-20,-20,300,200,width=3)\nPOINT(249,121)\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(0,0,'{h}{P} A,B',scale=4)\n",
     /* Off-panel and degenerate input: both sides must clip, not wrap. */
-    "ROTATE(3)\nCLEAR(1)\nRECT(240,110,400,400,fill=1)\nFONT(230,0,'XYZ',scale=3)\n",
+    "ROTATE(270)\nCLEAR(1)\nRECT(240,110,400,400,fill=1)\nTEXT(230,0,'XYZ',scale=3)\n",
 
     /* INVERT. It is the only primitive that reads the framebuffer, so it is
      * the only one whose result depends on what was drawn first - which makes
      * it the likeliest to drift. Over glyphs, over a filled rect, and over the
      * seam between them. */
-    "ROTATE(3)\nCLEAR(1)\nFONT(10,10,'27',scale=2)\nINVERT(8,8,24,20)\n",
-    "ROTATE(3)\nCLEAR(1)\nRECT(0,0,100,40,fill=1)\nINVERT(20,10,40,20)\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(10,10,'27',scale=2)\nINVERT(8,8,24,20)\n",
+    "ROTATE(270)\nCLEAR(1)\nRECT(0,0,100,40,fill=1)\nINVERT(20,10,40,20)\n",
     /* Twice over the same box is identity - if the two disagree about which
      * pixels are covered, this is where it shows. */
-    "ROTATE(3)\nCLEAR(1)\nFONT(10,10,'88',scale=3)\nINVERT(5,5,50,30)\nINVERT(5,5,50,30)\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(10,10,'88',scale=3)\nINVERT(5,5,50,30)\nINVERT(5,5,50,30)\n",
     /* Every rotation: a framebuffer byte is 8 pixels along the panel's x axis,
      * so under 1 and 3 the box crosses byte boundaries differently. */
     "ROTATE(0)\nCLEAR(1)\nINVERT(3,3,17,29)\n",
-    "ROTATE(1)\nCLEAR(1)\nINVERT(3,3,17,29)\n",
-    "ROTATE(2)\nCLEAR(1)\nINVERT(3,3,17,29)\n",
+    "ROTATE(90)\nCLEAR(1)\nINVERT(3,3,17,29)\n",
+    "ROTATE(180)\nCLEAR(1)\nINVERT(3,3,17,29)\n",
     /* Clipping, including a box entirely off-panel and one straddling the
      * edge, plus degenerate sizes that must draw nothing rather than wrap. */
-    "ROTATE(3)\nCLEAR(1)\nINVERT(240,110,80,80)\nINVERT(-30,-30,50,50)\n",
-    "ROTATE(3)\nCLEAR(1)\nINVERT(10,10,0,20)\nINVERT(10,40,20,0)\nINVERT(10,60,-5,-5)\n",
+    "ROTATE(270)\nCLEAR(1)\nINVERT(240,110,80,80)\nINVERT(-30,-30,50,50)\n",
+    "ROTATE(270)\nCLEAR(1)\nINVERT(10,10,0,20)\nINVERT(10,40,20,0)\nINVERT(10,60,-5,-5)\n",
     /* Computed from expressions, the way a calendar highlighting today does. */
-    "ROTATE(3)\nCLEAR(1)\nINVERT(8+({d}%7)*20,30+({d}/7)*14,19,13)\n",
+    "ROTATE(270)\nCLEAR(1)\nINVERT(8+({d}%7)*20,30+({d}/7)*14,19,13)\n",
 
     /* align=. The anchor shifts by a width measured after {} expansion, so
      * these poke at both the metric and the point it is taken. */
-    "ROTATE(3)\nCLEAR(1)\nFONT(125,10,'CENTRED',align=1)\n",
-    "ROTATE(3)\nCLEAR(1)\nFONT(245,10,'RIGHT',align=2)\n",
-    "ROTATE(3)\nCLEAR(1)\nFONT(125,40,'{H:02d}:{N:02d}',scale=4,align=1)\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(125,10,'CENTRED',align=1)\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(245,10,'RIGHT',align=2)\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(125,40,'{H:02d}:{N:02d}',scale=4,align=1)\n",
     /* Odd widths: w/2 truncates, and both sides must truncate the same way. */
-    "ROTATE(3)\nCLEAR(1)\nFONT(125,10,'ABC',scale=3,align=1)\nFONT(125,40,'AB',scale=3,align=1)\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(125,10,'ABC',scale=3,align=1)\nTEXT(125,40,'AB',scale=3,align=1)\n",
     /* Anchored off-panel, so the clip does the rest. */
-    "ROTATE(3)\nCLEAR(1)\nFONT(0,10,'OFFLEFT',align=2)\nFONT(249,30,'OFFRIGHT',align=1)\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(0,10,'OFFLEFT',align=2)\nTEXT(249,30,'OFFRIGHT',align=1)\n",
     /* Empty text must not shift anything by -scale. */
-    "ROTATE(3)\nCLEAR(1)\nFONT(125,10,'',align=1)\nFONT(4,4,'X')\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(125,10,'',align=1)\nTEXT(4,4,'X')\n",
     /* Unknown align values behave as "not centre" on both sides. */
-    "ROTATE(3)\nCLEAR(1)\nFONT(125,10,'ODD',align=7)\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(125,10,'ODD',align=7)\n",
 
     /* font=1, the 16x24 digits. The two tables are generated from the same
      * ASCII art, so a drift here means one copy was hand-patched. */
-    "ROTATE(3)\nCLEAR(1)\nFONT(4,4,'0123456789',font=1)\n",
-    "ROTATE(3)\nCLEAR(1)\nFONT(20,40,'{H:02d}:{N:02d}',font=1,scale=2)\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(4,4,'0123456789',font=1)\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(20,40,'{H:02d}:{N:02d}',font=1,scale=2)\n",
     /* Missing glyphs draw blank on both sides rather than folding to 5x7. */
-    "ROTATE(3)\nCLEAR(1)\nFONT(4,4,'AB:12',font=1)\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(4,4,'AB:12',font=1)\n",
     /* align= over the wider cell - a shared width rule, two cell widths. */
-    "ROTATE(3)\nCLEAR(1)\nFONT(125,40,'12:34',font=1,align=1)\n",
-    "ROTATE(3)\nCLEAR(1)\nFONT(245,40,'12:34',font=1,align=2)\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(125,40,'12:34',font=1,align=1)\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(245,40,'12:34',font=1,align=2)\n",
     /* Clipping at the far edge, where the 24-row cell runs off the bottom. */
-    "ROTATE(3)\nCLEAR(1)\nFONT(240,110,'88',font=1,scale=2)\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(240,110,'88',font=1,scale=2)\n",
     /* An unknown font id falls back to 5x7 on both sides. */
-    "ROTATE(3)\nCLEAR(1)\nFONT(4,4,'123',font=9)\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(4,4,'123',font=9)\n",
 
     /* EVERY draws nothing, but both sides must agree it is a known command -
      * if one of them warned or errored, the other's frame would still match. */
-    "ROTATE(3)\nCLEAR(1)\nEVERY(60)\nFONT(4,4,'X')\n",
+    "ROTATE(270)\nCLEAR(1)\nEVERY(60)\nTEXT(4,4,'X')\n",
 
     /* Whitespace-only lines are blank lines, not mistyped commands. */
-    "ROTATE(3)\nCLEAR(1)\n   \n\t\nFONT(4,4,'X')\n",
+    "ROTATE(270)\nCLEAR(1)\n   \n\t\nTEXT(4,4,'X')\n",
 
     /* Expression arguments. These are where the two implementations are most
      * likely to drift: JS numbers are doubles and do not wrap at 32 bits, its
      * '/' is not integer division, and division by zero is Infinity rather
      * than the firmware's deliberate 0. */
-    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,4+{d}*8,12,fill=1)\nLINE(60,60,60+{H}*2,60,width=2)\n",
-    "ROTATE(3)\nCLEAR(1)\nRECT((1+1)*2,4,(10+10)*2,20,fill=1)\n",
-    "ROTATE(3)\nCLEAR(1)\nCIRCLE(125-{N},61,{L}-{d}+8,0,2,1)\n",
-    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,4+{j}*241/{J},12,fill=1)\nPOINT({D},{J}%250)\n",
-    "ROTATE(3)\nCLEAR(1)\nPOINT({j}%250,{V}*2)\nRECT(0,0,{u}%200,10,fill=1)\n",
+    "ROTATE(270)\nCLEAR(1)\nRECT(4,4,4+{d}*8,12,fill=1)\nLINE(60,60,60+{H}*2,60,width=2)\n",
+    "ROTATE(270)\nCLEAR(1)\nRECT((1+1)*2,4,(10+10)*2,20,fill=1)\n",
+    "ROTATE(270)\nCLEAR(1)\nCIRCLE(125-{N},61,{L}-{d}+8,0,2,1)\n",
+    "ROTATE(270)\nCLEAR(1)\nRECT(4,4,4+{j}*241/{J},12,fill=1)\nPOINT({D},{J}%250)\n",
+    "ROTATE(270)\nCLEAR(1)\nPOINT({j}%250,{V}*2)\nRECT(0,0,{u}%200,10,fill=1)\n",
     /* Malformed on purpose: both must yield 0 and carry on. */
-    "ROTATE(3)\nCLEAR(1)\nRECT(1/0,{W},{nope},10%0,fill=1)\nPOINT(-(3+4),8)\n",
-    "ROTATE(3)\nCLEAR(1)\nRECT((((((((((1+1)))))))))*4,4,80,20,fill=1)\n",
+    "ROTATE(270)\nCLEAR(1)\nRECT(1/0,{W},{nope},10%0,fill=1)\nPOINT(-(3+4),8)\n",
+    "ROTATE(270)\nCLEAR(1)\nRECT((((((((((1+1)))))))))*4,4,80,20,fill=1)\n",
     /* A missing comma. The firmware stops the first argument at the space and
      * resumes the next one at the 2, so it sees 1,2,3 - a preview that split
      * on commas would see 1,3,0 and draw somewhere else entirely. */
-    "ROTATE(3)\nCLEAR(1)\nPOINT(1 2,3)\nRECT(8 9,4,40,20,fill=1)\n",
+    "ROTATE(270)\nCLEAR(1)\nPOINT(1 2,3)\nRECT(8 9,4,40,20,fill=1)\n",
     /* Quoted text still wins over expression syntax inside it. */
-    "ROTATE(3)\nCLEAR(1)\nFONT(2,2,'A,B (1+2)',scale=2)\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(2,2,'A,B (1+2)',scale=2)\n",
 
     /* Malformed *lines*, as opposed to malformed arguments above. Every one of
      * these disagreed before it was listed here: the JS trimmed and
@@ -730,28 +746,28 @@ test('the JS renderer is byte-identical to the firmware C', { skip:
      * and a lone CR previewed as one broken line where the tag ran two. The
      * lesson is that the well-formed scripts above cannot catch a divergence
      * in how a line is *recognised* - only deliberately ugly input can. */
-    "ROTATE(3)\nCLEAR(1)\n  RECT(4,4,40,20,fill=1)\n",       /* indented */
-    "ROTATE(3)\nCLEAR(1)\n\tRECT(4,4,40,20,fill=1)\n",       /* tab-indented */
-    "ROTATE(3)\nCLEAR(1)\nrect(4,4,40,20,0,1,1)\n",         /* wrong case */
-    "ROTATE(3)\nCLEAR(1)\nRect(4,4,40,20,0,1,1)\n",
-    "ROTATE(3)\nCLEAR(1)\nRECT (4,4,40,20,0,1,1)\n",        /* space before ( */
-    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,40,20,fill=1)   \n",      /* trailing space */
-    "ROTATE(3)\nCLEAR(1)\rRECT(4,4,40,20,fill=1)\n",         /* bare CR */
-    "ROTATE(3)\r\nCLEAR(1)\r\nRECT(4,4,40,20,fill=1)\r\n",   /* CRLF */
-    "ROTATE(3)\nCLEAR(1)\n# a note\nRECT(4,4,40,20,fill=1)\n",
-    "ROTATE(3)\n\n\nCLEAR(1)\nRECT(4,4,40,20,fill=1)\n",     /* blank lines */
-    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,40,20,fill=1)",           /* no final \n */
-    "ROTATE(3)\nCLEAR(1)\nRECT\nRECT(4,4,40,20,fill=1)\n",   /* no ( at all */
+    "ROTATE(270)\nCLEAR(1)\n  RECT(4,4,40,20,fill=1)\n",       /* indented */
+    "ROTATE(270)\nCLEAR(1)\n\tRECT(4,4,40,20,fill=1)\n",       /* tab-indented */
+    "ROTATE(270)\nCLEAR(1)\nrect(4,4,40,20,0,1,1)\n",         /* wrong case */
+    "ROTATE(270)\nCLEAR(1)\nRect(4,4,40,20,0,1,1)\n",
+    "ROTATE(270)\nCLEAR(1)\nRECT (4,4,40,20,0,1,1)\n",        /* space before ( */
+    "ROTATE(270)\nCLEAR(1)\nRECT(4,4,40,20,fill=1)   \n",      /* trailing space */
+    "ROTATE(270)\nCLEAR(1)\rRECT(4,4,40,20,fill=1)\n",         /* bare CR */
+    "ROTATE(270)\r\nCLEAR(1)\r\nRECT(4,4,40,20,fill=1)\r\n",   /* CRLF */
+    "ROTATE(270)\nCLEAR(1)\n# a note\nRECT(4,4,40,20,fill=1)\n",
+    "ROTATE(270)\n\n\nCLEAR(1)\nRECT(4,4,40,20,fill=1)\n",     /* blank lines */
+    "ROTATE(270)\nCLEAR(1)\nRECT(4,4,40,20,fill=1)",           /* no final \n */
+    "ROTATE(270)\nCLEAR(1)\nRECT\nRECT(4,4,40,20,fill=1)\n",   /* no ( at all */
     /* A longer name that merely starts with a command's letters. Matching on
      * "RECT" rather than "RECT(" would draw a rectangle here. */
-    "ROTATE(3)\nCLEAR(1)\nRECTANGLE(4,4,40,20,fill=1)\n",
+    "ROTATE(270)\nCLEAR(1)\nRECTANGLE(4,4,40,20,fill=1)\n",
     /* Too few and too many arguments: missing ones read as 0, extra ones are
      * never read. RECT() collapses to a single pixel at the origin under the
      * corner form - worth pinning, because it is exactly the case that becomes
      * "draw nothing" when RECT moves to x/y/w/h. */
-    "ROTATE(3)\nCLEAR(1)\nRECT()\n",
-    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,40,20,0,1,1,9,9,9)\n",
-    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,40,20,0,1,1\n",          /* unclosed */
+    "ROTATE(270)\nCLEAR(1)\nRECT()\n",
+    "ROTATE(270)\nCLEAR(1)\nRECT(4,4,40,20,0,1,1,9,9,9)\n",
+    "ROTATE(270)\nCLEAR(1)\nRECT(4,4,40,20,0,1,1\n",          /* unclosed */
   ];
 
   /* Both awkward dates, not one: 2027-01-01 is where {V}/{G} disagree with
@@ -880,6 +896,81 @@ test('both copies of the 16x24 table match the generator', { skip:
     'FONT16 in epd.js has drifted from tools/font16.py');
 });
 
+const STORE_C = join(HERE,
+  '../firmware/hema_epd_clock/src/platform/epd_store.c');
+
+/* Bump this together with EPD_STORE_VERSION in epd_store.c, and only when the
+ * DSL changes in a way that makes an already-stored face render wrongly. */
+const DSL_VERSION = 2;
+
+test('the store version tracks breaking DSL changes', () => {
+  /* A tag keeps its face in flash and restores it at boot, so a breaking
+   * grammar change reaches the panel of a tag nobody is holding, with no host
+   * in range to notice. EPD_STORE_VERSION is what turns that into a fallback
+   * to the built-in face instead.
+   *
+   * Version 2 is FONT() -> TEXT() and ROTATE(270) for ROTATE(3). The second is
+   * the dangerous one: a stored landscape face would come back portrait rather
+   * than merely blank.
+   *
+   * This test cannot tell whether a change was breaking - only a person can.
+   * What it can do is fail when the two numbers disagree, so the next breaking
+   * change is a decision someone makes rather than one they forget. */
+  const src = readFileSync(STORE_C, 'utf8');
+  const m = /#define\s+EPD_STORE_VERSION\s+(\d+)u/.exec(src);
+  assert.ok(m, 'EPD_STORE_VERSION not found in epd_store.c');
+  assert.equal(Number(m[1]), DSL_VERSION,
+    'epd_store.c and this test disagree about the DSL version - if the '
+    + 'grammar just changed in a way that breaks stored faces, bump both; '
+    + 'if it did not, bump neither');
+});
+
+test('the renamed and re-based commands say what changed', () => {
+  /* FONT() and ROTATE(3) are the two things most likely to survive from a
+   * script written against the old grammar, and both fail silently on the tag
+   * - one draws nothing, the other leaves the panel in the wrong orientation.
+   * The preview is the only place an author can be told, so it says the one
+   * useful thing rather than "not implemented". */
+  const warn = (script) => {
+    const p = new Panel();
+    p.clear(1);
+    return runScript(p, script, SECS).warnings;
+  };
+
+  let w = warn("CLEAR(1)\nFONT(4,4,'HI')\n");
+  assert.equal(w.length, 1);
+  assert.match(w[0].msg, /FONT\(\) is now TEXT\(\)/);
+
+  /* The index form: ROTATE(3) meant 270 and now means nothing. Saying so is
+   * the difference between a one-word fix and a hunt. */
+  w = warn('ROTATE(3)\nCLEAR(1)\n');
+  assert.equal(w.length, 1);
+  assert.match(w[0].msg, /not a quarter turn/);
+  assert.match(w[0].msg, /used to mean 270 degrees/);
+
+  /* A value that was never an index gets the plain message. */
+  w = warn('ROTATE(45)\nCLEAR(1)\n');
+  assert.equal(w.length, 1);
+  assert.match(w[0].msg, /not a quarter turn/);
+  assert.ok(!/used to mean/.test(w[0].msg));
+
+  /* And the four that are valid stay silent. */
+  for (const d of [0, 90, 180, 270]) {
+    assert.deepEqual(warn(`ROTATE(${d})\nCLEAR(1)\n`), [],
+      `ROTATE(${d}) should be accepted`);
+  }
+});
+
+test('a bad ROTATE leaves the panel alone rather than guessing', () => {
+  /* Not "snap to the nearest quarter turn": guessing would put the face
+   * sideways and give the author nothing to go on. The rotation stays as it
+   * was, which for a fresh script is portrait. */
+  const p = new Panel();
+  p.clear(1);
+  runScript(p, 'ROTATE(90)\nROTATE(3)\nCLEAR(1)\n', SECS);
+  assert.equal(p.width, 250, 'the refused ROTATE(3) changed the rotation');
+});
+
 test('the 16x24 font is a font, not the small one scaled up', () => {
   const ink = (script) => {
     const p = new Panel();
@@ -894,8 +985,8 @@ test('the 16x24 font is a font, not the small one scaled up', () => {
 
   /* A 5x7 '8' at scale 1 cannot ink more than 35 pixels; the large one is
    * drawn from its own table and inks far more. */
-  const small = ink("CLEAR(1)\nFONT(4,4,'8')\n");
-  const big = ink("CLEAR(1)\nFONT(4,4,'8',font=1)\n");
+  const small = ink("CLEAR(1)\nTEXT(4,4,'8')\n");
+  const big = ink("CLEAR(1)\nTEXT(4,4,'8',font=1)\n");
   assert.ok(small <= 35, `5x7 '8' inked ${small}, more than its cell holds`);
   assert.ok(big > small * 3, `font=1 '8' inked ${big}, no bigger than 5x7`);
 
@@ -908,16 +999,16 @@ test('the 16x24 font is a font, not the small one scaled up', () => {
   /* Every digit and the colon is present. A mistyped table entry would leave
    * one character silently invisible, which on a clock is a wrong time. */
   for (const c of '0123456789:') {
-    assert.ok(ink(`CLEAR(1)\nFONT(4,4,'${c}',font=1)\n`) > 0,
+    assert.ok(ink(`CLEAR(1)\nTEXT(4,4,'${c}',font=1)\n`) > 0,
       `large glyph '${c}' is blank`);
   }
 
   /* A character the table lacks draws blank rather than folding to 5x7 - and
    * the preview says so, since the tag cannot. */
-  assert.equal(ink("CLEAR(1)\nFONT(4,4,'A',font=1)\n"), 0);
+  assert.equal(ink("CLEAR(1)\nTEXT(4,4,'A',font=1)\n"), 0);
   const p = new Panel();
   p.clear(1);
-  const { warnings } = runScript(p, "CLEAR(1)\nFONT(4,4,'A1',font=1)\n", SECS);
+  const { warnings } = runScript(p, "CLEAR(1)\nTEXT(4,4,'A1',font=1)\n", SECS);
   assert.equal(warnings.length, 1);
   assert.match(warnings[0].msg, /no glyph for 'A'/);
   assert.ok(!/'1'/.test(warnings[0].msg), 'digits are not missing');
@@ -942,19 +1033,19 @@ test('align= anchors text rather than centring it on the screen', () => {
   const w = textWidth(5, 2);                 /* 'HELLO' at scale 2 */
   assert.equal(w, 58);
 
-  const left = draw("CLEAR(1)\nFONT(100,10,'HELLO',scale=2)\n");
+  const left = draw("CLEAR(1)\nTEXT(100,10,'HELLO',scale=2)\n");
   assert.equal(left.lo, 100, 'align=0 puts x at the left edge');
 
-  const centre = draw("CLEAR(1)\nFONT(100,10,'HELLO',scale=2,align=1)\n");
+  const centre = draw("CLEAR(1)\nTEXT(100,10,'HELLO',scale=2,align=1)\n");
   assert.equal(centre.lo, 100 - Math.trunc(w / 2), 'align=1 centres on x');
 
-  const right = draw("CLEAR(1)\nFONT(100,10,'HELLO',scale=2,align=2)\n");
+  const right = draw("CLEAR(1)\nTEXT(100,10,'HELLO',scale=2,align=2)\n");
   assert.equal(right.lo, 100 - w, 'align=2 puts the right edge at x');
   assert.ok(right.hi < 100, 'align=2 must not draw past the anchor');
 
   /* Centring on the panel is align=1 at the panel's own centre - the point of
    * anchoring rather than screen-centring. */
-  const onPanel = draw("CLEAR(1)\nFONT(125,10,'HELLO',scale=2,align=1)\n");
+  const onPanel = draw("CLEAR(1)\nTEXT(125,10,'HELLO',scale=2,align=1)\n");
   const slack = 250 - w;
   assert.equal(onPanel.lo, 125 - Math.trunc(w / 2));
   assert.ok(Math.abs(onPanel.lo - Math.floor(slack / 2)) <= 1,
@@ -970,7 +1061,7 @@ test('an empty string has no width', () => {
   const p = new Panel();
   p.setRotation(3);
   p.clear(1);
-  runScript(p, "CLEAR(1)\nFONT(125,10,'',align=1)\n", SECS);
+  runScript(p, "CLEAR(1)\nTEXT(125,10,'',align=1)\n", SECS);
   assert.ok(p.fb.every((b) => b === 0xff), 'empty text drew ink');
 });
 
@@ -1107,7 +1198,7 @@ test('an argument list is split on top-level commas only', () => {
    * wrong truncates arguments in the preview that the panel renders fine. */
   const p = new Panel();
   p.clear(1);
-  runScript(p, 'ROTATE(3)\nCLEAR(1)\nRECT((1+1)*2,4,(10+10)*2,20,fill=1)\n', SECS);
+  runScript(p, 'ROTATE(270)\nCLEAR(1)\nRECT((1+1)*2,4,(10+10)*2,20,fill=1)\n', SECS);
 
   /* The rect spans x 4..40, y 4..20 - check a corner is inked and that the
    * area beyond where a truncated parse would have stopped is inked too. */

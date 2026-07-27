@@ -665,7 +665,7 @@ export const OPTIONS = {
   LINE:   ['color', 'width'],
   RECT:   ['color', 'width', 'fill'],
   CIRCLE: ['color', 'width', 'fill'],
-  FONT:   ['color', 'bg', 'scale', 'align', 'font'],
+  TEXT:   ['color', 'bg', 'scale', 'align', 'font'],
   ROTATE: [],
   INVERT: [],
   EVERY:  [],
@@ -673,6 +673,11 @@ export const OPTIONS = {
   RESET:  [],
 };
 const COMMANDS = new Set(Object.keys(OPTIONS));
+
+/* Commands that existed under another name. Worth naming specifically: "FONT()
+ * is not implemented" sends an author looking for a missing feature, when what
+ * they need is one word changed. */
+const RENAMED = { FONT: 'TEXT' };
 
 /* Upper bound on EVERY(), matching CMD_EVERY_MAX in epd_cmdparser.c. A day;
  * beyond that the interval stops meaning anything a shelf label cares about. */
@@ -751,9 +756,9 @@ export function runScript(panel, script, secs) {
         break;
       }
 
-      case 'FONT': {
-        /* FONT(x, y, 'text', color=, bg=, scale=). The text is positional
-         * because the command is meaningless without it. */
+      case 'TEXT': {
+        /* TEXT(x, y, 'text', ...). The text is positional because the
+         * command is meaningless without it. */
         const [x, y] = a.ints(2);
         const str = a.str();
         const scale = a.named('scale', 1);
@@ -792,11 +797,22 @@ export function runScript(panel, script, secs) {
       }
 
       case 'ROTATE': {
-        let r = a.int();
-        /* The vendor's doc defines degrees and indices in the same breath, so
-         * both are accepted. */
-        if (r === 90) r = 1; else if (r === 180) r = 2; else if (r === 270) r = 3;
-        panel.setRotation(r);
+        /* Degrees only. The index form the vendor also accepted overlapped at
+         * exactly the confusing values - ROTATE(3) meant 270 - so it is
+         * refused and reported rather than taken as 3 degrees. */
+        const deg = a.int();
+        const quarter = { 0: 0, 90: 1, 180: 2, 270: 3 }[deg];
+        if (quarter === undefined) {
+          warnings.push({
+            line: n + 1, text: line,
+            msg: `ROTATE(${deg}) is not a quarter turn - use 0, 90, 180 or 270`
+               + (deg >= 1 && deg <= 3
+                  ? `. ROTATE(${deg}) used to mean ${deg * 90} degrees; it does not now`
+                  : '') + ', and the tag will leave the rotation unchanged',
+          });
+          break;
+        }
+        panel.setRotation(quarter);
         break;
       }
 
@@ -829,7 +845,10 @@ export function runScript(panel, script, secs) {
       default:
         warnings.push({
           line: n + 1, text: line,
-          msg: COMMANDS.has(cmd.toUpperCase())
+          msg: RENAMED[cmd.toUpperCase()]
+            ? `${cmd}() is now ${RENAMED[cmd.toUpperCase()]}() - the tag will `
+              + 'ignore this line'
+            : COMMANDS.has(cmd.toUpperCase())
             ? `${cmd}() must be written ${cmd.toUpperCase()}() - commands are `
               + 'case-sensitive, and the tag will ignore this line'
             : `${cmd}() is not implemented - the tag will ignore it`,

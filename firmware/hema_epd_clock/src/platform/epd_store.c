@@ -31,7 +31,14 @@
  * is nowhere to rewrite 1 KB of text on a Cortex-M0 with this little RAM, and
  * the host can always re-push - so a mismatch simply falls back to the
  * built-in default face. Bump this on any breaking DSL change. */
-#define EPD_STORE_VERSION   1u
+/* 2: FONT() became TEXT(), and ROTATE() takes degrees only.
+ *
+ * Both are silent breakages rather than loud ones, which is exactly what this
+ * field is for. A stored FONT() line would simply stop drawing. Worse,
+ * ROTATE(3) used to mean 270 degrees and now means an unsupported 3 - so a
+ * landscape face restored from flash under the new parser would come back
+ * portrait, on a tag nobody is holding, with no host in range to notice. */
+#define EPD_STORE_VERSION   2u
 #define EPD_STORE_MAX       3072u           /* matches CMD_SCRIPT_MAX */
 
 /* Boot-flash pins. CLK/MOSI are the panel's too; P0_5 is the panel's D/C and
