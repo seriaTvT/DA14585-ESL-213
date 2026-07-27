@@ -12,6 +12,36 @@ import { textWidth } from './epd.js';
  * match the firmware's integer division. */
 const centre = (n, scale) => Math.floor((250 - textWidth(n, scale)) / 2);
 
+/* ---- month grid -----------------------------------------------------------
+ * Built by a loop rather than written out, because the 31 lines differ only in
+ * one number and a hand-maintained block of them would drift.
+ *
+ * The DSL has no conditionals and no way to bind an intermediate value, so
+ * every line re-derives the same thing: where day 1 sits. FIRST_COL is the
+ * weekday of the 1st - ({w}-{d}+71) mod 7, where +71 keeps the subtraction
+ * positive and 71 = 1 (mod 7), so it lands on day 1 without disturbing the
+ * modulus. That repetition is what makes this face ~2.1 KB; it is the reason
+ * the script buffer was raised to 3072. */
+const FIRST_COL = '(({w}-{d}+71)%7)';
+
+/* Column of day n. Derived from n directly rather than from FIRST_COL, which
+ * is the shorter of the two spellings here and worth it 31 times over. */
+const dayCol = (n) => `(({w}-{d}+${n}+70)%7)`;
+const dayRow = (n) => `((${FIRST_COL}+${n - 1})/7)`;
+
+function monthGrid() {
+  let s = '';
+  for (let n = 1; n <= 31; n++) {
+    /* Days 29-31 do not exist in every month, and there is no way to skip a
+     * line. n/({D}+1) is 0 while the day is real and 1 once it is past the
+     * end of the month, so the number is simply pushed off the panel and
+     * clipped - February stops at 28 without a conditional. */
+    const off = n >= 29 ? `+(${n}/({D}+1))*200` : '';
+    s += `FONT(8+${dayCol(n)}*34,32+${dayRow(n)}*14${off},'${n}')\n`;
+  }
+  return s;
+}
+
 export const PRESETS = {
   /* Byte-identical to DEFAULT_FACE[] in epd_cmdparser.c, so "what the tag
    * ships with" is always one click away - and, since a test diffs the two,
@@ -86,6 +116,31 @@ export const PRESETS = {
     'RECT(4,70,245,82)\n' +
     'RECT(4,70,4+{d}*241/{D},82,fill=1)\n' +
     "FONT(4,92,'DAY {j} OF {J}   WEEK {V}')\n",
+
+  /* A real month grid, with today boxed out.
+   *
+   * The highlight is one INVERT rather than a filled RECT plus the number
+   * redrawn in white: inverting whatever is already there does not need to
+   * know which number it is covering, so it stays one line and keeps working
+   * if the grid geometry moves. It has to come last - the 5x7 font paints its
+   * whole glyph cell, so any day drawn afterwards would blank the box.
+   *
+   * Today's cell needs no column arithmetic at all: the column of day {d} is
+   * {w}, by definition.
+   *
+   * EVERY(1440) is the point of the face. Nothing here changes until the date
+   * does, and the default of a repaint a minute would spend 1439 full panel
+   * refreshes a day redrawing identical pixels - by far the most expensive
+   * thing this tag does. */
+  'Month grid':
+    'ROTATE(3)\n' +
+    'CLEAR(1)\n' +
+    'EVERY(1440)\n' +
+    `FONT(${centre(8, 2)},2,'{M} {y}',scale=2)\n` +
+    "FONT(8,20,'S  M  T  W  T  F  S')\n" +
+    'LINE(4,29,245,29)\n' +
+    monthGrid() +
+    `INVERT(6+{w}*34,30+((${FIRST_COL}+{d}-1)/7)*14,20,13)\n`,
 
   /* Portrait, so the frame is 122x250 and the centring above does not apply. */
   'Portrait':

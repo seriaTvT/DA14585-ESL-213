@@ -309,6 +309,15 @@
                 <code>bg=0</code> for white on black.</td></tr>
         <tr><td>ROTATE(r)</td><td><code>0..3</code> or <code>0/90/180/270</code>.
                 Odd values are landscape (250&times;122).</td></tr>
+        <tr><td>INVERT(x,y,w,h)</td>
+            <td>Flip every pixel in a box — <b>width and height</b>, not a
+                second corner. Put it <b>last</b>: text drawn afterwards paints
+                its whole glyph cell and would blank the box.</td></tr>
+        <tr><td>EVERY(n)</td>
+            <td>Minutes between repaints, 1&ndash;1440, default 1. Boundaries
+                are absolute, so <code>EVERY(60)</code> lands on the hour.
+                Stored with the face; a full refresh is the most expensive
+                thing the tag does.</td></tr>
         <tr><td>TIME(s)</td><td>Seconds since 2000-01-01. Applied on arrival,
                 never stored — sent for you by <i>Sync time</i>.</td></tr>
         <tr><td>RESET()</td><td>Begin a new template. Sent for you by

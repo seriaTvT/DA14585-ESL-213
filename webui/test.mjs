@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 import { Panel, runScript, expandVars, tagTime, tagSecondsNow, textWidth, evalArg,
-         OPTIONS }
+         OPTIONS, EVERY_MAX }
   from './epd.js';
 import { PRESETS } from './presets.js';
 import { dither, toPanel, surface, DITHERS } from './image.js';
@@ -294,16 +294,16 @@ test('the firmware reports what it made of a script', () => {
     const out = execFileSync(RENDER, [String(SECS), '--status'], {
       input: script, encoding: 'utf8',
     });
-    const [fmt, code, lineLo, lineHi, count, flags, lenLo, lenHi] =
-      out.trim().split(' ').map(Number);
+    const [fmt, code, lineLo, lineHi, count, flags, lenLo, lenHi,
+           everyLo, everyHi] = out.trim().split(' ').map(Number);
     return { fmt, code, line: lineLo | (lineHi << 8), count, flags,
-             len: lenLo | (lenHi << 8) };
+             len: lenLo | (lenHi << 8), every: everyLo | (everyHi << 8) };
   };
 
   const OK = 0, UNKNOWN_CMD = 1, UNKNOWN_OPT = 2;
 
   assert.deepEqual(st('CLEAR(1)\nRECT(1,1,9,9,fill=1)\n'),
-    { fmt: 1, code: OK, line: 0, count: 0, flags: 0, len: 30 });
+    { fmt: 2, code: OK, line: 0, count: 0, flags: 0, len: 30, every: 1 });
 
   let s = st('CLEAR(1)\nICON(1,2,3)\nRECT(1,1,9,9)\n');
   assert.equal(s.code, UNKNOWN_CMD);
@@ -339,6 +339,18 @@ test('the firmware reports what it made of a script', () => {
   assert.equal(s.code, 3, 'EPD_ERR_LINE_TOO_LONG');
   assert.equal(s.flags & 0x02, 0x02, 'the over-long-line flag');
   assert.equal(s.flags & 0x01, 0, 'must not also claim the script is full');
+
+  /* A line of nothing but whitespace is a blank line. It used to be reported
+   * as an unknown command, because skip_ws() strips indentation for matching
+   * but the line still had length - so an editor leaving a couple of spaces on
+   * a separating line put a phantom error in the report. The preview never
+   * agreed: runScript() has always trimmed and skipped these. */
+  assert.equal(st('CLEAR(1)\n   \nRECT(1,1,9,9)\n').code, OK,
+    'a whitespace-only line must not be an unknown command');
+  assert.equal(st('CLEAR(1)\n\t \nRECT(1,1,9,9)\n').count, 0);
+
+  /* But indentation must not hide a real typo. */
+  assert.equal(st('CLEAR(1)\n   NOPE(1)\n').code, UNKNOWN_CMD);
 });
 
 test('an unknown option is reported rather than silently dropped', () => {
@@ -636,6 +648,34 @@ test('the JS renderer is byte-identical to the firmware C', { skip:
     /* Off-panel and degenerate input: both sides must clip, not wrap. */
     "ROTATE(3)\nCLEAR(1)\nRECT(240,110,400,400,fill=1)\nFONT(230,0,'XYZ',scale=3)\n",
 
+    /* INVERT. It is the only primitive that reads the framebuffer, so it is
+     * the only one whose result depends on what was drawn first - which makes
+     * it the likeliest to drift. Over glyphs, over a filled rect, and over the
+     * seam between them. */
+    "ROTATE(3)\nCLEAR(1)\nFONT(10,10,'27',scale=2)\nINVERT(8,8,24,20)\n",
+    "ROTATE(3)\nCLEAR(1)\nRECT(0,0,100,40,fill=1)\nINVERT(20,10,40,20)\n",
+    /* Twice over the same box is identity - if the two disagree about which
+     * pixels are covered, this is where it shows. */
+    "ROTATE(3)\nCLEAR(1)\nFONT(10,10,'88',scale=3)\nINVERT(5,5,50,30)\nINVERT(5,5,50,30)\n",
+    /* Every rotation: a framebuffer byte is 8 pixels along the panel's x axis,
+     * so under 1 and 3 the box crosses byte boundaries differently. */
+    "ROTATE(0)\nCLEAR(1)\nINVERT(3,3,17,29)\n",
+    "ROTATE(1)\nCLEAR(1)\nINVERT(3,3,17,29)\n",
+    "ROTATE(2)\nCLEAR(1)\nINVERT(3,3,17,29)\n",
+    /* Clipping, including a box entirely off-panel and one straddling the
+     * edge, plus degenerate sizes that must draw nothing rather than wrap. */
+    "ROTATE(3)\nCLEAR(1)\nINVERT(240,110,80,80)\nINVERT(-30,-30,50,50)\n",
+    "ROTATE(3)\nCLEAR(1)\nINVERT(10,10,0,20)\nINVERT(10,40,20,0)\nINVERT(10,60,-5,-5)\n",
+    /* Computed from expressions, the way a calendar highlighting today does. */
+    "ROTATE(3)\nCLEAR(1)\nINVERT(8+({d}%7)*20,30+({d}/7)*14,19,13)\n",
+
+    /* EVERY draws nothing, but both sides must agree it is a known command -
+     * if one of them warned or errored, the other's frame would still match. */
+    "ROTATE(3)\nCLEAR(1)\nEVERY(60)\nFONT(4,4,'X')\n",
+
+    /* Whitespace-only lines are blank lines, not mistyped commands. */
+    "ROTATE(3)\nCLEAR(1)\n   \n\t\nFONT(4,4,'X')\n",
+
     /* Expression arguments. These are where the two implementations are most
      * likely to drift: JS numbers are doubles and do not wrap at 32 bits, its
      * '/' is not integer division, and division by zero is Infinity rather
@@ -712,6 +752,151 @@ test('the JS renderer is byte-identical to the firmware C', { skip:
         `at t=${secs} for:\n${script}`);
     }
   }
+});
+
+test('EVERY() sets the repaint interval on both sides', { skip:
+      existsSync(RENDER) ? false : 'run: make -C firmware/hema_epd_clock/test render'
+    }, () => {
+  /* The interval never reaches the framebuffer, so the frame-parity test above
+   * cannot see it drift. Compare the two directly instead. */
+  const cEvery = (script) => Number(execFileSync(RENDER, [String(SECS), '--every'], {
+    input: script, encoding: 'utf8',
+  }).trim());
+
+  const jsEvery = (script) => {
+    const p = new Panel();
+    p.clear(1);
+    return runScript(p, script, SECS).every;
+  };
+
+  const cases = [
+    ['CLEAR(1)\n', 1, 'a face that says nothing repaints every minute'],
+    ['CLEAR(1)\nEVERY(1)\n', 1],
+    ['CLEAR(1)\nEVERY(15)\n', 15],
+    ['CLEAR(1)\nEVERY(60)\n', 60],
+    ['CLEAR(1)\nEVERY(1440)\n', 1440],
+    /* Clamped, not rejected: a shelf label has nowhere to report a refusal,
+     * and 0 would otherwise mean "never repaint again". */
+    ['CLEAR(1)\nEVERY(0)\n', 1, 'zero clamps up'],
+    ['CLEAR(1)\nEVERY(-5)\n', 1, 'negative clamps up'],
+    ['CLEAR(1)\nEVERY(99999)\n', EVERY_MAX, 'clamps down to a day'],
+    /* Last one wins, on both sides. */
+    ['CLEAR(1)\nEVERY(60)\nEVERY(5)\n', 5],
+    /* Expressions work here as anywhere else. */
+    ['CLEAR(1)\nEVERY(2*30)\n', 60],
+  ];
+
+  for (const [script, want, why] of cases) {
+    assert.equal(cEvery(script), want, `firmware: ${why || script.trim()}`);
+    assert.equal(jsEvery(script), want, `preview: ${why || script.trim()}`);
+  }
+});
+
+test('the repaint interval does not leak between scripts', { skip:
+      existsSync(RENDER) ? false : 'run: make -C firmware/hema_epd_clock/test render'
+    }, () => {
+  /* Each run resets it, so dropping EVERY() from a face restores once a
+   * minute. Left standing, a tag could sit on an hourly interval with no line
+   * anywhere in its script saying so - and no way for its author to find out.
+   *
+   * The JS side runs both scripts through one module instance, which is where
+   * a module-level `every` would show up. */
+  const p = new Panel();
+  p.clear(1);
+  assert.equal(runScript(p, 'CLEAR(1)\nEVERY(1440)\n', SECS).every, 1440);
+  assert.equal(runScript(p, 'CLEAR(1)\n', SECS).every, 1,
+    'the previous script\'s interval leaked into the next');
+
+  /* And the firmware, which is where it actually matters: the tag runs script
+   * after script in one process. A "%%" line makes render do the same. */
+  const after = (scripts) => Number(execFileSync(RENDER, [String(SECS), '--every'], {
+    input: scripts.join('\n%%\n'), encoding: 'utf8',
+  }).trim());
+
+  assert.equal(after(['CLEAR(1)\nEVERY(1440)\n']), 1440, 'harness sanity');
+  assert.equal(after(['CLEAR(1)\nEVERY(1440)\n', 'CLEAR(1)\n']), 1,
+    'the firmware kept the previous face\'s interval');
+  assert.equal(after(['CLEAR(1)\nEVERY(1440)\n', 'CLEAR(1)\nEVERY(30)\n']), 30);
+});
+
+test('the month grid highlights today, and only today', () => {
+  /* The expected cell is derived from Date here, not from the same expression
+   * the preset uses - a test that reused the formula would agree with it even
+   * when both were wrong.
+   *
+   * Column is the weekday; row is how many weeks in from the 1st. The box is
+   * the 20x13 one INVERT() draws, offset 2px up and left of the glyph so it
+   * frames the number rather than clipping it. */
+  const grid = PRESETS['Month grid'];
+  const noHighlight = grid.replace(/INVERT\(.*\n/, '');
+  assert.notEqual(noHighlight, grid, 'the INVERT line was not found to strip');
+
+  const dates = [
+    [2026, 7, 27], [2026, 2, 14], [2026, 2, 1],
+    [2026, 8, 31],                       /* last day, bottom row */
+    [2024, 2, 29],                       /* leap day */
+    [2026, 3, 1],                        /* 1st landing on a Sunday */
+  ];
+
+  for (const [y, m, d] of dates) {
+    const secs = Math.floor(Date.UTC(y, m - 1, d, 9, 0, 0) / 1000) - 946684800;
+    const render = (script) => {
+      const p = new Panel();
+      p.setRotation(0);
+      p.clear(1);
+      runScript(p, script, secs);
+      return p;
+    };
+    const plain = render(noHighlight);
+    const lit = render(grid);
+
+    let n = 0, x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+    for (let yy = 0; yy < 122; yy++) {
+      for (let xx = 0; xx < 250; xx++) {
+        if (plain.get(xx, yy) !== lit.get(xx, yy)) {
+          n++;
+          x0 = Math.min(x0, xx); y0 = Math.min(y0, yy);
+          x1 = Math.max(x1, xx); y1 = Math.max(y1, yy);
+        }
+      }
+    }
+
+    const wday = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+    const firstCol = new Date(Date.UTC(y, m - 1, 1)).getUTCDay();
+    const rowIdx = Math.floor((firstCol + d - 1) / 7);
+    const where = `${y}-${m}-${d}`;
+
+    assert.equal(n, 20 * 13, `${where}: highlight is not a 20x13 box`);
+    assert.deepEqual([x0, x1], [6 + wday * 34, 6 + wday * 34 + 19],
+      `${where}: highlight is in the wrong column`);
+    assert.deepEqual([y0, y1], [30 + rowIdx * 14, 30 + rowIdx * 14 + 12],
+      `${where}: highlight is in the wrong row`);
+  }
+});
+
+test('the month grid stops at the end of the month', () => {
+  /* Days 29-31 are pushed off-panel by n/({D}+1), since the DSL cannot skip a
+   * line. A short month must therefore draw strictly less ink than a long one
+   * - if the trick stopped working, February would show a 30th and a 31st. */
+  const ink = (y, m, d) => {
+    const secs = Math.floor(Date.UTC(y, m - 1, d, 9, 0, 0) / 1000) - 946684800;
+    const p = new Panel();
+    p.setRotation(0);
+    p.clear(1);
+    runScript(p, PRESETS['Month grid'], secs);
+    let dark = 0;
+    for (let yy = 0; yy < 122; yy++)
+      for (let xx = 0; xx < 250; xx++) if (!p.get(xx, yy)) dark++;
+    return dark;
+  };
+
+  /* Same weekday-of-the-1st is not required; what matters is the day count. */
+  const feb28 = ink(2026, 2, 10);      /* 28 days */
+  const feb29 = ink(2024, 2, 10);      /* 29 days, leap */
+  const mar31 = ink(2026, 3, 10);      /* 31 days */
+
+  assert.ok(feb28 < feb29, 'a leap February must show one more day than a common one');
+  assert.ok(feb29 < mar31, 'February must show fewer days than March');
 });
 
 /* ------------------------------------------------------------------ */

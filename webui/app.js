@@ -114,12 +114,23 @@ function render() {
   const script = $('editor').value;
   panel.setRotation(0);
   panel.clear(1);
-  const { warnings } = runScript(panel, script, tagSecondsNow());
+  const { warnings, every } = runScript(panel, script, tagSecondsNow());
   show(panel);
-  showNotes(script, warnings);
+  showNotes(script, warnings, every);
 }
 
-function showNotes(script, warnings) {
+/* How often the tag will repaint, in words. The preview renders a single
+ * instant, so EVERY() is the one command with no visible effect here at all -
+ * without this the editor would give no sign it had been read. */
+function everyNote(every) {
+  if (every <= 1) return null;
+  if (every === 60)   return 'Repaints hourly, on the hour.';
+  if (every === 1440) return 'Repaints once a day, at midnight.';
+  const unit = every % 60 === 0 ? `${every / 60} hours` : `${every} minutes`;
+  return `Repaints every ${unit}, on the boundary - not from when it was sent.`;
+}
+
+function showNotes(script, warnings, every = 1) {
   const notes = $('notes');
   notes.replaceChildren();
 
@@ -149,6 +160,11 @@ function showNotes(script, warnings) {
   });
   for (const w of warnings) {
     problems.push({ err: false, msg: `Line ${w.line}: ${w.msg}` });
+  }
+
+  const note = everyNote(every);
+  if (note) {
+    problems.push({ err: false, msg: note });
   }
 
   for (const p of problems) {
@@ -297,7 +313,13 @@ async function reportTagStatus(dropped) {
   if (!st) return;                      /* firmware predates the status char */
 
   if (st.code === 0 && !st.count) {
-    log(`The tag rendered all ${st.scriptLen} bytes with no complaints.`, 'ok');
+    /* Report the interval the *tag* came back with, not the one the preview
+     * worked out. They should agree, and saying so is how you find out they
+     * do - a face whose EVERY() the tag never parsed looks identical here
+     * otherwise, and would only give itself away an hour later. */
+    const every = st.every > 1 ? `, repainting every ${st.every} min` : '';
+    log(`The tag rendered all ${st.scriptLen} bytes with no complaints${every}.`,
+        'ok');
     return;
   }
   const ln = editorLine(st.line, dropped);

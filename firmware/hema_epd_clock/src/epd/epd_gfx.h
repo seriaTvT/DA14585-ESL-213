@@ -42,6 +42,17 @@ void epd_gfx_line(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint8_t color,
 void epd_gfx_rect(int16_t x1, int16_t y1, int16_t x2, int16_t y2, uint8_t color, uint8_t pix, uint8_t filled);
 void epd_gfx_circle(int16_t x, int16_t y, int16_t r, uint8_t color, uint8_t pix, uint8_t filled);
 
+/* Flip every pixel in a rectangle, corners inclusive and in either order.
+ *
+ * This is the one primitive that reads the framebuffer as well as writing it,
+ * and that is the point: highlighting a calendar's "today" by drawing a filled
+ * box and then re-drawing the number in the opposite colour needs the face to
+ * know which number it is covering. Inverting whatever is already there needs
+ * no such knowledge, so it costs one line instead of two and works over text,
+ * rules and blank space alike. Order matters - invert last, or a later opaque
+ * glyph cell will paint over it. */
+void epd_gfx_invert(int16_t x1, int16_t y1, int16_t x2, int16_t y2);
+
 /* Minimal built-in 5x7 ASCII font fallback - NOT the vendor's own font
  * format (that uses custom PCtoLCD2002-built glyph tables per font_id,
  * see PROTOCOL_NOTES.md section 9, which we have not reverse engineered).

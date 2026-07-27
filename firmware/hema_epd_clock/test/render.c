@@ -29,10 +29,12 @@ int main(int argc, char **argv)
 {
     static char script[4096];
     int want_status = (argc > 2 && strcmp(argv[2], "--status") == 0);
+    int want_every  = (argc > 2 && strcmp(argv[2], "--every") == 0);
 
     if (argc < 2) {
         fprintf(stderr,
-                "usage: %s <seconds-since-2000> [--status] < script > fb.bin\n",
+                "usage: %s <seconds-since-2000> [--status|--every]"
+                " < script > fb.bin\n",
                 argv[0]);
         return 2;
     }
@@ -42,12 +44,30 @@ int main(int argc, char **argv)
 
     epd_time_set((uint32_t)strtoul(argv[1], NULL, 10));
 
-    /* Same path a BLE client's bytes take: begin a batch, feed the script in,
-     * then run it - so quoting, line splitting and {} expansion are all
-     * exercised exactly as they are on the tag. */
-    epd_cmd_begin_batch();
-    epd_cmd_feed((const uint8_t *)script, (uint16_t)n);
-    epd_cmd_run();
+    /* A line of exactly "%%" separates scripts to be run one after another in
+     * this same process, which is the only way to test that nothing leaks
+     * between runs. The tag runs script after script without restarting - a
+     * setting left standing from a previous face is invisible on a rig that
+     * renders once and exits, and EVERY() is exactly such a setting.
+     *
+     * Ordinary single-script input contains no such line and is unaffected. */
+    char *part = script;
+    for (;;) {
+        char *sep = strstr(part, "\n%%\n");
+        size_t len = sep ? (size_t)(sep - part) + 1 : strlen(part);
+
+        /* Same path a BLE client's bytes take: begin a batch, feed the script
+         * in, then run it - so quoting, line splitting and {} expansion are
+         * all exercised exactly as they are on the tag. */
+        epd_cmd_begin_batch();
+        epd_cmd_feed((const uint8_t *)part, (uint16_t)len);
+        epd_cmd_run();
+
+        if (!sep) {
+            break;
+        }
+        part = sep + 4;
+    }
 
     /* --status prints the render report instead of the framebuffer, so the
      * error codes the tag serves over the status characteristic can be checked
@@ -59,6 +79,14 @@ int main(int argc, char **argv)
             printf("%s%u", i ? " " : "", st[i]);
         }
         printf("\n");
+        return 0;
+    }
+
+    /* --every prints the repaint interval the script asked for. Not part of
+     * the status report: that describes what went wrong with a render, and
+     * this is a setting that worked. */
+    if (want_every) {
+        printf("%u\n", epd_cmd_every_min());
         return 0;
     }
 

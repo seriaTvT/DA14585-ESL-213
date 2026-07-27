@@ -88,6 +88,13 @@ static const char *const MONTH_NAME[12] = {
 static epd_tm_t  s_tm;
 static uint32_t  s_now;
 
+/* Minutes between repaints, from EVERY() - see the command below. Lives here
+ * rather than in the caller because it is part of the script: it is set while
+ * the script runs and reset before each run, so it survives a reboot with the
+ * stored face and needs no separate persistence. */
+#define CMD_EVERY_MAX  1440u          /* a day; longer has no useful meaning */
+static uint16_t  s_every_min = 1;
+
 /* Value of a {} variable as a number. False for the text-valued names ({W},
  * {M}, {P}, {VER}) and for anything unrecognised. Shared by expand_vars()
  * and the expression parser, so a name cannot mean one thing inside FONT text
@@ -596,6 +603,14 @@ static void dispatch_line(const char *line)
 
     line = skip_ws(line);
 
+    /* A line of nothing but spaces is a blank line, not a mistyped command.
+     * The run loop already skips truly empty ones, but indentation survives
+     * into the stored script, so an editor that leaves trailing whitespace on
+     * a separating line produced a spurious "unknown command" against it. */
+    if (!line[0]) {
+        return;
+    }
+
     if (starts_with(line, "CLEAR(")) {
         const char *args = line + 6;
         p = args;
@@ -650,6 +665,31 @@ static void dispatch_line(const char *line)
         check_options(args, OPTS_SHAPE);
         epd_gfx_rect((int16_t)x1, (int16_t)y1, (int16_t)x2, (int16_t)y2,
                      (uint8_t)color, (uint8_t)width, (uint8_t)fill);
+        return;
+    }
+
+    /* INVERT(x, y, w, h) - flip every pixel in a box.
+     *
+     * Width and height, not a second corner, unlike RECT above. RECT inherited
+     * x2/y2 from the vendor's command list and is due to change with it; there
+     * is no reason to add a second command to the side that is being left. A
+     * face highlighting a calendar cell knows the cell's size, not where its
+     * far corner lands.
+     *
+     * Draw it last. The 5x7 font paints its whole glyph cell, so a day number
+     * drawn after an inverted box would blank the part of the box it covers. */
+    if (starts_with(line, "INVERT(")) {
+        const char *args = line + 7;
+        p = args;
+        int32_t x = parse_int(&p);
+        int32_t y = parse_int(&p);
+        int32_t w = parse_int(&p);
+        int32_t h = parse_int(&p);
+        check_options(args, OPTS_NONE);
+        if (w > 0 && h > 0) {          /* an empty box is a no-op, not a fault */
+            epd_gfx_invert((int16_t)x, (int16_t)y,
+                           (int16_t)(x + w - 1), (int16_t)(y + h - 1));
+        }
         return;
     }
 
@@ -713,6 +753,38 @@ static void dispatch_line(const char *line)
         default:  break;              /* already an index, or 0 */
         }
         epd_gfx_set_rotation((uint8_t)r);
+        return;
+    }
+
+    /* EVERY(n) - repaint every n minutes instead of every minute.
+     *
+     * A full panel refresh is ~2 s of the most expensive thing this tag does,
+     * and the default of once a minute only earns its keep for a face that
+     * shows minutes. A calendar redraws 31 identical numbers 1440 times a day
+     * to change nothing; EVERY(1440) makes it redraw at midnight, when the
+     * date actually turns over.
+     *
+     * Stored and replayed like any drawing command, so it rides along with the
+     * face that wants it and survives a reboot in the same blob - no second
+     * characteristic, no second thing for a client to remember to send.
+     *
+     * Whether a repaint is *due* is the caller's decision, not ours; this only
+     * records what the face asked for. Boundaries are absolute rather than
+     * measured from the last repaint, so EVERY(60) lands on the hour and
+     * EVERY(1440) at midnight instead of drifting to wherever the tag happened
+     * to boot. */
+    if (starts_with(line, "EVERY(")) {
+        const char *args = line + 6;
+        p = args;
+        int32_t n = parse_int(&p);
+        check_options(args, OPTS_NONE);
+        if (n < 1) {
+            n = 1;                     /* 0 would mean "never repaint" */
+        }
+        if (n > (int32_t)CMD_EVERY_MAX) {
+            n = (int32_t)CMD_EVERY_MAX;
+        }
+        s_every_min = (uint16_t)n;
         return;
     }
 
@@ -925,6 +997,11 @@ const char *epd_cmd_script(void)
     return s_script;
 }
 
+uint16_t epd_cmd_every_min(void)
+{
+    return s_every_min;
+}
+
 void epd_cmd_load_script(const char *buf, uint16_t len)
 {
     if (len > CMD_SCRIPT_MAX - 1) {
@@ -968,6 +1045,12 @@ void epd_cmd_run(void)
     s_err_code = EPD_ERR_NONE;
     s_err_line = 0;
     s_err_count = 0;
+
+    /* Likewise the refresh interval: reset here so it is a property of the
+     * script and nothing else. Were it left standing, dropping EVERY() from a
+     * face would silently keep the previous one's interval, and a tag could
+     * end up refreshing hourly with no line anywhere saying so. */
+    s_every_min = 1;
 
     if (s_script_full) {
         s_cur_line = 0;                     /* the batch, not one line */
@@ -1035,7 +1118,7 @@ void epd_cmd_run(void)
 
 void epd_cmd_status(uint8_t out[EPD_STATUS_LEN])
 {
-    out[0] = 1;                                     /* report format version */
+    out[0] = 2;                                     /* report format version */
     out[1] = s_err_code;
     out[2] = (uint8_t)(s_err_line & 0xFF);
     out[3] = (uint8_t)(s_err_line >> 8);
@@ -1044,4 +1127,9 @@ void epd_cmd_status(uint8_t out[EPD_STATUS_LEN])
                        (s_line_long   ? 0x02 : 0x00));
     out[6] = (uint8_t)(s_script_len & 0xFF);
     out[7] = (uint8_t)(s_script_len >> 8);
+    /* What EVERY() asked for, after clamping. Without this the interval is
+     * invisible: a client has no way to tell an honoured EVERY(60) from one
+     * the tag never parsed, short of watching the panel for an hour. */
+    out[8] = (uint8_t)(s_every_min & 0xFF);
+    out[9] = (uint8_t)(s_every_min >> 8);
 }

@@ -183,6 +183,21 @@ export class Panel {
 
   clear(color) { this.fb.fill(color ? 0xff : 0x00); }
 
+  /* Mirrors epd_gfx_invert(): corners inclusive, either order, clipped in the
+   * rotated frame per pixel. Written against the framebuffer directly rather
+   * than as get()-then-set() because get() does not clip. */
+  invert(x1, y1, x2, y2) {
+    if (x1 > x2) { const t = x1; x1 = x2; x2 = t; }
+    if (y1 > y2) { const t = y1; y1 = y2; y2 = t; }
+    for (let y = y1; y <= y2; y++) {
+      for (let x = x1; x <= x2; x++) {
+        if (x < 0 || y < 0 || x >= this.width || y >= this.height) continue;
+        const [px, py] = this._map(x, y);
+        this.fb[py * WBYTES + (px >> 3)] ^= 0x80 >> (px & 7);
+      }
+    }
+  }
+
   blob(x, y, color, pix) {
     const half = Math.trunc(pix / 2);
     for (let dy = 0; dy < pix; dy++)
@@ -605,10 +620,16 @@ export const OPTIONS = {
   CIRCLE: ['color', 'width', 'fill'],
   FONT:   ['color', 'bg', 'scale'],
   ROTATE: [],
+  INVERT: [],
+  EVERY:  [],
   TIME:   [],
   RESET:  [],
 };
 const COMMANDS = new Set(Object.keys(OPTIONS));
+
+/* Upper bound on EVERY(), matching CMD_EVERY_MAX in epd_cmdparser.c. A day;
+ * beyond that the interval stops meaning anything a shelf label cares about. */
+export const EVERY_MAX = 1440;
 
 /**
  * Run a script against a panel.
@@ -617,6 +638,10 @@ const COMMANDS = new Set(Object.keys(OPTIONS));
  */
 export function runScript(panel, script, secs) {
   const warnings = [];
+  /* Default to a repaint a minute, and reset per run, so the interval is a
+   * property of this script and nothing carried over - matching epd_cmd_run(),
+   * which resets s_every_min for the same reason. */
+  let every = 1;
   /* epd_cmd_run() ends a line on '\n' *or* '\r', so a lone CR is a separator
    * and not part of the command. Splitting on '\n' alone made the preview
    * treat "CLEAR(1)\rRECT(...)" as one unparseable line while the tag ran
@@ -698,6 +723,26 @@ export function runScript(panel, script, secs) {
         break;
       }
 
+      case 'INVERT': {
+        /* INVERT(x, y, w, h) - width and height, not a second corner. */
+        const [x, y, w, h] = a.ints(4);
+        if (w > 0 && h > 0) panel.invert(x, y, x + w - 1, y + h - 1);
+        break;
+      }
+
+      case 'EVERY': {
+        /* Draws nothing - it sets how often the tag repaints. Reported back
+         * to the caller so the editor can say so, since it is otherwise
+         * invisible in a preview that renders one instant. Clamped exactly as
+         * the firmware clamps it, or the editor would promise an interval the
+         * tag will not honour. */
+        let n = a.int();
+        if (n < 1) n = 1;
+        if (n > EVERY_MAX) n = EVERY_MAX;
+        every = n;
+        break;
+      }
+
       case 'TIME':
       case 'RESET':
         /* Control commands: applied on arrival by the firmware and never
@@ -732,7 +777,7 @@ export function runScript(panel, script, secs) {
     }
   });
 
-  return { warnings };
+  return { warnings, every };
 }
 
 /** Draw a panel onto a canvas at `zoom`, in the panel's current orientation. */

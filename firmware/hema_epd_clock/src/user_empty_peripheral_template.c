@@ -156,17 +156,31 @@ static void epd_flush_cb(void)
 
 /* Called once per second by the time base. A full refresh takes ~2 s, so we
  * only repaint when the displayed minute actually changes - re-rendering
- * every second would leave the panel permanently mid-refresh. */
+ * every second would leave the panel permanently mid-refresh.
+ *
+ * A face can ask for less than that with EVERY(n). Once a minute is right for
+ * a clock and pure waste for anything without minutes on it: the panel refresh
+ * is the most expensive thing this tag does, and a calendar spends 1439 of
+ * every 1440 repaints redrawing the same pixels. */
 static void epd_on_second(void)
 {
-    static uint8_t last_min = 0xFF;
-    epd_tm_t tm;
+    static uint32_t last_slot = 0xFFFFFFFFu;
 
-    epd_time_get(&tm);
-    if (tm.min == last_min) {
+    /* Which repaint window we are in, counted from the epoch rather than from
+     * the last repaint. Because the epoch is midnight-aligned and 1440 divides
+     * a day, the boundaries land where a reader expects: EVERY(60) repaints on
+     * the hour and EVERY(1440) at midnight, wherever the tag happened to boot.
+     * Measuring elapsed time instead would drift to that arbitrary instant.
+     *
+     * EVERY() is applied while the script runs, so this reads 1 until the
+     * first repaint has happened. That costs one extra repaint on a face that
+     * asked for fewer, and the alternative - not repainting until we know how
+     * often to repaint - never starts at all. */
+    uint32_t slot = (epd_time_now() / 60u) / epd_cmd_every_min();
+    if (slot == last_slot) {
         return;
     }
-    last_min = tm.min;
+    last_slot = slot;
 
     /* An uploaded image is not a clock face and has no template behind it, so
      * there is nothing to re-render: running the script here would regenerate

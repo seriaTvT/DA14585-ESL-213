@@ -75,6 +75,15 @@ uint16_t epd_cmd_script_len(void);
  *  epd_cmd_script_len(). Valid until the next feed. */
 const char *epd_cmd_script(void);
 
+/** Minutes between repaints the current script asked for via EVERY(), 1 if it
+ *  asked for nothing. Set while the script runs, so it is only meaningful
+ *  after the first epd_cmd_run() - which is fine, because the caller has to
+ *  render once before it can skip anything.
+ *
+ *  Deciding whether a repaint is due is the caller's job: this reports the
+ *  face's wish, it does not keep time. */
+uint16_t epd_cmd_every_min(void);
+
 /** Replace the stored script wholesale, e.g. with one restored from flash.
  *  Does not mark the script dirty - it is already persisted. */
 void epd_cmd_load_script(const char *buf, uint16_t len);
@@ -109,11 +118,11 @@ typedef enum {
 } epd_err_t;
 
 /** Length of the status report written by epd_cmd_status(). */
-#define EPD_STATUS_LEN  8
+#define EPD_STATUS_LEN  10
 
 /** Fill `out` with the status of the most recent epd_cmd_run():
  *
- *   [0] format version of this report (currently 1)
+ *   [0] format version of this report (currently 2)
  *   [1] epd_err_t of the FIRST problem found
  *   [2] line number of that problem, low byte  (1-based, 0 if not a line)
  *   [3] line number, high byte
@@ -128,9 +137,16 @@ typedef enum {
  *   [5] flags: bit0 script truncated, bit1 a line was over CMD_LINE_MAX
  *   [6] stored script length, low byte
  *   [7] stored script length, high byte
+ *   [8] repaint interval in minutes, low byte   (format 2 and later)
+ *   [9] repaint interval, high byte
  *
  * Only the first problem is located, not all of them: an author fixes one and
- * pushes again, and carrying a list would cost buffer the script needs more. */
+ * pushes again, and carrying a list would cost buffer the script needs more.
+ *
+ * Byte [0] is why the interval could be appended without breaking anything: a
+ * client reads it, takes the fields it knows and ignores the rest. Append only
+ * - never renumber - or a tag and a client from different builds will disagree
+ * silently, which is the one failure mode this byte exists to prevent. */
 void epd_cmd_status(uint8_t out[EPD_STATUS_LEN]);
 
 #endif // _EPD_CMDPARSER_H_

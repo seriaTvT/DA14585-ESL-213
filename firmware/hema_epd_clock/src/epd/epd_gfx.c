@@ -3,6 +3,7 @@
  */
 
 #include "epd_gfx.h"
+#include <stdbool.h>
 #include <string.h>
 
 uint8_t epd_framebuffer[EPD_BUF_SIZE];
@@ -29,11 +30,20 @@ int16_t epd_gfx_height(void)
     return (s_rotation & 1) ? EPD_WIDTH : EPD_HEIGHT;
 }
 
-static inline void fb_set(int16_t x, int16_t y, uint8_t color)
+/* Rotated coordinate -> byte index and bit mask. False if it falls outside the
+ * visible area, in which case the outputs are untouched.
+ *
+ * Shared by every write below rather than repeated per operation: the rotation
+ * transform is the one piece of this file that must agree everywhere, and a
+ * second hand-copied switch is how a rotated build ends up inverting a
+ * different rectangle from the one it fills. */
+static inline bool fb_addr(int16_t x, int16_t y, uint32_t *idx, uint8_t *mask)
 {
     /* Bounds are checked in the rotated frame, before the transform - so a
      * clipped shape clips against what the caller can actually see. */
-    if (x < 0 || y < 0 || x >= epd_gfx_width() || y >= epd_gfx_height()) return;
+    if (x < 0 || y < 0 || x >= epd_gfx_width() || y >= epd_gfx_height()) {
+        return false;
+    }
 
     int16_t px, py;
     switch (s_rotation) {
@@ -44,10 +54,28 @@ static inline void fb_set(int16_t x, int16_t y, uint8_t color)
     case 3: px = y;                  py = EPD_HEIGHT - 1 - x;   break;
     }
 
-    uint32_t idx = (uint32_t)py * EPD_WIDTH_BYTES + (px >> 3);
-    uint8_t mask = 0x80 >> (px & 7);
+    *idx  = (uint32_t)py * EPD_WIDTH_BYTES + (px >> 3);
+    *mask = 0x80 >> (px & 7);
+    return true;
+}
+
+static inline void fb_set(int16_t x, int16_t y, uint8_t color)
+{
+    uint32_t idx;
+    uint8_t mask;
+    if (!fb_addr(x, y, &idx, &mask)) return;
+
     if (color) epd_framebuffer[idx] |= mask;   /* 1 = white */
     else       epd_framebuffer[idx] &= ~mask;  /* 0 = black */
+}
+
+static inline void fb_xor(int16_t x, int16_t y)
+{
+    uint32_t idx;
+    uint8_t mask;
+    if (!fb_addr(x, y, &idx, &mask)) return;
+
+    epd_framebuffer[idx] ^= mask;
 }
 
 void epd_gfx_clear(uint8_t color)
@@ -123,6 +151,26 @@ void epd_gfx_circle(int16_t x0, int16_t y0, int16_t r, uint8_t color, uint8_t pi
         y++;
         if (err <= 0) { err += 2 * y + 1; }
         if (err > 0)  { x--; err -= 2 * x + 1; }
+    }
+}
+
+void epd_gfx_invert(int16_t x1, int16_t y1, int16_t x2, int16_t y2)
+{
+    /* Accept the corners in either order. A face computing a cell from an
+     * expression can easily produce them the other way round, and silently
+     * drawing nothing would be the least useful response. */
+    if (x1 > x2) { int16_t t = x1; x1 = x2; x2 = t; }
+    if (y1 > y2) { int16_t t = y1; y1 = y2; y2 = t; }
+
+    /* Per pixel, through the same clip and transform as every other write.
+     * Byte-at-a-time would be faster, but only in the unrotated case - under
+     * rotation 1 and 3 a framebuffer byte is 8 pixels along the *panel's* x
+     * axis, which runs down the screen, so there is no run of 8 to batch. Not
+     * worth two code paths for something that runs once a repaint. */
+    for (int16_t y = y1; y <= y2; y++) {
+        for (int16_t x = x1; x <= x2; x++) {
+            fb_xor(x, y);
+        }
     }
 }
 

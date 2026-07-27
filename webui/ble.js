@@ -43,6 +43,11 @@ export function decodeStatus(view) {
     truncated: (b(5) & 0x01) !== 0,
     lineTooLong: (b(5) & 0x02) !== 0,
     scriptLen: b(6) | (b(7) << 8),
+    /* Format 2 appended the repaint interval. Read it only if the tag actually
+     * sent it, so a client newer than the firmware in front of it reports "no
+     * opinion" rather than a confident 0 read off the end of the buffer - the
+     * exact mistake the format byte exists to prevent. */
+    every: view.byteLength >= 10 ? b(8) | (b(9) << 8) : null,
   };
 }
 

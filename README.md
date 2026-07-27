@@ -112,9 +112,9 @@ ROM and the BLE stack never runs.
 
 ## Templates
 
-A face is a short script — `CLEAR`, `LINE`, `RECT`, `CIRCLE`, `FONT`, `ROTATE` —
-stored on the tag and re-run every minute. That is what makes it a clock rather
-than a picture. `{}` variables expand to the date and time, and they work in
+A face is a short script — `CLEAR`, `LINE`, `RECT`, `CIRCLE`, `FONT`, `ROTATE`,
+`INVERT`, `EVERY` — stored on the tag and re-run every minute. That is what
+makes it a clock rather than a picture. `{}` variables expand to the date and time, and they work in
 **numeric arguments** as well as in text: arguments are integer expressions with
 `+ - * / %`, parentheses and unary minus. So a face can draw itself rather than
 only label itself:
@@ -138,6 +138,47 @@ Nothing throws — a malformed expression, an unknown variable and division by
 zero all evaluate to 0. A shelf label has nowhere to report an error to, so it
 should degrade to a wrong-looking face rather than a hung one. The preview
 behaves identically, then flags it.
+
+### Highlighting
+
+`INVERT(x, y, w, h)` flips every pixel in a box — width and height, not a
+second corner. It is the only primitive that reads the framebuffer, which is
+the point: to box out today on a calendar you would otherwise draw a filled
+rectangle and then re-draw that one number in the opposite colour, which means
+knowing which number it is. Inverting whatever is already there does not.
+
+Draw it **last**. The 5×7 font paints its whole glyph cell, so anything drawn
+afterwards blanks the part of the box it covers.
+
+```
+INVERT(6+{w}*34,30+(((({w}-{d}+71)%7)+{d}-1)/7)*14,20,13)
+```
+
+That is the whole of the "Month grid" preset's today-marker: the column of
+today is `{w}` by definition, and the row is how many weeks it sits from the
+1st.
+
+### How often it repaints
+
+`EVERY(n)` sets the gap between repaints, in minutes, and is stored with the
+face like any other command. The default of one minute is right for a clock and
+pure waste for anything else — a full panel refresh is by far the most
+expensive thing this tag does, and a calendar spends 1439 of every 1440
+repaints redrawing identical pixels.
+
+```
+EVERY(1440)     once a day, at midnight
+EVERY(60)       on the hour
+```
+
+Boundaries are absolute, not measured from when the face was sent, so
+`EVERY(60)` lands on the hour rather than drifting to whenever the tag booted.
+Values are clamped to 1…1440 rather than refused. The tag reports back the
+interval it settled on, so a face whose `EVERY()` never parsed is visible
+immediately instead of an hour later.
+
+Uploaded **images** were never on this timer: an image has no template behind
+it, so the tag already leaves it alone until something replaces it.
 
 ## Web UI
 
