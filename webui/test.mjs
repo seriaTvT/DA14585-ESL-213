@@ -20,7 +20,8 @@ import { Panel, runScript, expandVars, tagTime, tagSecondsNow, textWidth, evalAr
   from './epd.js';
 import { PRESETS } from './presets.js';
 import { dither, toPanel, surface, DITHERS } from './image.js';
-import { IMAGE_BYTES } from './ble.js';
+import { IMAGE_BYTES, RENDER_ERRORS, CMD_SERVICE, CMD_CHAR,
+         IMG_SERVICE, IMG_CHAR, STATUS_CHAR } from './ble.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PARSER_C = join(HERE,
@@ -902,6 +903,66 @@ const STORE_C = join(HERE,
 /* Bump this together with EPD_STORE_VERSION in epd_store.c, and only when the
  * DSL changes in a way that makes an already-stored face render wrongly. */
 const DSL_VERSION = 2;
+
+const PARSER_H = join(HERE,
+  '../firmware/hema_epd_clock/src/epd/epd_cmdparser.h');
+const CUSTS_H = join(HERE,
+  '../firmware/hema_epd_clock/src/custom_profile/user_custs1_def.h');
+
+test('every error the firmware can report has a message here', () => {
+  /* The tag sends a number; this table is the only thing that turns it into
+   * words. A code added on the firmware side without an entry here shows up
+   * to the author as "unknown problem code 5", which is worse than the
+   * silence it replaced - it says something went wrong and refuses to say
+   * what. EPD_ERR_BAD_ARG arrived exactly that way. */
+  const h = readFileSync(PARSER_H, 'utf8');
+  const body = /typedef enum \{([\s\S]*?)\} epd_err_t;/.exec(h);
+  assert.ok(body, 'epd_err_t not found');
+
+  const names = [...body[1].matchAll(/^\s*(EPD_ERR_\w+)/gm)].map((m) => m[1]);
+  assert.ok(names.length >= 5, 'suspiciously few error codes parsed');
+
+  assert.equal(RENDER_ERRORS.length, names.length,
+    `epd_err_t has ${names.length} codes (${names.join(', ')}) but `
+    + `RENDER_ERRORS describes ${RENDER_ERRORS.length}`);
+
+  /* Index 0 is "nothing wrong" and is deliberately null; the rest must say
+   * something. */
+  assert.equal(RENDER_ERRORS[0], null);
+  for (let i = 1; i < RENDER_ERRORS.length; i++) {
+    assert.ok(typeof RENDER_ERRORS[i] === 'string' && RENDER_ERRORS[i].length,
+      `${names[i]} has no message`);
+  }
+});
+
+test('the UUIDs in ble.js match the firmware, byte order and all', () => {
+  /* The C stores them little-endian, so the arrays read backwards relative to
+   * the dashed strings - which makes a hand-transcription error easy and its
+   * symptom obscure: the browser simply never finds the service, with nothing
+   * to say whether the tag or the page is wrong. */
+  const h = readFileSync(CUSTS_H, 'utf8');
+  const uuidOf = (macro) => {
+    const m = new RegExp(`#define\\s+${macro}\\s+\\{([^}]*)\\}`).exec(h);
+    assert.ok(m, `${macro} not found`);
+    const bytes = m[1].split(',').map((x) => parseInt(x.trim(), 16));
+    assert.equal(bytes.length, 16, `${macro} is not 16 bytes`);
+    const hex = bytes.reverse().map((b) => b.toString(16).padStart(2, '0')).join('');
+    return [hex.slice(0, 8), hex.slice(8, 12), hex.slice(12, 16),
+            hex.slice(16, 20), hex.slice(20)].join('-');
+  };
+
+  assert.equal(uuidOf('DEF_CMD_SVC_UUID_128'), CMD_SERVICE);
+  assert.equal(uuidOf('DEF_CMD_CHAR_UUID_128'), CMD_CHAR);
+  assert.equal(uuidOf('DEF_STATUS_CHAR_UUID_128'), STATUS_CHAR);
+  assert.equal(uuidOf('DEF_IMG_SVC_UUID_128'), IMG_SERVICE);
+  assert.equal(uuidOf('DEF_IMG_CHAR_UUID_128'), IMG_CHAR);
+
+  /* And none of them is still the vendor's. */
+  for (const u of [CMD_SERVICE, CMD_CHAR, IMG_SERVICE, IMG_CHAR, STATUS_CHAR]) {
+    assert.ok(!/^0000[0-9a-f]{4}-0000-1000-8000-00805f9b34fb$/.test(u),
+      `${u} is a Bluetooth-base UUID from the vendor's block`);
+  }
+});
 
 test('the store version tracks breaking DSL changes', () => {
   /* A tag keeps its face in flash and restores it at boot, so a breaking

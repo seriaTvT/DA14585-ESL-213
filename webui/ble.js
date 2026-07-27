@@ -4,21 +4,24 @@
  * UUIDs mirror user_custs1_def.h. The C arrays there are little-endian, so
  * they read backwards relative to these strings:
  *
- *   DEF_CMD_SVC_UUID_128  {0xfb,0x34,...,0x10,0x1f,0x00,0x00}
- *     -> 00001f10-0000-1000-8000-00805f9b34fb
- *   DEF_CMD_CHAR_UUID_128 {0xfb,0x34,...,0x1f,0x1f,0x00,0x00}
- *     -> 00001f1f-0000-1000-8000-00805f9b34fb
+ *   DEF_CMD_SVC_UUID_128  {0x14,0x17,...,0xb2,0x7f,0x67}
+ *     -> 677fb260-1fc0-42c5-ab6e-e64e0c591714
+ *
+ * These are ours, not the vendor's old 00001f1x block. The language behind
+ * them diverged, so a client written for the original firmware finding this
+ * service would push happily and paint garbage; now it fails to find it at
+ * all, which is the honest answer.
  *
  * Requires a secure context: https, or http://localhost. Opening this page as
  * a file:// URL will not work - navigator.bluetooth is undefined there. See
  * the README for the one-line static server.
  */
 
-export const CMD_SERVICE = '00001f10-0000-1000-8000-00805f9b34fb';
-export const CMD_CHAR    = '00001f1f-0000-1000-8000-00805f9b34fb';
+export const CMD_SERVICE = '677fb260-1fc0-42c5-ab6e-e64e0c591714';
+export const CMD_CHAR    = 'c0339b97-4239-4aea-a775-988f9c4d2548';
 
-/* Read-only render status, in the same service. Random 128-bit UUID rather
- * than another 00001f1x: it is ours, and the rest follow when the UUIDs change.
+/* Read-only render status, in the same service. The first UUID here that was
+ * ours; the rest have since followed it.
  *   DEF_STATUS_CHAR_UUID_128 {0x3a,0x45,...,0xed,0xf2} */
 export const STATUS_CHAR = 'f2edaa0b-ce5d-4897-ab67-d6f7a3cc453a';
 
@@ -29,9 +32,10 @@ export const RENDER_ERRORS = [
   'no such option for that command - it was ignored',
   'line too long for the tag, so it was cut',
   'the face is too big for the tag and was truncated',
+  'that argument means nothing to the command - the line was skipped',
 ];
 
-/** Decode the 8 bytes of the status characteristic. */
+/** Decode the status characteristic - 10 bytes at format 2. */
 export function decodeStatus(view) {
   const b = (i) => view.getUint8(i);
   return {
@@ -51,14 +55,12 @@ export function decodeStatus(view) {
   };
 }
 
-/* The image service, from the same header. These are random 128-bit UUIDs
- * rather than Bluetooth-base ones, so they look nothing like the pair above:
- *   DEF_IMG_SVC_UUID_128  {0x38,0x9a,...,0x18,0x13}
- *     -> 13187b10-eba9-a3ba-044e-83d3217d9a38
- *   DEF_IMG_CHAR_UUID_128 {0xfe,0x82,...,0x64,0x4b}
- *     -> 4b646063-6264-f3a7-8941-e65356ea82fe */
-export const IMG_SERVICE = '13187b10-eba9-a3ba-044e-83d3217d9a38';
-export const IMG_CHAR    = '4b646063-6264-f3a7-8941-e65356ea82fe';
+/* The image service, from the same header. The raw-framebuffer format it
+ * carries is unchanged; only the handles moved, alongside the command
+ * service's - a client that could find one and not the other would be a worse
+ * failure than one that finds neither. */
+export const IMG_SERVICE = '86c08205-f21a-4257-aabd-4602d25c2448';
+export const IMG_CHAR    = '855c0ea3-ae40-4bab-8a7a-52d86e9a5a2b';
 
 export const DEVICE_NAME = 'HemaEPD-Clock';
 

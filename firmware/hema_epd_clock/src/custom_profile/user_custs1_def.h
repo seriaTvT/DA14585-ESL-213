@@ -29,10 +29,21 @@
 #include "attm_db_128.h"
 #include "epd_cmdparser.h"      /* EPD_STATUS_LEN */
 
-/* ---- Command service: 00001f10-0000-1000-8000-00805f9b34fb
- *      char:            00001f1f-0000-1000-8000-00805f9b34fb ------------- */
-#define DEF_CMD_SVC_UUID_128        {0xfb,0x34,0x9b,0x5f,0x80,0x00,0x00,0x80,0x00,0x10,0x00,0x00,0x10,0x1f,0x00,0x00}
-#define DEF_CMD_CHAR_UUID_128       {0xfb,0x34,0x9b,0x5f,0x80,0x00,0x00,0x80,0x00,0x10,0x00,0x00,0x1f,0x1f,0x00,0x00}
+/* ---- Command service: 677fb260-1fc0-42c5-ab6e-e64e0c591714
+ *      char:            c0339b97-4239-4aea-a775-988f9c4d2548 -------------
+ *
+ * Ours, not the vendor's 00001f1x block, and the change is the point rather
+ * than tidiness. The language behind these handles is no longer theirs: a
+ * client written for the original firmware that still found this service
+ * would connect, write, be acknowledged, and paint a garbage face - FONT()
+ * ignored, ROTATE(3) refused - with nothing anywhere reporting a problem.
+ * Different UUIDs turn that subtly wrong result into an honest "service not
+ * found" at the first attempt.
+ *
+ * Nothing is lost by moving: no service UUID is advertised (see
+ * USER_ADVERTISE_DATA), so discovery is by device name and unaffected. */
+#define DEF_CMD_SVC_UUID_128        {0x14,0x17,0x59,0x0c,0x4e,0xe6,0x6e,0xab,0xc5,0x42,0xc0,0x1f,0x60,0xb2,0x7f,0x67}
+#define DEF_CMD_CHAR_UUID_128       {0x48,0x25,0x4d,0x9c,0x8f,0x98,0x75,0xa7,0xea,0x4a,0x39,0x42,0x97,0x9b,0x33,0xc0}
 
 /* Max single BLE write payload we'll accept for one command batch. */
 #define DEF_CMD_CHAR_LEN            128
@@ -57,10 +68,14 @@
 #define DEF_STATUS_CHAR_LEN         EPD_STATUS_LEN
 #define DEF_STATUS_CHAR_USER_DESC   "Render Status"
 
-/* ---- Image service: 13187b10-eba9-a3ba-044e-83d3217d9a38
- *      char:            4b646063-6264-f3a7-8941-e65356ea82fe ------------- */
-#define DEF_IMG_SVC_UUID_128        {0x38,0x9a,0x7d,0x21,0xd3,0x83,0x4e,0x04,0xba,0xa3,0xa9,0xeb,0x10,0x7b,0x18,0x13}
-#define DEF_IMG_CHAR_UUID_128       {0xfe,0x82,0xea,0x56,0x53,0xe6,0x41,0x89,0xa7,0xf3,0x64,0x62,0x63,0x60,0x64,0x4b}
+/* ---- Image service: 86c08205-f21a-4257-aabd-4602d25c2448
+ *      char:            855c0ea3-ae40-4bab-8a7a-52d86e9a5a2b -------------
+ *
+ * Moved with the command service. The image format itself is unchanged - a
+ * raw EPD_BUF_SIZE framebuffer - but a client that can find one service and
+ * not the other is a worse failure than one that finds neither. */
+#define DEF_IMG_SVC_UUID_128        {0x48,0x24,0x5c,0xd2,0x02,0x46,0xbd,0xaa,0x57,0x42,0x1a,0xf2,0x05,0x82,0xc0,0x86}
+#define DEF_IMG_CHAR_UUID_128       {0x2b,0x5a,0x9a,0x6e,0xd8,0x52,0x7a,0x8a,0xab,0x4b,0x40,0xae,0xa3,0x0e,0x5c,0x85}
 
 /* Chunk size for a single image-upload write; the full framebuffer
  * (EPD_BUF_SIZE bytes) is assembled across multiple writes - see the
