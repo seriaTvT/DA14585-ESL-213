@@ -171,11 +171,18 @@ EVERY(1440)     once a day, at midnight
 EVERY(60)       on the hour
 ```
 
-Boundaries are absolute, not measured from when the face was sent, so
-`EVERY(60)` lands on the hour rather than drifting to whenever the tag booted.
-Values are clamped to 1…1440 rather than refused. The tag reports back the
-interval it settled on, so a face whose `EVERY()` never parsed is visible
-immediately instead of an hour later.
+Boundaries are absolute — slots are counted from the epoch, which is midnight —
+not measured from when the face was sent. Push a calendar at 10 PM and it
+repaints at **00:00**, two hours later, not at 10 PM the following day. Any `n`
+that divides 1440 therefore tiles the day evenly: 60 on the hour, 15 on the
+quarter. The default of 1 makes the slot the minute number, so an ordinary
+clock has always been minute-aligned; `EVERY()` only makes the boundary
+coarser, never later.
+
+The tick runs at 1 Hz, so a repaint begins within a second of the boundary and
+the panel settles ~2 s after that. Values are clamped to 1…1440 rather than
+refused, and the tag reports back the interval it settled on, so a face whose
+`EVERY()` never parsed shows up immediately instead of an hour later.
 
 Uploaded **images** were never on this timer: an image has no template behind
 it, so the tag already leaves it alone until something replaces it.

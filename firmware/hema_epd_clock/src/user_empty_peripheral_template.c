@@ -113,10 +113,34 @@ static void epd_begin_refresh(epd_queued_t what)
     s_poll_timer = app_easy_timer(EPD_POLL_DELAY, epd_poll_cb);
 }
 
+/* Which repaint window the clock is in now.
+ *
+ * Counted from the epoch rather than from the last repaint, and the epoch is
+ * midnight-aligned, so the boundaries land where a reader expects: EVERY(60)
+ * repaints on the hour and EVERY(1440) at midnight - not one interval after
+ * whenever the face happened to be pushed. Measuring elapsed time instead
+ * would drift to that arbitrary instant, which is the behaviour this avoids. */
+static uint32_t s_last_slot = 0xFFFFFFFFu;
+
+static uint32_t epd_slot_now(void)
+{
+    return (epd_time_now() / 60u) / epd_cmd_every_min();
+}
+
 /* Render the stored script and push it to the panel. */
 static void epd_render_now(void)
 {
     epd_begin_refresh(EPD_Q_SCRIPT);
+
+    /* After the render, not before: epd_begin_refresh() is what runs the
+     * script, and EVERY() only takes its new value once it has.
+     *
+     * Recording it here rather than in the tick is what stops a push costing
+     * two refreshes. The tick's idea of the current slot is in the *previous*
+     * face's units - a push that changes EVERY() changes the slot number out
+     * of all recognition - so without this the next tick saw a change and
+     * repainted a second time, a second after the push had already painted. */
+    s_last_slot = epd_slot_now();
 }
 
 static void epd_poll_cb(void)
@@ -164,23 +188,19 @@ static void epd_flush_cb(void)
  * every 1440 repaints redrawing the same pixels. */
 static void epd_on_second(void)
 {
-    static uint32_t last_slot = 0xFFFFFFFFu;
-
-    /* Which repaint window we are in, counted from the epoch rather than from
-     * the last repaint. Because the epoch is midnight-aligned and 1440 divides
-     * a day, the boundaries land where a reader expects: EVERY(60) repaints on
-     * the hour and EVERY(1440) at midnight, wherever the tag happened to boot.
-     * Measuring elapsed time instead would drift to that arbitrary instant.
-     *
-     * EVERY() is applied while the script runs, so this reads 1 until the
-     * first repaint has happened. That costs one extra repaint on a face that
-     * asked for fewer, and the alternative - not repainting until we know how
+    /* EVERY() is applied while the script runs, so the interval reads 1 until
+     * the first repaint has happened. That costs one extra repaint on a face
+     * asking for fewer, and the alternative - not repainting until we know how
      * often to repaint - never starts at all. */
-    uint32_t slot = (epd_time_now() / 60u) / epd_cmd_every_min();
-    if (slot == last_slot) {
+    if (epd_slot_now() == s_last_slot) {
         return;
     }
-    last_slot = slot;
+
+    /* Deliberately not recorded here. Every path that returns below declines
+     * to repaint, and swallowing the slot change would mean the repaint it
+     * declined never happens at all - the panel would sit on a stale face
+     * until the *next* boundary. epd_render_now() records it, so only a
+     * repaint that actually happened counts as having served this slot. */
 
     /* An uploaded image is not a clock face and has no template behind it, so
      * there is nothing to re-render: running the script here would regenerate
