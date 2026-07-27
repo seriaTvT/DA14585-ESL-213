@@ -22,7 +22,7 @@
 
 /* Scratch for a template restored from flash. Matches the parser's script
  * buffer; static because it is far too big for this callback's stack. */
-#define EPD_RESTORE_MAX   1024
+#define EPD_RESTORE_MAX   3072   /* matches CMD_SCRIPT_MAX */
 
 /* --- deferred panel refresh ------------------------------------------------
  * A full refresh takes ~2 s, and a client sends a batch of drawing commands

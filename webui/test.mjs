@@ -26,6 +26,19 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PARSER_C = join(HERE,
   '../firmware/hema_epd_clock/src/epd/epd_cmdparser.c');
 
+/* Read the buffer limits from the firmware rather than repeating them. They
+ * have moved once and would have gone stale here silently - a preset over the
+ * old limit would still have passed, and one under a raised limit would have
+ * been rejected for nothing. */
+const CFILE = readFileSync(PARSER_C, 'utf8');
+const cdef = (name) => {
+  const m = new RegExp(`#define\\s+${name}\\s+(\\d+)`).exec(CFILE);
+  assert.ok(m, `${name} not found in epd_cmdparser.c`);
+  return Number(m[1]);
+};
+const SCRIPT_MAX = cdef('CMD_SCRIPT_MAX');
+const LINE_MAX = cdef('CMD_LINE_MAX');
+
 /* A fixed instant, so the tests do not depend on when they run:
  * 2026-07-26 14:37:05, a Sunday. */
 const SECS = Math.floor(Date.UTC(2026, 6, 26, 14, 37, 5) / 1000) - 946684800;
@@ -114,9 +127,10 @@ test('every preset renders cleanly and fits on the panel', () => {
     assert.deepEqual(warnings, [], `${name}: unimplemented commands`);
 
     const bytes = Buffer.byteLength(script);
-    assert.ok(bytes <= 1024, `${name}: ${bytes} bytes exceeds CMD_SCRIPT_MAX`);
+    assert.ok(bytes <= SCRIPT_MAX,
+      `${name}: ${bytes} bytes exceeds CMD_SCRIPT_MAX (${SCRIPT_MAX})`);
     for (const line of script.split('\n')) {
-      assert.ok(line.length < 128, `${name}: a line exceeds CMD_LINE_MAX`);
+      assert.ok(line.length < LINE_MAX, `${name}: a line exceeds CMD_LINE_MAX`);
     }
 
     /* Ink somewhere, but not everywhere: an all-blank face means the geometry

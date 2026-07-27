@@ -32,7 +32,7 @@
  * the host can always re-push - so a mismatch simply falls back to the
  * built-in default face. Bump this on any breaking DSL change. */
 #define EPD_STORE_VERSION   1u
-#define EPD_STORE_MAX       1024u           /* matches CMD_SCRIPT_MAX */
+#define EPD_STORE_MAX       3072u           /* matches CMD_SCRIPT_MAX */
 
 /* Boot-flash pins. CLK/MOSI are the panel's too; P0_5 is the panel's D/C and
  * has to be handed back by epd_spi_claim() when we are done. */

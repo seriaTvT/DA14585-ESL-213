@@ -8,7 +8,7 @@ import * as Img from './image.js';
 
 const $ = (id) => document.getElementById(id);
 
-const SCRIPT_MAX = 1024;   /* CMD_SCRIPT_MAX in epd_cmdparser.c */
+const SCRIPT_MAX = 3072;   /* CMD_SCRIPT_MAX in epd_cmdparser.c */
 const LINE_MAX   = 128;    /* CMD_LINE_MAX   */
 
 const tag = new Tag();
@@ -33,8 +33,8 @@ let imagePanel = null;
 /* Strip authoring-only lines before sending.
  *
  * The firmware stores every line it doesn't recognise as a control command,
- * comments included, so an un-stripped comment would eat into the tag's 1024
- * byte script buffer and be re-dispatched on every minute tick. Stripping here
+ * comments included, so an un-stripped comment would eat into the tag's
+ * script buffer and be re-dispatched on every minute tick. Stripping here
  * keeps comments free. */
 function compile(script) {
   const kept = [];

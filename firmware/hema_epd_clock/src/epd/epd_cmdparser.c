@@ -10,7 +10,30 @@
 
 #define CMD_LINE_MAX   128
 #define CMD_TEXT_MAX   64
-#define CMD_SCRIPT_MAX 1024   /* stored display template; see script buffer */
+/* Stored display template.
+ *
+ * Raising this is NOT one buffer: the same figure sizes four of them, so the
+ * cost in RAM is four times the increase.
+ *   s_script          here
+ *   s_buf, vbuf       epd_store.c, the page-program and read-back copies
+ *   restored          user_empty_peripheral_template.c, the boot-time load
+ * At 3072 that is 12 KiB of bss, against roughly 41 KiB free between the end
+ * of the image and the BLE stack's retention area at 0x07FD4808 - measured
+ * from the map, not assumed. Everything slides up together and the heap stays
+ * at its configured 1036 bytes, so the arrangement that already works is kept.
+ *
+ * The figure comes from the case that motivated it. A month grid that aligns
+ * each day to its real weekday needs the day's column, and with no way to bind
+ * an intermediate value every one of the 31 lines has to repeat the offset
+ * expression - which is what costs the bytes, not the grid. Measured at 2099,
+ * so 2048 was tried first and missed. The repetition is the better thing to
+ * attack (a LET()-style binding would take this back under 1300), but that is
+ * a language change and this is a buffer.
+ * Note the three redundant copies above are worth removing on their own terms,
+ * which would halve the cost of the next increase - but vbuf is the read-back
+ * that catches this flash silently failing a write, so that is its own change
+ * with its own hardware test, not a rider on a size bump. */
+#define CMD_SCRIPT_MAX 3072
 
 /* ---------------------------------------------------------------------------
  * {} template variables
