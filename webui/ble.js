@@ -17,6 +17,35 @@
 export const CMD_SERVICE = '00001f10-0000-1000-8000-00805f9b34fb';
 export const CMD_CHAR    = '00001f1f-0000-1000-8000-00805f9b34fb';
 
+/* Read-only render status, in the same service. Random 128-bit UUID rather
+ * than another 00001f1x: it is ours, and the rest follow when the UUIDs change.
+ *   DEF_STATUS_CHAR_UUID_128 {0x3a,0x45,...,0xed,0xf2} */
+export const STATUS_CHAR = 'f2edaa0b-ce5d-4897-ab67-d6f7a3cc453a';
+
+/* Layout of epd_cmd_status(); see epd_cmdparser.h. */
+export const RENDER_ERRORS = [
+  null,                                          /* 0 - nothing wrong */
+  'no such command - the line drew nothing',
+  'no such option for that command - it was ignored',
+  'line too long for the tag, so it was cut',
+  'the face is too big for the tag and was truncated',
+];
+
+/** Decode the 8 bytes of the status characteristic. */
+export function decodeStatus(view) {
+  const b = (i) => view.getUint8(i);
+  return {
+    fmt: b(0),
+    code: b(1),
+    message: RENDER_ERRORS[b(1)] ?? `unknown problem code ${b(1)}`,
+    line: b(2) | (b(3) << 8),
+    count: b(4),
+    truncated: (b(5) & 0x01) !== 0,
+    lineTooLong: (b(5) & 0x02) !== 0,
+    scriptLen: b(6) | (b(7) << 8),
+  };
+}
+
 /* The image service, from the same header. These are random 128-bit UUIDs
  * rather than Bluetooth-base ones, so they look nothing like the pair above:
  *   DEF_IMG_SVC_UUID_128  {0x38,0x9a,...,0x18,0x13}
@@ -128,6 +157,14 @@ export class Tag extends EventTarget {
     this.char = await service.getCharacteristic(CMD_CHAR);
     this.writeWithoutResponse = this.char.properties.writeWithoutResponse;
 
+    /* Optional for the same reason the image service is: a tag flashed before
+     * the status characteristic existed should still take a face. */
+    try {
+      this.statusChar = await service.getCharacteristic(STATUS_CHAR);
+    } catch {
+      this.statusChar = null;
+    }
+
     /* The image service is optional on purpose: an older tag that predates it
      * should still be usable for templates rather than failing to connect at
      * all. pushImage() is what reports its absence, at the point it matters. */
@@ -139,6 +176,19 @@ export class Tag extends EventTarget {
     }
 
     this._state();
+  }
+
+  /**
+   * What the tag made of the face it is currently rendering, or null if this
+   * firmware predates the status characteristic.
+   *
+   * Worth more than the preview's own warnings: those come from a port of the
+   * parser, and the reason that port is tested against the firmware is that
+   * ports drift. This is the tag's own account.
+   */
+  async readStatus() {
+    if (!this.statusChar) return null;
+    return decodeStatus(await this.statusChar.readValue());
   }
 
   /**

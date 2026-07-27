@@ -304,6 +304,40 @@ static void handle_img_write(struct custs1_val_write_ind const *msg)
     }
 }
 
+/* Answer a read of the status characteristic.
+ *
+ * Built here and now rather than kept as a copy in the attribute database: the
+ * report describes the last render, and a cached one would go stale exactly
+ * when it matters - the minute tick re-runs the script without anyone writing
+ * to the tag, so there would be no write to hang an update off. */
+static void handle_status_read(struct custs1_value_req_ind const *msg,
+                               ke_task_id_t const dest_id,
+                               ke_task_id_t const src_id)
+{
+    struct custs1_value_req_rsp *rsp = KE_MSG_ALLOC_DYN(CUSTS1_VALUE_REQ_RSP,
+                                                        prf_get_task_from_id(TASK_ID_CUSTS1),
+                                                        dest_id,
+                                                        custs1_value_req_rsp,
+                                                        EPD_STATUS_LEN);
+    rsp->conidx  = app_env[msg->conidx].conidx;
+    rsp->att_idx = msg->att_idx;
+
+    if (msg->att_idx == STATUS_IDX_VAL) {
+        rsp->length = EPD_STATUS_LEN;
+        rsp->status = ATT_ERR_NO_ERROR;
+        epd_cmd_status(rsp->value);
+    } else {
+        /* Nothing else is marked PERM(RI), so this is unreachable short of a
+         * database change - answer honestly rather than returning stale
+         * bytes. */
+        rsp->length = 0;
+        rsp->status = ATT_ERR_APP_ERROR;
+    }
+
+    KE_MSG_SEND(rsp);
+    (void)src_id;
+}
+
 void user_catch_rest_hndl(ke_msg_id_t const msgid,
                           void const *param,
                           ke_task_id_t const dest_id,
@@ -338,6 +372,14 @@ void user_catch_rest_hndl(ke_msg_id_t const msgid,
                 default:
                     break;
             }
+        } break;
+
+        case CUSTS1_VALUE_REQ_IND:
+        {
+            struct custs1_value_req_ind const *msg_param =
+                (struct custs1_value_req_ind const *)(param);
+
+            handle_status_read(msg_param, dest_id, src_id);
         } break;
 
         default:

@@ -11,6 +11,7 @@
 /* ---- Command service ---- */
 static const att_svc_desc128_t custs1_cmd_svc = DEF_CMD_SVC_UUID_128;
 static const uint8_t CMD_CHAR_UUID_128[ATT_UUID_128_LEN] = DEF_CMD_CHAR_UUID_128;
+static const uint8_t STATUS_CHAR_UUID_128[ATT_UUID_128_LEN] = DEF_STATUS_CHAR_UUID_128;
 
 /* ---- Image service ---- */
 static const att_svc_desc128_t custs1_img_svc = DEF_IMG_SVC_UUID_128;
@@ -49,6 +50,22 @@ const struct attm_desc_128 custs1_att_db[CUSTS1_IDX_NB] =
     [CMD_SVC_IDX_USER_DESC] = {(uint8_t*)&att_desc_user_desc, ATT_UUID_16_LEN, PERM(RD, ENABLE),
                             sizeof(DEF_CMD_CHAR_USER_DESC) - 1, sizeof(DEF_CMD_CHAR_USER_DESC) - 1,
                             (uint8_t *) DEF_CMD_CHAR_USER_DESC},
+
+    /* Status - read only, and answered by the app rather than from the
+     * attribute database. PERM(RI, ENABLE) in the max-length field is what
+     * makes the stack raise CUSTS1_VALUE_REQ_IND on a read instead of serving
+     * a cached value; the alternative would be pushing an update after every
+     * render, which is one more thing to forget and a stale report when it is
+     * forgotten. */
+    [STATUS_IDX_CHAR] = {(uint8_t*)&att_decl_char, ATT_UUID_16_LEN, PERM(RD, ENABLE),
+                            0, 0, NULL},
+
+    [STATUS_IDX_VAL]  = {STATUS_CHAR_UUID_128, ATT_UUID_128_LEN, PERM(RD, ENABLE),
+                            PERM(RI, ENABLE) | DEF_STATUS_CHAR_LEN, 0, NULL},
+
+    [STATUS_IDX_USER_DESC] = {(uint8_t*)&att_desc_user_desc, ATT_UUID_16_LEN, PERM(RD, ENABLE),
+                            sizeof(DEF_STATUS_CHAR_USER_DESC) - 1, sizeof(DEF_STATUS_CHAR_USER_DESC) - 1,
+                            (uint8_t *) DEF_STATUS_CHAR_USER_DESC},
 
     /*************************
      * Image service

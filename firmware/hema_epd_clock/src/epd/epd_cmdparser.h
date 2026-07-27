@@ -84,4 +84,53 @@ void epd_cmd_load_script(const char *buf, uint16_t len);
  *  on it will not write the same template twice. */
 bool epd_cmd_take_dirty(void);
 
+/* ---------------------------------------------------------------------------
+ * Reporting what the last render made of the script
+ *
+ * The parser stays forgiving - a shelf label with no host in range has to keep
+ * drawing something, so a bad line is skipped rather than treated as fatal and
+ * a malformed argument evaluates to 0. That is right for the panel and useless
+ * for whoever is writing the face: a typo and a deliberate choice look
+ * identical from the outside.
+ *
+ * So the problems are counted as they are skipped, and handed to a client over
+ * the status characteristic. This is the tag's own account of what it did,
+ * which is worth more than the preview's prediction - the preview is a model
+ * of the parser, and the whole reason it is tested against the firmware is
+ * that models drift.
+ * ------------------------------------------------------------------------- */
+
+typedef enum {
+    EPD_ERR_NONE = 0,
+    EPD_ERR_UNKNOWN_CMD,    /* no command matched; the line drew nothing   */
+    EPD_ERR_UNKNOWN_OPT,    /* `name=` the command does not read           */
+    EPD_ERR_LINE_TOO_LONG,  /* over CMD_LINE_MAX; dropped whole            */
+    EPD_ERR_SCRIPT_FULL,    /* the batch overran the script buffer         */
+} epd_err_t;
+
+/** Length of the status report written by epd_cmd_status(). */
+#define EPD_STATUS_LEN  8
+
+/** Fill `out` with the status of the most recent epd_cmd_run():
+ *
+ *   [0] format version of this report (currently 1)
+ *   [1] epd_err_t of the FIRST problem found
+ *   [2] line number of that problem, low byte  (1-based, 0 if not a line)
+ *   [3] line number, high byte
+ *
+ * The line number counts lines of the *stored script*, which is not what the
+ * client sent: TIME() and RESET() are applied on arrival and never stored, so
+ * everything after them shifts up. A client that strips comments or blank
+ * lines before sending (webui does) shifts them further. Translating back to
+ * whatever the author is looking at is the client's job - it is the only side
+ * that knows what it removed.
+ *   [4] number of problems found, saturating at 255
+ *   [5] flags: bit0 script truncated, bit1 a line was over CMD_LINE_MAX
+ *   [6] stored script length, low byte
+ *   [7] stored script length, high byte
+ *
+ * Only the first problem is located, not all of them: an author fixes one and
+ * pushes again, and carrying a list would cost buffer the script needs more. */
+void epd_cmd_status(uint8_t out[EPD_STATUS_LEN]);
+
 #endif // _EPD_CMDPARSER_H_

@@ -15,7 +15,8 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { Panel, runScript, expandVars, tagTime, tagSecondsNow, textWidth, evalArg }
+import { Panel, runScript, expandVars, tagTime, tagSecondsNow, textWidth, evalArg,
+         OPTIONS }
   from './epd.js';
 import { PRESETS } from './presets.js';
 import { dither, toPanel, surface, DITHERS } from './image.js';
@@ -237,6 +238,93 @@ test('an option name must match whole, not by prefix', () => {
   assert.match(warnings[0].msg, /no colors= option/);
   /* "colors" must not have satisfied the lookup for "color". */
   assert.equal(p.get(4, 4), 0, 'the outline vanished, so colors= was read as color=');
+});
+
+test('the option tables agree with the firmware', () => {
+  /* The firmware has its own copy of which options each command reads, so it
+   * can report an unknown one over the status characteristic. Two hand-written
+   * tables of the same thing is exactly the pair that drifts the moment an
+   * option is added on one side, and the drift is invisible: the preview would
+   * accept an option the tag ignores, or warn about one it honours. */
+  const c = readFileSync(PARSER_C, 'utf8');
+
+  const lists = {};
+  for (const m of c.matchAll(/OPTS_(\w+)\[\]\s*=\s*\{([^}]*)\}/g)) {
+    lists[`OPTS_${m[1]}`] = [...m[2].matchAll(/"(\w+)"/g)].map((x) => x[1]);
+  }
+  assert.ok(Object.keys(lists).length >= 4, 'no OPTS_ tables found');
+
+  /* Read the wiring, not just the tables: which list a command is actually
+   * checked against is the thing that matters, and OPTS_SHAPE serves two. */
+  const wired = {};
+  for (const block of c.split('starts_with(line, "').slice(1)) {
+    const cmd = block.slice(0, block.indexOf('('));
+    const use = /check_options\(args,\s*(OPTS_\w+)\)/.exec(block.slice(0, 2000));
+    if (use) wired[cmd] = lists[use[1]];
+  }
+
+  for (const [cmd, opts] of Object.entries(wired)) {
+    assert.deepEqual(new Set(OPTIONS[cmd]), new Set(opts),
+      `${cmd}(): epd.js and epd_cmdparser.c disagree about its options`);
+  }
+  for (const cmd of ['CLEAR', 'POINT', 'LINE', 'RECT', 'CIRCLE', 'FONT', 'ROTATE']) {
+    assert.ok(cmd in wired, `${cmd}() is not checked for unknown options`);
+  }
+});
+
+test('the firmware reports what it made of a script', () => {
+  /* Checks the actual C, via `render --status`. The report is the tag's own
+   * account of the render, so a preview warning that the firmware does not
+   * agree with is worse than no warning at all. */
+  const st = (script) => {
+    const out = execFileSync(RENDER, [String(SECS), '--status'], {
+      input: script, encoding: 'utf8',
+    });
+    const [fmt, code, lineLo, lineHi, count, flags, lenLo, lenHi] =
+      out.trim().split(' ').map(Number);
+    return { fmt, code, line: lineLo | (lineHi << 8), count, flags,
+             len: lenLo | (lenHi << 8) };
+  };
+
+  const OK = 0, UNKNOWN_CMD = 1, UNKNOWN_OPT = 2;
+
+  assert.deepEqual(st('CLEAR(1)\nRECT(1,1,9,9,fill=1)\n'),
+    { fmt: 1, code: OK, line: 0, count: 0, flags: 0, len: 30 });
+
+  let s = st('CLEAR(1)\nICON(1,2,3)\nRECT(1,1,9,9)\n');
+  assert.equal(s.code, UNKNOWN_CMD);
+  assert.equal(s.line, 2, 'wrong line for the unknown command');
+
+  s = st('CLEAR(1)\nRECT(1,1,9,9,nope=1)\n');
+  assert.equal(s.code, UNKNOWN_OPT);
+  assert.equal(s.line, 2);
+
+  /* An option that exists, on a command that does not take it. */
+  assert.equal(st('LINE(1,1,9,9,fill=1)\n').code, UNKNOWN_OPT);
+
+  /* Only the first problem is located, but all of them are counted. */
+  s = st('BOGUS(1)\nRECT(1,1,9,9,zzz=1)\n');
+  assert.equal(s.code, UNKNOWN_CMD);
+  assert.equal(s.line, 1);
+  assert.equal(s.count, 2);
+
+  /* The quoting rule again, from the firmware's own side this time. */
+  assert.equal(st("FONT(2,2,'A,scale=9',scale=2)\n").code, OK);
+
+  /* CRLF is one line ending. Counting it as two would put every reported line
+   * number past the first one out by a line, in a file an editor shows as
+   * perfectly ordinary. */
+  assert.equal(st('CLEAR(1)\r\nICON(1)\r\n').line, 2);
+
+  /* A line over CMD_LINE_MAX is reported as such, and specifically NOT as
+   * "the script buffer is full" - both conditions used to set the same flag,
+   * which would send an author shortening the whole face instead of the one
+   * line. The line number is 0 because epd_cmd_feed() splits an over-long line
+   * as it streams in, before there is a line number to report. */
+  s = st(`CLEAR(1)\n${'RECT(' + '1,'.repeat(70)}9)\n`);
+  assert.equal(s.code, 3, 'EPD_ERR_LINE_TOO_LONG');
+  assert.equal(s.flags & 0x02, 0x02, 'the over-long-line flag');
+  assert.equal(s.flags & 0x01, 0, 'must not also claim the script is full');
 });
 
 test('an unknown option is reported rather than silently dropped', () => {

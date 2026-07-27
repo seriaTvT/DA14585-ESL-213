@@ -597,7 +597,7 @@ class Args {
  * to report a typo to. Here they exist so the preview can say that `colour=`
  * will do nothing, which on the panel is indistinguishable from having done
  * nothing. Keep in step with named_int() in dispatch_line(). */
-const OPTIONS = {
+export const OPTIONS = {
   CLEAR:  [],
   POINT:  ['color'],
   LINE:   ['color', 'width'],

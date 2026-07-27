@@ -28,9 +28,11 @@
 int main(int argc, char **argv)
 {
     static char script[4096];
+    int want_status = (argc > 2 && strcmp(argv[2], "--status") == 0);
 
     if (argc < 2) {
-        fprintf(stderr, "usage: %s <seconds-since-2000> < script > fb.bin\n",
+        fprintf(stderr,
+                "usage: %s <seconds-since-2000> [--status] < script > fb.bin\n",
                 argv[0]);
         return 2;
     }
@@ -46,6 +48,19 @@ int main(int argc, char **argv)
     epd_cmd_begin_batch();
     epd_cmd_feed((const uint8_t *)script, (uint16_t)n);
     epd_cmd_run();
+
+    /* --status prints the render report instead of the framebuffer, so the
+     * error codes the tag serves over the status characteristic can be checked
+     * without a tag. */
+    if (want_status) {
+        uint8_t st[EPD_STATUS_LEN];
+        epd_cmd_status(st);
+        for (int i = 0; i < EPD_STATUS_LEN; i++) {
+            printf("%s%u", i ? " " : "", st[i]);
+        }
+        printf("\n");
+        return 0;
+    }
 
     if (fwrite(epd_framebuffer, 1, EPD_BUF_SIZE, stdout) != EPD_BUF_SIZE) {
         perror("write");

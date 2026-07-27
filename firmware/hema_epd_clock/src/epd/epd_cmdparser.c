@@ -381,18 +381,48 @@ static bool at_named(const char *p)
     return *p == '=';
 }
 
-/* Value of `name=` in an argument list, or NULL if absent.
- *
- * Only matches at the start of a top-level argument, so neither a quoted
- * string ("FONT(...,'scale=3')") nor anything nested in parentheses can be
- * mistaken for an option. The trailing '=' check is what stops "color" from
- * matching "colors=1". */
-static const char *find_named(const char *args, const char *name)
+/* True if `name` (NUL-terminated) is exactly the `len` chars at `s`. The length
+ * check on both sides is what stops "color" from matching "colors=1". */
+static bool name_eq(const char *s, uint8_t len, const char *name)
 {
-    const char *p = args;
-    bool arg_start = true;
+    for (uint8_t i = 0; i < len; i++) {
+        if (name[i] == '\0' || s[i] != name[i]) return false;
+    }
+    return name[len] == '\0';
+}
+
+/* Walk the argument list one top-level argument at a time.
+ *
+ * On entry *pp is at the start of an argument; on return it is at the start of
+ * the next one. If this argument is `name=`, *name points at the name and
+ * *name_len is its length, otherwise *name_len is 0. Returns false at the end
+ * of the list.
+ *
+ * Quoted strings and parenthesised sub-expressions are stepped over as units,
+ * so neither "FONT(...,'a,scale=3')" nor a comma inside parentheses can be
+ * mistaken for an argument boundary. Both looking an option up and checking
+ * for unknown ones go through here, so the two cannot disagree about where an
+ * argument begins - which they would, being the same fiddly scan written
+ * twice. */
+static bool next_arg(const char **pp, const char **name, uint8_t *name_len)
+{
+    const char *p = skip_ws(*pp);
     bool in_str = false;
     uint8_t depth = 0;
+
+    if (*p == '\0' || *p == ')') {
+        return false;
+    }
+
+    *name = p;
+    *name_len = 0;
+    if (is_name_start(*p)) {
+        const char *q = p;
+        while (is_name_char(*q)) q++;
+        if (*skip_ws(q) == '=') {
+            *name_len = (uint8_t)(q - p);
+        }
+    }
 
     while (*p) {
         if (in_str) {
@@ -400,31 +430,84 @@ static const char *find_named(const char *args, const char *name)
             p++;
             continue;
         }
-
-        if (arg_start) {
-            const char *q = skip_ws(p);
-            const char *n = name;
-
-            while (*n && *q == *n) { q++; n++; }
-            if (*n == '\0') {
-                q = skip_ws(q);
-                if (*q == '=') {
-                    return q + 1;
-                }
-            }
-            arg_start = false;
-        }
-
         if (*p == '\'') { in_str = true; p++; continue; }
         if (*p == '(') { depth++; p++; continue; }
         if (*p == ')') {
-            if (depth == 0) return NULL;      /* end of the argument list */
+            if (depth == 0) break;           /* end of the argument list */
             depth--; p++; continue;
         }
-        if (*p == ',' && depth == 0) { arg_start = true; p++; continue; }
+        if (*p == ',' && depth == 0) { p++; break; }
         p++;
     }
+    *pp = p;
+    return true;
+}
+
+/* Value of `name=` in an argument list, or NULL if absent. */
+static const char *find_named(const char *args, const char *name)
+{
+    const char *p = args, *nm;
+    uint8_t nlen;
+
+    while (next_arg(&p, &nm, &nlen)) {
+        if (nlen && name_eq(nm, nlen, name)) {
+            const char *v = skip_ws(nm + nlen);
+            if (*v == '=') return v + 1;
+        }
+    }
     return NULL;
+}
+
+/* ---------------------------------------------------------------------------
+ * Problems found while rendering - see epd_cmd_status() in the header.
+ * ------------------------------------------------------------------------- */
+
+static uint8_t  s_err_code;     /* epd_err_t of the first problem   */
+static uint16_t s_err_line;     /* 1-based, 0 if not line-specific  */
+static uint8_t  s_err_count;    /* saturating                       */
+static uint16_t s_cur_line;     /* line dispatch_line() is on       */
+
+static void note_err(epd_err_t code)
+{
+    if (s_err_count == 0) {
+        s_err_code = (uint8_t)code;
+        s_err_line = s_cur_line;
+    }
+    if (s_err_count < 255) {
+        s_err_count++;
+    }
+}
+
+/* Options each command reads. Anything else in its argument list is reported
+ * rather than silently dropped - a misspelt option looks exactly like one that
+ * had no visible effect, which is the hardest kind of mistake to find by
+ * staring at the panel.
+ *
+ * webui/epd.js carries the same table, and a test compares the two: they are
+ * the sort of pair that drifts the moment an option is added on one side. */
+static const char *const OPTS_NONE[]  = { NULL };
+static const char *const OPTS_POINT[] = { "color", NULL };
+static const char *const OPTS_LINE[]  = { "color", "width", NULL };
+static const char *const OPTS_SHAPE[] = { "color", "width", "fill", NULL };
+static const char *const OPTS_FONT[]  = { "color", "bg", "scale", NULL };
+
+static void check_options(const char *args, const char *const *known)
+{
+    const char *p = args, *nm;
+    uint8_t nlen;
+
+    while (next_arg(&p, &nm, &nlen)) {
+        if (nlen == 0) {
+            continue;                        /* positional */
+        }
+        bool ok = false;
+        for (uint8_t i = 0; known[i] != NULL; i++) {
+            if (name_eq(nm, nlen, known[i])) { ok = true; break; }
+        }
+        if (!ok) {
+            note_err(EPD_ERR_UNKNOWN_OPT);
+        }
+    }
 }
 
 /* An option's value as a number, or `dflt` if it was not given. The value is a
@@ -491,8 +574,10 @@ static void dispatch_line(const char *line)
     line = skip_ws(line);
 
     if (starts_with(line, "CLEAR(")) {
-        p = line + 6;
+        const char *args = line + 6;
+        p = args;
         int32_t color = parse_int(&p);
+        check_options(args, OPTS_NONE);
         epd_gfx_clear((uint8_t)color);
         return;
     }
@@ -506,6 +591,7 @@ static void dispatch_line(const char *line)
         p = args;
         int32_t x = parse_int(&p);
         int32_t y = parse_int(&p);
+        check_options(args, OPTS_POINT);
         int32_t color = named_int(args, "color", 0);
         epd_gfx_set_pixel((int16_t)x, (int16_t)y, (uint8_t)color);
         return;
@@ -519,6 +605,7 @@ static void dispatch_line(const char *line)
         int32_t y1 = parse_int(&p);
         int32_t x2 = parse_int(&p);
         int32_t y2 = parse_int(&p);
+        check_options(args, OPTS_LINE);
         int32_t color = named_int(args, "color", 0);
         int32_t width = named_int(args, "width", 1);
         epd_gfx_line((int16_t)x1, (int16_t)y1, (int16_t)x2, (int16_t)y2,
@@ -537,6 +624,7 @@ static void dispatch_line(const char *line)
         int32_t color = named_int(args, "color", 0);
         int32_t width = named_int(args, "width", 1);
         int32_t fill  = named_int(args, "fill", 0);
+        check_options(args, OPTS_SHAPE);
         epd_gfx_rect((int16_t)x1, (int16_t)y1, (int16_t)x2, (int16_t)y2,
                      (uint8_t)color, (uint8_t)width, (uint8_t)fill);
         return;
@@ -552,6 +640,7 @@ static void dispatch_line(const char *line)
         int32_t color = named_int(args, "color", 0);
         int32_t width = named_int(args, "width", 1);
         int32_t fill  = named_int(args, "fill", 0);
+        check_options(args, OPTS_SHAPE);
         epd_gfx_circle((int16_t)x, (int16_t)y, (int16_t)r,
                        (uint8_t)color, (uint8_t)width, (uint8_t)fill);
         return;
@@ -575,6 +664,7 @@ static void dispatch_line(const char *line)
         int32_t color = named_int(args, "color", 0);
         int32_t bg    = named_int(args, "bg", 1);
         int32_t scale = named_int(args, "scale", 1);
+        check_options(args, OPTS_FONT);
         /* Substitute {H}, {N}, {y}... here rather than at parse time, so a
          * stored script re-rendered on the minute tick picks up the new
          * time (see epd_cmd_run()). */
@@ -589,8 +679,10 @@ static void dispatch_line(const char *line)
      * 0、90、180、270" then "1为旋转90度..."), and its example uses degrees,
      * so accept either. 90/270 are landscape; their default is 270. */
     if (starts_with(line, "ROTATE(")) {
-        p = line + 7;
+        const char *args = line + 7;
+        p = args;
         int32_t r = parse_int(&p);
+        check_options(args, OPTS_NONE);
         switch (r) {
         case 90:  r = 1; break;
         case 180: r = 2; break;
@@ -604,12 +696,12 @@ static void dispatch_line(const char *line)
     /* TIME() and RESET() never reach here - they are applied and dropped as
      * they arrive, in handle_line(), so they are neither stored nor replayed. */
 
-    /* Unrecognized / not-yet-implemented command (CAL, CLOCK, IMG, ICON,
-     * TABLE, ROTATE, MIRROR, SHOW, INV, LET, SRAND, RANDS, DATE_OFF,
-     * TIME_OFF, EPD, ...) - silently ignored rather than treated as fatal,
-     * unlike the vendor firmware's parser which appears to fault on
-     * unrecognized tokens in some contexts (see PROTOCOL_NOTES.md section 4
-     * "Tier A" note) - deliberately more forgiving here. */
+    /* Nothing matched. Skipped rather than treated as fatal - a shelf label
+     * with no host in range has to keep drawing whatever it can - but counted,
+     * so a client can be told which line did nothing. Silence here was the old
+     * behaviour and it made a mistyped command indistinguishable from one that
+     * simply had no visible effect. */
+    note_err(EPD_ERR_UNKNOWN_CMD);
 }
 
 /* ---------------------------------------------------------------------------
@@ -628,7 +720,8 @@ static void dispatch_line(const char *line)
  * ------------------------------------------------------------------------- */
 static char     s_script[CMD_SCRIPT_MAX];
 static uint16_t s_script_len;
-static bool     s_script_full;
+static bool     s_script_full;   /* the batch outgrew CMD_SCRIPT_MAX     */
+static bool     s_line_long;     /* some line outgrew CMD_LINE_MAX       */
 static bool     s_batch_pending;
 
 /* Partial line carried between feeds: a BLE write is MTU-3 bytes (20 at the
@@ -643,6 +736,7 @@ void epd_cmd_reset(void)
 {
     s_script_len = 0;
     s_script_full = false;
+    s_line_long = false;
     s_batch_pending = false;
     s_line_len = 0;
     s_dirty = false;
@@ -737,6 +831,7 @@ static void handle_line(const char *line, uint16_t len)
         s_batch_pending = false;
         s_script_len = 0;
         s_script_full = false;
+        s_line_long = false;
     }
     s_dirty = true;
 
@@ -778,8 +873,13 @@ void epd_cmd_feed(const uint8_t *buf, uint16_t len)
             s_line[s_line_len++] = c;
         } else {
             /* Over-long line: commit what fits and treat the rest as the next
-             * one, rather than dropping the batch. */
-            s_script_full = true;
+             * one, rather than dropping the batch.
+             *
+             * Flagged separately from s_script_full. Both used to set that one
+             * flag, so a line over CMD_LINE_MAX was reported to a client as
+             * "the script buffer is full" - which sends them shortening the
+             * wrong thing, the whole face instead of the one line. */
+            s_line_long = true;
             s_line[s_line_len] = '\0';
             handle_line(s_line, s_line_len);
             s_line_len = 0;
@@ -839,17 +939,57 @@ void epd_cmd_run(void)
      * before replaying, or it would be silently dropped. */
     flush_partial_line();
 
+    /* The report describes *this* run, so it starts empty every time. The
+     * script is replayed each minute, so it is rebuilt identically until a
+     * client pushes something new. */
+    s_err_code = EPD_ERR_NONE;
+    s_err_line = 0;
+    s_err_count = 0;
+
+    if (s_script_full) {
+        s_cur_line = 0;                     /* the batch, not one line */
+        note_err(EPD_ERR_SCRIPT_FULL);
+    }
+    if (s_line_long) {
+        s_cur_line = 0;                     /* split during the feed, so the
+                                               line number is already lost */
+        note_err(EPD_ERR_LINE_TOO_LONG);
+    }
+
+    uint16_t line_no = 1;
+    bool prev_cr = false;
+
     for (uint16_t i = 0; i < s_script_len; i++) {
         char c = s_script[i];
 
         if (c == '\n' || c == '\r') {
-            if (line_len > 0 && !overflow) {
+            /* CRLF ends one line, not two, so the numbers handed to a client
+             * match the ones its editor puts in the margin. Rendering is
+             * unaffected either way - the empty line between them drew
+             * nothing - but a report that is off by one per line is worse
+             * than no report. */
+            if (c == '\n' && prev_cr) {
+                prev_cr = false;
+                continue;
+            }
+            prev_cr = (c == '\r');
+
+            if (overflow) {
+                s_cur_line = line_no;
+                note_err(EPD_ERR_LINE_TOO_LONG);
+            } else if (line_len > 0) {
                 line[line_len] = '\0';
+                s_cur_line = line_no;
                 dispatch_line(line);
             }
             line_len = 0;
             overflow = false;
-        } else if (line_len < CMD_LINE_MAX - 1) {
+            line_no++;
+            continue;
+        }
+
+        prev_cr = false;
+        if (line_len < CMD_LINE_MAX - 1) {
             line[line_len++] = c;
         } else {
             /* Drop the whole over-long line rather than silently truncating
@@ -860,8 +1000,25 @@ void epd_cmd_run(void)
 
     /* Final line without a trailing newline: execute it. Safe here (unlike
      * while streaming) because the script is complete by the time we run. */
-    if (line_len > 0 && !overflow) {
+    if (overflow) {
+        s_cur_line = line_no;
+        note_err(EPD_ERR_LINE_TOO_LONG);
+    } else if (line_len > 0) {
         line[line_len] = '\0';
+        s_cur_line = line_no;
         dispatch_line(line);
     }
+}
+
+void epd_cmd_status(uint8_t out[EPD_STATUS_LEN])
+{
+    out[0] = 1;                                     /* report format version */
+    out[1] = s_err_code;
+    out[2] = (uint8_t)(s_err_line & 0xFF);
+    out[3] = (uint8_t)(s_err_line >> 8);
+    out[4] = s_err_count;
+    out[5] = (uint8_t)((s_script_full ? 0x01 : 0x00) |
+                       (s_line_long   ? 0x02 : 0x00));
+    out[6] = (uint8_t)(s_script_len & 0xFF);
+    out[7] = (uint8_t)(s_script_len >> 8);
 }

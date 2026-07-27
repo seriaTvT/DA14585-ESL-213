@@ -3,7 +3,7 @@
  */
 import { Panel, runScript, paint, tagSecondsNow, tagTime } from './epd.js';
 import { PRESETS } from './presets.js';
-import { Tag, bluetoothProblem } from './ble.js';
+import { Tag, bluetoothProblem, FLUSH_DELAY_MS } from './ble.js';
 import * as Img from './image.js';
 
 const $ = (id) => document.getElementById(id);
@@ -37,12 +37,37 @@ let imagePanel = null;
  * byte script buffer and be re-dispatched on every minute tick. Stripping here
  * keeps comments free. */
 function compile(script) {
-  const body = script
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l && !l.startsWith('#'))
-    .join('\n');
-  return body ? body + '\n' : '';
+  const kept = [];
+  const from = [];              /* kept[i] came from editor line from[i] */
+
+  script.split('\n').forEach((raw, i) => {
+    const l = raw.trim();
+    if (!l || l.startsWith('#')) return;
+    kept.push(l);
+    from.push(i + 1);
+  });
+
+  return { body: kept.length ? kept.join('\n') + '\n' : '', from };
+}
+
+/**
+ * Editor line for a line number the tag reported, or null if it cannot be
+ * placed.
+ *
+ * The tag counts lines of the script it stored, and that is a different
+ * numbering from the one in the editor's margin: comments and blank lines are
+ * stripped here before sending, and the firmware applies RESET()/TIME() on
+ * arrival without storing them, so everything after them shifts up again.
+ * Reporting the tag's number raw would point confidently at the wrong line,
+ * which is worse than pointing at nothing.
+ *
+ * `dropped` is how many leading control lines this push prepended.
+ */
+function editorLine(tagLine, dropped) {
+  if (!tagLine) return null;
+  const { from } = compile($('editor').value);
+  const idx = tagLine - 1 + dropped;
+  return idx >= 0 && idx < from.length ? from[idx] : null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -100,7 +125,7 @@ function showNotes(script, warnings) {
 
   /* Count what actually goes over the air, not what is in the box: blank lines
    * and comments are stripped before sending. */
-  const bytes = new TextEncoder().encode(compile(script)).length;
+  const bytes = new TextEncoder().encode(compile(script).body).length;
   const counter = $('counter');
   counter.textContent = `${bytes} / ${SCRIPT_MAX} B`;
   counter.classList.toggle('over', bytes > SCRIPT_MAX);
@@ -216,7 +241,7 @@ async function syncTime() {
 }
 
 async function pushTemplate() {
-  const body = compile($('editor').value);
+  const { body } = compile($('editor').value);
   const bytes = new TextEncoder().encode(body).length;
 
   if (!bytes) { log('Nothing to push - the template is empty.', 'warn'); return; }
@@ -241,6 +266,45 @@ async function pushTemplate() {
   log(`Pushed ${bytes} bytes. The panel refreshes ~0.4 s after the last `
     + 'byte, then takes about 2 s.', 'ok');
   render();
+  /* RESET() is always prepended and TIME() sometimes is; neither is stored, so
+   * both shift the tag's line numbering relative to the editor's. */
+  reportTagStatus(0);
+}
+
+/**
+ * Ask the tag what it made of the face, once it has had time to render it.
+ *
+ * The preview's own warnings come from a port of the parser; this comes from
+ * the parser. When they disagree the tag is right by definition, and saying so
+ * is more useful than either one alone - a face can look correct in the
+ * preview and still have a line the tag skipped.
+ *
+ * Deliberately not awaited by pushScript(): a tag too old to have the status
+ * characteristic, or a link that drops during the refresh, must not turn a
+ * successful push into a failed one.
+ */
+async function reportTagStatus(dropped) {
+  /* The flush timer is 400 ms and the refresh about 2 s; the report is written
+   * at the start of the render, so waiting for the flush is enough. */
+  await new Promise((r) => setTimeout(r, FLUSH_DELAY_MS + 400));
+  let st;
+  try {
+    st = await tag.readStatus();
+  } catch (err) {
+    log(`Could not read the tag's render status: ${err.message}`, 'dim');
+    return;
+  }
+  if (!st) return;                      /* firmware predates the status char */
+
+  if (st.code === 0 && !st.count) {
+    log(`The tag rendered all ${st.scriptLen} bytes with no complaints.`, 'ok');
+    return;
+  }
+  const ln = editorLine(st.line, dropped);
+  const where = ln ? ` at line ${ln}`
+              : st.line ? ` at stored line ${st.line}` : '';
+  const more = st.count > 1 ? ` (and ${st.count - 1} more)` : '';
+  log(`The tag reports: ${st.message}${where}${more}.`, 'warn');
 }
 
 async function pushImage() {
