@@ -56,12 +56,32 @@ JLinkExe -CommanderScript "$SCRIPT" | tee "$LOG"
 
 # JLinkExe exits 0 even when it never reached the probe, so `set -e` cannot see
 # a flash that was never written - it just prints "FAILED: Cannot connect" for
-# every command and returns success. Check what it printed instead: loadbin
-# ends with a bare "O.K." line only when its own program+verify passed, which
-# is the one readback path on this board that can be trusted (see the note on
-# verifybin in docs). Without this the script cheerfully claims "Programmed."
-# over a tag it never touched.
-if ! grep -q '^O\.K\.' "$LOG"; then
+# every command and returns success. So the log has to be checked instead.
+#
+# A bare "^O.K." is NOT enough on its own, though this script used to accept it:
+# J-Link prints one for `connect` too, so a run whose loadbin died with
+# "Failed to download RAMCode!" still matched and the script cheerfully
+# reported "Programmed." over a tag whose flash was untouched. That cost an
+# afternoon of testing a build that was never on the tag, and every symptom
+# pointed at the firmware rather than at the flasher.
+#
+# Require positive evidence of programming, and treat J-Link's own error lines
+# as fatal regardless of what else it said.
+if grep -qE '^\*+ Error:|Failed to (download|prepare|preserve|read back)' "$LOG"; then
+    echo >&2
+    echo "flash.sh: FAILED - J-Link reported an error, flash NOT written:" >&2
+    grep -E '^\*+ Error:|Failed to ' "$LOG" | sed 's/^/          /' >&2
+    echo >&2
+    echo "flash.sh: 'RAMCode' errors mean the loader could not be placed in" >&2
+    echo "          SysRAM, which it shares with the running firmware. Power-" >&2
+    echo "          cycle the tag and flash as the FIRST J-Link operation." >&2
+    exit 1
+fi
+
+# "Flash download:" is printed only when J-Link actually programmed something.
+# Note it is legitimately absent when every range already matches, so an
+# unchanged image is not a failure - hence the separate O.K. check below.
+if ! grep -q 'Flash download:' "$LOG" && ! grep -q '^O\.K\.' "$LOG"; then
     echo >&2
     echo "flash.sh: FAILED - the flash was NOT written." >&2
     if grep -q 'Cannot connect to the probe' "$LOG"; then
@@ -70,6 +90,14 @@ if ! grep -q '^O\.K\.' "$LOG"; then
         echo "          pkill -f 'JLinkGUIServer[E]xe' and retry." >&2
     fi
     exit 1
+fi
+
+if grep -q 'Flash download:' "$LOG"; then
+    echo
+    grep 'Flash download:' "$LOG" | sed 's/^/  /'
+else
+    echo
+    echo "  (no ranges programmed - the flash already held this image)"
 fi
 
 cat <<'EOF'
