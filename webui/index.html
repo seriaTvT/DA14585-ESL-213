@@ -302,11 +302,14 @@
         <tr><td>RECT(x1,y1,x2,y2,<i>color= width= fill=</i>)</td>
             <td><code>fill=1</code> for solid.</td></tr>
         <tr><td>CIRCLE(x,y,r,<i>color= width= fill=</i>)</td><td></td></tr>
-        <tr><td>FONT(x,y,'text',<i>color= bg= scale=</i>)</td>
+        <tr><td>FONT(x,y,'text',<i>color= bg= scale= align= font=</i>)</td>
             <td>One fixed-pitch 5&times;7 font so far. Glyph cell is
                 6&times;7 px times <code>scale</code>. <code>bg</code> defaults
-                to 1, so text is opaque — use <code>color=1</code> with
-                <code>bg=0</code> for white on black.</td></tr>
+                to 1, so text is opaque &mdash; use <code>color=1</code> with
+                <code>bg=0</code> for white on black.
+                <code>align=</code> moves the anchor: 0 left, 1 centre,
+                2 right. <code>font=1</code> is the 16&times;24 digits
+                (digits and <code>:</code> only; anything else is blank).</td></tr>
         <tr><td>ROTATE(r)</td><td><code>0..3</code> or <code>0/90/180/270</code>.
                 Odd values are landscape (250&times;122).</td></tr>
         <tr><td>INVERT(x,y,w,h)</td>

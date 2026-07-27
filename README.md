@@ -158,6 +158,35 @@ That is the whole of the "Month grid" preset's today-marker: the column of
 today is `{w}` by definition, and the row is how many weeks it sits from the
 1st.
 
+### Placing and sizing text
+
+`FONT` takes `align=` — `0` left (the default), `1` centre, `2` right. It moves
+the **anchor**, so `x` is whichever edge you named rather than a left edge:
+
+```
+FONT(125,20,'{H:02d}:{N:02d}',align=1)     centred on the panel's middle
+FONT(245,4,'{W}',align=2)                  right-aligned against a margin
+```
+
+Anchoring subsumes centring on the screen — that is `align=1` at `x = 125` —
+and also works for text placed against something other than the frame. The
+width is measured after `{}` expansion, because `{H:02d}:{N:02d}` is not as
+wide as `09:41`.
+
+There are two fonts, selected with `font=`:
+
+| | |
+|---|---|
+| `font=0` | 5×7, the default. Digits, uppercase, and clock punctuation. |
+| `font=1` | 16×24 digits and `:` only, drawn at that size. |
+
+`font=1` exists because `scale=5` on a 5×7 glyph is a block of 5-pixel squares
+and looks like one. A character it has no glyph for draws **blank** rather than
+falling back — two glyph sizes in one string reads as a fault, whereas a gap
+reads as one, and the preview names the character. Both fonts are ours, drawn
+as ASCII art in [`tools/font16.py`](tools/font16.py), which emits the tables
+for the firmware and the preview alike; a test fails if either drifts from it.
+
 ### How often it repaints
 
 `EVERY(n)` sets the gap between repaints, in minutes, and is stored with the

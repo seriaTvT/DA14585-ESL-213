@@ -67,19 +67,19 @@ int main(void)
     /* ---- text metrics ---------------------------------------------------
      * (6n - 1) * scale: 5 px per glyph, a 1 px gap between them, and no gap
      * after the last. webui/test.mjs pins the same numbers for the JS port. */
-    eq(epd_gfx_text_width("A", 1), 5, "one glyph at scale 1");
-    eq(epd_gfx_text_width("AB", 1), 11, "two glyphs share one gap");
-    eq(epd_gfx_text_width("HELLO", 2), 58, "five glyphs at scale 2");
-    eq(epd_gfx_text_width("09:41", 5), 145, "an HH:MM face at scale 5");
+    eq(epd_gfx_text_width("A", 1, EPD_FONT_5X7), 5, "one glyph at scale 1");
+    eq(epd_gfx_text_width("AB", 1, EPD_FONT_5X7), 11, "two glyphs share one gap");
+    eq(epd_gfx_text_width("HELLO", 2, EPD_FONT_5X7), 58, "five glyphs at scale 2");
+    eq(epd_gfx_text_width("09:41", 5, EPD_FONT_5X7), 145, "an HH:MM face at scale 5");
 
     /* The case a rendered frame cannot show. (6n - 1) alone would give
      * -scale here, and align= would shift the anchor the wrong way by it. */
-    eq(epd_gfx_text_width("", 1), 0, "empty text at scale 1");
-    eq(epd_gfx_text_width("", 6), 0, "empty text at scale 6");
+    eq(epd_gfx_text_width("", 1, EPD_FONT_5X7), 0, "empty text at scale 1");
+    eq(epd_gfx_text_width("", 6, EPD_FONT_5X7), 0, "empty text at scale 6");
 
     /* scale 0 is treated as 1 rather than collapsing the string to nothing,
      * matching epd_gfx_text() - which clamps it the same way before drawing. */
-    eq(epd_gfx_text_width("AB", 0), 11, "scale 0 draws as scale 1");
+    eq(epd_gfx_text_width("AB", 0, EPD_FONT_5X7), 11, "scale 0 draws as scale 1");
 
     /* Clamped rather than allowed to wrap. 30 glyphs at scale 255 is
      * (6*30 - 1) * 255 = 45645, which does not fit in an int16 - truncating it
@@ -87,8 +87,52 @@ int main(void)
      * of the anchor instead of harmlessly off-panel. The string has to be long
      * enough to actually overflow: 20 glyphs at 255 is 30345, which fits, and
      * a test using it passes whether or not the clamp is there. */
-    eq(epd_gfx_text_width("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX", 255), 32767,
+    eq(epd_gfx_text_width("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX", 255, EPD_FONT_5X7), 32767,
        "a width past int16 is clamped, not wrapped");
+
+    /* ---- the 16x24 font -------------------------------------------------
+     * Same rule, a wider cell: ((16 + 1)n - 1) * scale. */
+    eq(epd_gfx_text_width("0", 1, EPD_FONT_16X24), 16, "one large glyph");
+    eq(epd_gfx_text_width("00", 1, EPD_FONT_16X24), 33, "two share one gap");
+    eq(epd_gfx_text_width("09:41", 1, EPD_FONT_16X24), 84, "HH:MM, large");
+    eq(epd_gfx_text_width("09:41", 2, EPD_FONT_16X24), 168, "and at scale 2");
+    eq(epd_gfx_text_width("", 1, EPD_FONT_16X24), 0, "empty, large");
+
+    /* A large digit must actually be drawn from the large table, not the
+     * small one scaled: at scale 1 a 5x7 '8' cannot ink more than 35 px. */
+    epd_gfx_set_rotation(3);
+    epd_gfx_clear(1);
+    epd_gfx_text(0, 0, "8", 0, 1, 1, EPD_FONT_16X24);
+    int big8 = ink();
+    epd_gfx_clear(1);
+    epd_gfx_text(0, 0, "8", 0, 1, 1, EPD_FONT_5X7);
+    int small8 = ink();
+    eq(big8 > small8 * 3, 1, "the large '8' is drawn at its own size");
+    eq(small8 <= 35, 1, "the small '8' fits a 5x7 cell");
+
+    /* Characters the large table lacks are blank, not folded down to 5x7.
+     * bg=1 on a white field means "blank" is literally no ink. */
+    epd_gfx_clear(1);
+    epd_gfx_text(0, 0, "A", 0, 1, 1, EPD_FONT_16X24);
+    eq(ink(), 0, "a letter has no large glyph and draws blank");
+
+    /* ...but the same letter is fine in the small font, so the blank above is
+     * the table's doing rather than the text never being drawn at all. */
+    epd_gfx_clear(1);
+    epd_gfx_text(0, 0, "A", 0, 1, 1, EPD_FONT_5X7);
+    eq(ink() > 0, 1, "the same letter draws in 5x7");
+
+    /* Every digit and the colon must be present and non-blank - a mistyped
+     * table entry would otherwise leave one character silently invisible. */
+    for (const char *c = "0123456789:"; *c; c++) {
+        char s[2] = { *c, '\0' };
+        epd_gfx_clear(1);
+        epd_gfx_text(0, 0, s, 0, 1, 1, EPD_FONT_16X24);
+        if (ink() == 0) {
+            printf("  FAIL large glyph '%c' is blank\n", *c);
+            failures++;
+        }
+    }
 
     /* ---- invert ---------------------------------------------------------
      * Corners in either order, which INVERT() itself cannot produce but the

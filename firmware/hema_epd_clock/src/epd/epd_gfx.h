@@ -53,20 +53,32 @@ void epd_gfx_circle(int16_t x, int16_t y, int16_t r, uint8_t color, uint8_t pix,
  * glyph cell will paint over it. */
 void epd_gfx_invert(int16_t x1, int16_t y1, int16_t x2, int16_t y2);
 
-/* Minimal built-in 5x7 ASCII font fallback - NOT the vendor's own font
- * format (that uses custom PCtoLCD2002-built glyph tables per font_id,
- * see PROTOCOL_NOTES.md section 9, which we have not reverse engineered).
- * Good enough to prove the FONT() command path end-to-end; swap in real
- * glyph tables per font_id later if pixel-identical rendering matters. */
-void epd_gfx_text(int16_t x, int16_t y, const char *text, uint8_t fore, uint8_t back, uint8_t scale);
+/* Two fonts, both ours - drawn here rather than taken from the vendor, whose
+ * format is per-font_id PCtoLCD2002 tables we never reverse engineered.
+ *
+ *   5x7    the general one: digits, uppercase, and the punctuation a clock or
+ *          calendar face needs. Scales up in whole pixels.
+ *   16x24  digits and ':' only, drawn at that size. For the case that wants
+ *          it - an HH:MM face at scale 5 on a 5x7 glyph is a block of 5px
+ *          squares and looks like one.
+ *
+ * A character the 16x24 table lacks draws blank rather than falling back to
+ * 5x7: two glyph sizes in one string reads as a fault, while a gap reads as
+ * one, and the preview names the character. */
+#define EPD_FONT_5X7    0
+#define EPD_FONT_16X24  1
 
-/* Pixel width epd_gfx_text() will occupy: (6n - 1) * scale, since each glyph
- * is 5 px plus a 1 px gap and the last gap is not drawn. 0 for empty text.
+void epd_gfx_text(int16_t x, int16_t y, const char *text, uint8_t fore,
+                  uint8_t back, uint8_t scale, uint8_t font);
+
+/* Pixel width epd_gfx_text() will occupy: ((w + 1)n - 1) * scale, where w is
+ * the font's cell width - each glyph is followed by a 1 px gap and the last
+ * gap is not drawn. 0 for empty text.
  *
  * Exists so align= can place text without the face hand-computing offsets.
  * The current faces carry arithmetic like (250 - width) / 2 worked out by hand
  * against the glyph metrics - which is silently wrong the moment those metrics
  * change, and changing them is exactly what adding a second font does. */
-int16_t epd_gfx_text_width(const char *text, uint8_t scale);
+int16_t epd_gfx_text_width(const char *text, uint8_t scale, uint8_t font);
 
 #endif // _EPD_GFX_H_

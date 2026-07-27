@@ -683,6 +683,20 @@ test('the JS renderer is byte-identical to the firmware C', { skip:
     /* Unknown align values behave as "not centre" on both sides. */
     "ROTATE(3)\nCLEAR(1)\nFONT(125,10,'ODD',align=7)\n",
 
+    /* font=1, the 16x24 digits. The two tables are generated from the same
+     * ASCII art, so a drift here means one copy was hand-patched. */
+    "ROTATE(3)\nCLEAR(1)\nFONT(4,4,'0123456789',font=1)\n",
+    "ROTATE(3)\nCLEAR(1)\nFONT(20,40,'{H:02d}:{N:02d}',font=1,scale=2)\n",
+    /* Missing glyphs draw blank on both sides rather than folding to 5x7. */
+    "ROTATE(3)\nCLEAR(1)\nFONT(4,4,'AB:12',font=1)\n",
+    /* align= over the wider cell - a shared width rule, two cell widths. */
+    "ROTATE(3)\nCLEAR(1)\nFONT(125,40,'12:34',font=1,align=1)\n",
+    "ROTATE(3)\nCLEAR(1)\nFONT(245,40,'12:34',font=1,align=2)\n",
+    /* Clipping at the far edge, where the 24-row cell runs off the bottom. */
+    "ROTATE(3)\nCLEAR(1)\nFONT(240,110,'88',font=1,scale=2)\n",
+    /* An unknown font id falls back to 5x7 on both sides. */
+    "ROTATE(3)\nCLEAR(1)\nFONT(4,4,'123',font=9)\n",
+
     /* EVERY draws nothing, but both sides must agree it is a known command -
      * if one of them warned or errored, the other's frame would still match. */
     "ROTATE(3)\nCLEAR(1)\nEVERY(60)\nFONT(4,4,'X')\n",
@@ -831,6 +845,82 @@ test('the repaint interval does not leak between scripts', { skip:
   assert.equal(after(['CLEAR(1)\nEVERY(1440)\n', 'CLEAR(1)\n']), 1,
     'the firmware kept the previous face\'s interval');
   assert.equal(after(['CLEAR(1)\nEVERY(1440)\n', 'CLEAR(1)\nEVERY(30)\n']), 30);
+});
+
+const FONT_TOOL = join(HERE, '../tools/font16.py');
+
+test('both copies of the 16x24 table match the generator', { skip:
+      existsSync(FONT_TOOL) ? false : 'tools/font16.py is missing'
+    }, () => {
+  /* The table exists twice - once in the firmware, once here - because the
+   * preview has to draw what the panel draws. Both are generated from the
+   * ASCII art in tools/font16.py, and the only way that stays true is if
+   * something checks. A hand-patched copy would show up as a preview that
+   * disagrees with the tag about the shape of a digit, which is exactly the
+   * class of bug the whole parity harness exists to prevent.
+   *
+   * Compares the emitted text against what is actually in each file, so this
+   * fails on a stale copy as well as on an edited one. */
+  const emit = (flag) =>
+    execFileSync('python3', [FONT_TOOL, flag], { encoding: 'utf8' }).trim();
+
+  const cSrc = readFileSync(join(HERE,
+    '../firmware/hema_epd_clock/src/epd/epd_gfx.c'), 'utf8');
+  const jsSrc = readFileSync(join(HERE, 'epd.js'), 'utf8');
+
+  const cTable = /static const glyph16x24_t FONT_16X24\[\] = \{[\s\S]*?\n\};/
+    .exec(cSrc);
+  const jsTable = /const FONT16 = \{[\s\S]*?\n\};/.exec(jsSrc);
+  assert.ok(cTable, 'FONT_16X24 not found in epd_gfx.c');
+  assert.ok(jsTable, 'FONT16 not found in epd.js');
+
+  assert.equal(cTable[0], emit('--emit'),
+    'FONT_16X24 in epd_gfx.c has drifted from tools/font16.py');
+  assert.equal(jsTable[0], emit('--js'),
+    'FONT16 in epd.js has drifted from tools/font16.py');
+});
+
+test('the 16x24 font is a font, not the small one scaled up', () => {
+  const ink = (script) => {
+    const p = new Panel();
+    p.setRotation(3);
+    p.clear(1);
+    runScript(p, script, SECS);
+    let n = 0;
+    for (let y = 0; y < p.height; y++)
+      for (let x = 0; x < p.width; x++) if (!p.get(x, y)) n++;
+    return n;
+  };
+
+  /* A 5x7 '8' at scale 1 cannot ink more than 35 pixels; the large one is
+   * drawn from its own table and inks far more. */
+  const small = ink("CLEAR(1)\nFONT(4,4,'8')\n");
+  const big = ink("CLEAR(1)\nFONT(4,4,'8',font=1)\n");
+  assert.ok(small <= 35, `5x7 '8' inked ${small}, more than its cell holds`);
+  assert.ok(big > small * 3, `font=1 '8' inked ${big}, no bigger than 5x7`);
+
+  /* Width follows the wider cell: ((16 + 1)n - 1) * scale. */
+  assert.equal(textWidth(5, 1, 1), 84);
+  assert.equal(textWidth(5, 2, 1), 168);
+  assert.equal(textWidth(1, 1, 1), 16);
+  assert.equal(textWidth(0, 1, 1), 0);
+
+  /* Every digit and the colon is present. A mistyped table entry would leave
+   * one character silently invisible, which on a clock is a wrong time. */
+  for (const c of '0123456789:') {
+    assert.ok(ink(`CLEAR(1)\nFONT(4,4,'${c}',font=1)\n`) > 0,
+      `large glyph '${c}' is blank`);
+  }
+
+  /* A character the table lacks draws blank rather than folding to 5x7 - and
+   * the preview says so, since the tag cannot. */
+  assert.equal(ink("CLEAR(1)\nFONT(4,4,'A',font=1)\n"), 0);
+  const p = new Panel();
+  p.clear(1);
+  const { warnings } = runScript(p, "CLEAR(1)\nFONT(4,4,'A1',font=1)\n", SECS);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0].msg, /no glyph for 'A'/);
+  assert.ok(!/'1'/.test(warnings[0].msg), 'digits are not missing');
 });
 
 test('align= anchors text rather than centring it on the screen', () => {
