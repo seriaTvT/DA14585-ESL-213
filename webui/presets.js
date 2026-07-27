@@ -52,6 +52,21 @@ export const PRESETS = {
     `TEXT(${MID},78,'{y}-{m:02d}-{d:02d}',scale=2,align=1)\n` +
     `TEXT(${MID},100,'{W}',scale=2,align=1)\n`,
 
+  /* The face this shipped with before the 16x24 font existed, kept because
+   * the blocky 5x7 digits are a look and not only a limitation.
+   *
+   * Coordinates are the original hand-computed ones rather than align=1,
+   * which would land a pixel to the right: the old faces centred with
+   * floor((250 - 145) / 2) = 52, while align=1 at x=125 computes
+   * 125 - 145/2 = 53. Invisible in use, but this preset exists to be the old
+   * face, so it is the old face. */
+  'Classic':
+    'ROTATE(270)\n' +
+    'CLEAR(1)\n' +
+    "TEXT(52,25,'{H:02d}:{N:02d}',scale=5)\n" +
+    "TEXT(66,72,'{y}-{m:02d}-{d:02d}',scale=2)\n" +
+    "TEXT(108,94,'{W}',scale=2)\n",
+
   /* Nothing but the time, as large as the panel takes. font=1 at scale 2 is
    * 168x48 for HH:MM; scale 3 would be 252 wide against a 250 px frame, so
    * this is the ceiling rather than a preference. Centred on both axes:
@@ -60,6 +75,15 @@ export const PRESETS = {
     'ROTATE(270)\n' +
     'CLEAR(1)\n' +
     `TEXT(${MID},37,'{H:02d}:{N:02d}',font=1,scale=2,align=1)\n`,
+
+  /* The old big clock: 5x7 at scale 7 is 203 px wide against font=1 scale 2's
+   * 168, so this is still the widest HH:MM available - just a coarser one.
+   * Original offsets again, for the same reason as Classic above. */
+  'Classic big clock':
+    'ROTATE(270)\n' +
+    'CLEAR(1)\n' +
+    "TEXT(23,22,'{H:02d}:{N:02d}',scale=7)\n" +
+    "TEXT(42,88,'{W} {y}-{m:02d}-{d:02d}',scale=2)\n",
 
   'Inverted':
     'ROTATE(270)\n' +
