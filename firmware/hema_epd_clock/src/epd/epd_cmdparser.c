@@ -173,6 +173,21 @@ static bool starts_with(const char *s, const char *prefix)
     return true;
 }
 
+/* Leading whitespace is formatting, not a typo: a face is easier to read with
+ * its blocks indented, and a DSL that silently drops an indented line is a
+ * miserable thing to author against - the tag has no way to say why nothing
+ * appeared. Skipped only for *matching*; handle_line() still stores the line
+ * as written, so the author's indentation survives a round trip through flash.
+ *
+ * Note this is the one leniency here. Command names stay case-sensitive, since
+ * {d} and {D} already mean different things and a language where the commands
+ * fold but the variables do not is worse than one that folds neither. */
+static const char *skip_ws(const char *s)
+{
+    while (*s == ' ' || *s == '\t') s++;
+    return s;
+}
+
 /* ---------------------------------------------------------------------------
  * Numeric arguments
  *
@@ -348,6 +363,8 @@ static void parse_string(const char **pp, char *out, uint16_t out_size)
 static void dispatch_line(const char *line)
 {
     const char *p;
+
+    line = skip_ws(line);
 
     if (starts_with(line, "CLEAR(")) {
         p = line + 6;
@@ -551,8 +568,12 @@ void epd_cmd_load_default(void)
  * is what the old s_first_run gate existed to prevent. */
 static void handle_line(const char *line, uint16_t len)
 {
-    if (starts_with(line, "TIME(")) {
-        const char *p = line + 5;
+    /* Matched against the indentation-stripped line, but stored below exactly
+     * as it arrived - see skip_ws(). */
+    const char *cmd = skip_ws(line);
+
+    if (starts_with(cmd, "TIME(")) {
+        const char *p = cmd + 5;
         int32_t secs = parse_int(&p);
         if (secs > 0) {
             epd_time_set((uint32_t)secs);
@@ -572,7 +593,7 @@ static void handle_line(const char *line, uint16_t len)
      * A control command rather than a timing rule on purpose: ending a batch
      * on a gap in the writes would depend on the connection interval, and a
      * slow link would split one template into several. */
-    if (starts_with(line, "RESET(")) {
+    if (starts_with(cmd, "RESET(")) {
         epd_cmd_begin_batch();
         return;
     }

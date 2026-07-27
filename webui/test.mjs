@@ -149,6 +149,47 @@ test('unimplemented commands are reported, not drawn', () => {
   assert.equal(warnings[0].line, 2);
 });
 
+test('indentation is formatting, not a syntax error', () => {
+  /* skip_ws() in the firmware. A face reads better with its blocks indented,
+   * and a line the tag silently drops is the worst thing to author against. */
+  const p = new Panel();
+  p.clear(1);
+  const { warnings } = runScript(p,
+    'ROTATE(3)\n  CLEAR(1)\n\tRECT(4,4,40,20,0,1,1)\n', SECS);
+  assert.deepEqual(warnings, []);
+  assert.equal(p.get(4, 4), 0, 'the indented RECT did not draw');
+});
+
+test('a wrong-case command says so instead of "not implemented"', () => {
+  /* Commands are case-sensitive because {d} and {D} are, so the preview has to
+   * refuse `rect(` exactly as the tag does - but a bare "not implemented" for
+   * a command that plainly exists sends the author looking in the wrong place. */
+  const p = new Panel();
+  p.clear(1);
+  const { warnings } = runScript(p, 'ROTATE(3)\nrect(4,4,40,20,0,1,1)\n', SECS);
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0].msg, /must be written RECT\(\).*case-sensitive/);
+  assert.ok(p.fb.every((b) => b === 0xff), 'a rejected command still drew');
+});
+
+test('a space before the paren is not a command', () => {
+  /* The firmware matches the literal prefix "RECT(", so "RECT (" is nothing. */
+  const p = new Panel();
+  p.clear(1);
+  const { warnings } = runScript(p, 'ROTATE(3)\nRECT (4,4,40,20,0,1,1)\n', SECS);
+  assert.equal(warnings.length, 1);
+  assert.ok(p.fb.every((b) => b === 0xff));
+});
+
+test('a bare CR ends a line, as epd_cmd_run() has it', () => {
+  const p = new Panel();
+  p.clear(1);
+  const { warnings } = runScript(p,
+    'ROTATE(3)\rCLEAR(1)\rRECT(4,4,40,20,0,1,1)\n', SECS);
+  assert.deepEqual(warnings, []);
+  assert.equal(p.get(4, 4), 0);
+});
+
 test("FONT's quoted text may contain commas", () => {
   /* The arg splitter has to respect quoting, or 'A,B' would be split into two
    * arguments and the text would silently truncate. */
@@ -412,6 +453,36 @@ test('the JS renderer is byte-identical to the firmware C', { skip:
     "ROTATE(3)\nCLEAR(1)\nPOINT(1 2,3,0,1)\nRECT(8 9,4,40,20,0,1,1)\n",
     /* Quoted text still wins over expression syntax inside it. */
     "ROTATE(3)\nCLEAR(1)\nFONT(2,2,0,0,0,1,2,'A,B (1+2)')\n",
+
+    /* Malformed *lines*, as opposed to malformed arguments above. Every one of
+     * these disagreed before it was listed here: the JS trimmed and
+     * upper-cased a line the firmware matched with a literal prefix, so an
+     * indented or lower-cased command previewed as a shape the tag ignored,
+     * and a lone CR previewed as one broken line where the tag ran two. The
+     * lesson is that the well-formed scripts above cannot catch a divergence
+     * in how a line is *recognised* - only deliberately ugly input can. */
+    "ROTATE(3)\nCLEAR(1)\n  RECT(4,4,40,20,0,1,1)\n",       /* indented */
+    "ROTATE(3)\nCLEAR(1)\n\tRECT(4,4,40,20,0,1,1)\n",       /* tab-indented */
+    "ROTATE(3)\nCLEAR(1)\nrect(4,4,40,20,0,1,1)\n",         /* wrong case */
+    "ROTATE(3)\nCLEAR(1)\nRect(4,4,40,20,0,1,1)\n",
+    "ROTATE(3)\nCLEAR(1)\nRECT (4,4,40,20,0,1,1)\n",        /* space before ( */
+    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,40,20,0,1,1)   \n",      /* trailing space */
+    "ROTATE(3)\nCLEAR(1)\rRECT(4,4,40,20,0,1,1)\n",         /* bare CR */
+    "ROTATE(3)\r\nCLEAR(1)\r\nRECT(4,4,40,20,0,1,1)\r\n",   /* CRLF */
+    "ROTATE(3)\nCLEAR(1)\n# a note\nRECT(4,4,40,20,0,1,1)\n",
+    "ROTATE(3)\n\n\nCLEAR(1)\nRECT(4,4,40,20,0,1,1)\n",     /* blank lines */
+    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,40,20,0,1,1)",           /* no final \n */
+    "ROTATE(3)\nCLEAR(1)\nRECT\nRECT(4,4,40,20,0,1,1)\n",   /* no ( at all */
+    /* A longer name that merely starts with a command's letters. Matching on
+     * "RECT" rather than "RECT(" would draw a rectangle here. */
+    "ROTATE(3)\nCLEAR(1)\nRECTANGLE(4,4,40,20,0,1,1)\n",
+    /* Too few and too many arguments: missing ones read as 0, extra ones are
+     * never read. RECT() collapses to a single pixel at the origin under the
+     * corner form - worth pinning, because it is exactly the case that becomes
+     * "draw nothing" when RECT moves to x/y/w/h. */
+    "ROTATE(3)\nCLEAR(1)\nRECT()\n",
+    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,40,20,0,1,1,9,9,9)\n",
+    "ROTATE(3)\nCLEAR(1)\nRECT(4,4,40,20,0,1,1\n",          /* unclosed */
   ];
 
   /* Both awkward dates, not one: 2027-01-01 is where {V}/{G} disagree with

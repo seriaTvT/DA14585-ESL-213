@@ -490,6 +490,12 @@ class Args {
   }
 }
 
+/* Every command dispatch_line() and handle_line() recognise. Used only to tell
+ * a case mistake ("rect(") apart from a genuinely unknown command, which are
+ * the same silent no-op on the tag but very different mistakes to make. */
+const COMMANDS = new Set(['CLEAR', 'POINT', 'LINE', 'RECT', 'CIRCLE', 'FONT',
+                          'ROTATE', 'TIME', 'RESET']);
+
 /**
  * Run a script against a panel.
  * Returns { warnings: [{line, text, msg}] } - authoring aid only; the firmware
@@ -497,7 +503,11 @@ class Args {
  */
 export function runScript(panel, script, secs) {
   const warnings = [];
-  const lines = script.split('\n');
+  /* epd_cmd_run() ends a line on '\n' *or* '\r', so a lone CR is a separator
+   * and not part of the command. Splitting on '\n' alone made the preview
+   * treat "CLEAR(1)\rRECT(...)" as one unparseable line while the tag ran
+   * both. */
+  const lines = script.split(/\r\n|[\n\r]/);
 
   /* One clock reading for the whole script, as epd_cmd_run() takes. Reading it
    * per reference would let a script that straddles a second boundary render
@@ -505,16 +515,24 @@ export function runScript(panel, script, secs) {
   const tm = tagTime(secs);
 
   lines.forEach((raw, n) => {
+    /* Leading whitespace is skipped by the firmware too (skip_ws), so an
+     * indented line runs on the tag exactly as it previews here. */
     const line = raw.trim();
+    /* The firmware has no comment syntax - a '#' line simply matches no
+     * command and is ignored. Same result, but note it still occupies script
+     * buffer on the tag. */
     if (!line || line.startsWith('#')) return;
 
-    const open = line.indexOf('(');
-    if (open < 0) {
+    /* The name must be followed *immediately* by '(': the firmware matches a
+     * literal "RECT(" prefix, so "RECT (" and "rect(" are not commands to it.
+     * Matching loosely here made the preview draw shapes the tag ignored. */
+    const m = /^([A-Za-z_]+)\(/.exec(line);
+    if (!m) {
       warnings.push({ line: n + 1, text: line, msg: 'not a command' });
       return;
     }
-    const cmd = line.slice(0, open).trim().toUpperCase();
-    const a = new Args(line.slice(open + 1), tm);
+    const cmd = m[1];                       /* case preserved, as in the C */
+    const a = new Args(line.slice(m[0].length), tm);
 
     switch (cmd) {
       case 'CLEAR':
@@ -575,7 +593,10 @@ export function runScript(panel, script, secs) {
       default:
         warnings.push({
           line: n + 1, text: line,
-          msg: `${cmd}() is not implemented - the tag will ignore it`,
+          msg: COMMANDS.has(cmd.toUpperCase())
+            ? `${cmd}() must be written ${cmd.toUpperCase()}() - commands are `
+              + 'case-sensitive, and the tag will ignore this line'
+            : `${cmd}() is not implemented - the tag will ignore it`,
         });
     }
   });
