@@ -35,18 +35,23 @@ or arbitrary images over Bluetooth.
 No IDE required — the e² studio project is only a wrapper around a makefile.
 
 **1. Get the SDK.** Download DA145xx SDK6 (6.0.22.1401) from Renesas; it is not
-redistributable, so it is not vendored here. Generate the project and drop the
-sources in:
+redistributable, so it is not vendored here. Then generate the project, which
+copies this repo's sources into the SDK tree where the build expects them:
 
 ```sh
-python3 tools/gen_e2studio_project.py --sdk /path/to/DA145xx_SDK/6.0.22.1401
+export DA1458X_SDK=~/SDK_6.0.22.1401/DA145xx_SDK/6.0.22.1401
+python3 tools/gen_e2studio_project.py
 ```
 
 **2. Build.** The makefile lives under the generated project:
 
 ```sh
-make -C <sdk>/projects/target_apps/template/hema_epd_clock/e2studio/DA14585 all -j4
+make -C "$DA1458X_SDK/projects/target_apps/template/hema_epd_clock/e2studio/DA14585" all -j4
 ```
+
+Note the build compiles from **inside the SDK tree**, not from this repo. Edit
+here, re-run the generator (or copy the changed file across), then build —
+otherwise you get a clean, successful build of unchanged code.
 
 Output is `hema_epd_clock.bin` — a raw linker image, vector table first.
 
