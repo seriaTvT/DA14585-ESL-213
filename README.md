@@ -43,6 +43,14 @@ export DA1458X_SDK=~/SDK_6.0.22.1401/DA145xx_SDK/6.0.22.1401
 python3 tools/gen_e2studio_project.py
 ```
 
+The generator also **patches one file inside the SDK** — the only place it
+does. `ldscript_DA14585_586_e2s.lds.S` writes byte counts into the startup
+copy/zero tables, but CMSIS's `__cmsis_start()` reads that field as a word
+count, so startup clears four times the memory it should. It looks harmless
+until `4 × sizeof(.bss)` runs off the top of SysRAM, at which point the tag
+hard-faults inside `Reset_Handler` before `main()` and never advertises. The
+original is kept beside it as `.lds.S.orig`; re-running the generator is safe.
+
 **2. Build.** The makefile lives under the generated project:
 
 ```sh

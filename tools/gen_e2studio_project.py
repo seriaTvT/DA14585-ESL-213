@@ -150,6 +150,66 @@ for n in ('user_profile', 'user_epd'):
 cp = cp.replace(se_anchor, se_add)
 
 open(f'{DST}/.cproject', 'w').write(cp)
+
+# ------------------------------------------------- SDK linker script fix
+#
+# This edits a file inside the SDK, which nothing else here does - but the
+# defect is in the SDK and there is nowhere else to fix it from.
+#
+# ldscript_DA14585_586_e2s.lds.S emits BYTE counts into the startup tables:
+#
+#     LONG (__bss_start__)
+#     LONG (__bss_end__ - __bss_start__)
+#
+# while the code that consumes them is CMSIS's __cmsis_start(), which
+# startup_DA14585.c reaches through __PROGRAM_START(). CMSIS declares that
+# second field as `wlen` - a WORD count - and clears the region with
+#
+#     for (i = 0; i < wlen; ++i) dest[i] = 0;
+#
+# so startup zeroes four times the bytes it was asked to. The units disagree
+# and nothing in the build notices.
+#
+# It stays invisible while the overshoot lands in RAM that nothing owns yet,
+# which is why every build up to this point ran fine. It stops being invisible
+# the moment 4 * sizeof(.bss) walks off the top of SysRAM: raising the script
+# buffer to 3072 grew .bss by 8 KiB, the zero loop reached 0x07FD8000 - one
+# byte past the 96 KiB of RAM - and the tag hard-faulted inside Reset_Handler
+# before main(), advertising nothing. The image was correct; the startup that
+# unpacked it was not.
+#
+# Round up rather than dividing exactly: every region here is ALIGN(4) or
+# better, so the +3 costs nothing and does not depend on that staying true.
+lds = f'{SDK}/sdk/common_project_files/ldscripts/ldscript_DA14585_586_e2s.lds.S'
+if not os.path.isfile(lds):
+    raise SystemExit(f'not found: {lds}')
+
+COUNTS = ('__data_end__ - __data_start__',
+          '__trng_buffer_area_zi_end__ - __trng_buffer_area_zi_start__',
+          '__bss_end__ - __bss_start__',
+          '__ret_data_end__ - __ret_data_start__')
+
+text = open(lds).read()
+fixed = 0
+for expr in COUNTS:
+    byte_count = f'LONG ({expr})'
+    word_count = f'LONG (({expr} + 3) / 4)'
+    if word_count in text:
+        continue                     # already patched; re-running is harmless
+    if byte_count not in text:
+        raise SystemExit(f'{lds}: cannot find "{byte_count}" - the SDK linker '
+                         'script differs from the one this patch was written '
+                         'against, so it needs re-checking by hand')
+    text = text.replace(byte_count, word_count)
+    fixed += 1
+
+if fixed:
+    if not os.path.exists(lds + '.orig'):
+        shutil.copy(lds, lds + '.orig')
+    open(lds, 'w').write(text)
+
 print('generated ->', DST)
 print('  .project  links:', proj.count('<link>'))
 print('  .cproject size :', len(cp))
+print(f'  ldscript       : {fixed} byte->word count(s) fixed'
+      if fixed else '  ldscript       : already fixed')
