@@ -19,7 +19,19 @@
  * with no stored face and comes up on the built-in default. */
 #define EPD_STORE_ADDR      0x03F000u
 #define EPD_STORE_SECTOR    4096u
-#define EPD_STORE_MAGIC     0x53445045u     /* "EPDS" */
+/* "EPD2". Bumped once from "EPDS" when the DSL was redesigned: the old records
+ * have no version field, so there is nothing in them to compare against, and
+ * reinterpreting their bytes under the new layout would read the old `len` as
+ * a version. Rejecting them on the magic is unambiguous instead of nearly
+ * always right. Records written from here on carry EPD_STORE_VERSION, so this
+ * value should not need to change again. */
+#define EPD_STORE_MAGIC     0x32445045u     /* "EPD2" */
+/* Revision of the *language* the stored script is written in, as opposed to
+ * the revision of this container. A face is never migrated on the tag - there
+ * is nowhere to rewrite 1 KB of text on a Cortex-M0 with this little RAM, and
+ * the host can always re-push - so a mismatch simply falls back to the
+ * built-in default face. Bump this on any breaking DSL change. */
+#define EPD_STORE_VERSION   1u
 #define EPD_STORE_MAX       1024u           /* matches CMD_SCRIPT_MAX */
 
 /* Boot-flash pins. CLK/MOSI are the panel's too; P0_5 is the panel's D/C and
@@ -31,12 +43,16 @@
 
 #define FLASH_CHIP_SIZE (256 * 1024)
 
-/* Header precedes the script in flash. Kept to 8 bytes so the whole record is
- * one page-aligned run for the page-program loop below. */
+/* Header precedes the script in flash. `reserved` is explicit rather than left
+ * to the compiler: the struct is written to flash byte for byte and read back
+ * and compared byte for byte, so an implicit padding hole would be comparing
+ * whatever the buffer happened to hold. */
 typedef struct {
     uint32_t magic;
+    uint16_t version;
     uint16_t len;
     uint16_t crc;
+    uint16_t reserved;
 } store_hdr_t;
 
 static const spi_cfg_t flash_spi_cfg = {
@@ -133,9 +149,11 @@ epd_store_res_t epd_store_save(const char *script, uint16_t len)
         return s_last_result;
     }
 
-    hdr->magic = EPD_STORE_MAGIC;
-    hdr->len   = len;
-    hdr->crc   = crc16((const uint8_t *)script, len);
+    hdr->magic    = EPD_STORE_MAGIC;
+    hdr->version  = EPD_STORE_VERSION;
+    hdr->len      = len;
+    hdr->crc      = crc16((const uint8_t *)script, len);
+    hdr->reserved = 0;
     for (uint16_t i = 0; i < len; i++) {
         s_buf[sizeof(store_hdr_t) + i] = (uint8_t)script[i];
     }
@@ -226,6 +244,12 @@ epd_store_res_t epd_store_load(char *out, uint16_t out_size, uint16_t *out_len)
         res = EPD_STORE_EMPTY;          /* erased sector - nothing saved yet */
     } else if (hdr.magic != EPD_STORE_MAGIC) {
         res = EPD_STORE_BAD_MAGIC;
+    } else if (hdr.version != EPD_STORE_VERSION) {
+        /* A face written by an older language. Not an error in any useful
+         * sense - the tag comes up on the built-in default and the host
+         * re-pushes - but distinguished from corruption so that bring-up can
+         * tell "this tag has an old face" from "this flash is failing". */
+        res = EPD_STORE_BAD_VERSION;
     } else if (hdr.len == 0 || hdr.len > EPD_STORE_MAX || hdr.len > out_size) {
         res = EPD_STORE_BAD_LEN;
     } else if (spi_flash_read_data((uint8_t *)out,

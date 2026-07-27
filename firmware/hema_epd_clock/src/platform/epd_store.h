@@ -23,15 +23,21 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-/** Result of the last epd_store_save()/epd_store_load(), for diagnostics. */
+/** Result of the last epd_store_save()/epd_store_load(), for diagnostics.
+ *
+ * Values are pinned, and new ones are appended rather than slotted in where
+ * they read best. These are looked up by eye against this header while
+ * squinting at `s_last_result` over SWD, so a note written during one bring-up
+ * session has to still mean the same thing during the next one. */
 typedef enum {
-    EPD_STORE_OK = 0,
-    EPD_STORE_EMPTY,        /* nothing stored yet (blank sector)      */
-    EPD_STORE_BAD_MAGIC,
-    EPD_STORE_BAD_LEN,
-    EPD_STORE_BAD_CRC,
-    EPD_STORE_IO_ERR,       /* the flash driver reported a failure    */
-    EPD_STORE_VERIFY_ERR,   /* written, but the read-back disagreed   */
+    EPD_STORE_OK          = 0,
+    EPD_STORE_EMPTY       = 1,  /* nothing stored yet (blank sector)       */
+    EPD_STORE_BAD_MAGIC   = 2,
+    EPD_STORE_BAD_LEN     = 3,
+    EPD_STORE_BAD_CRC     = 4,
+    EPD_STORE_IO_ERR      = 5,  /* the flash driver reported a failure     */
+    EPD_STORE_VERIFY_ERR  = 6,  /* written, but the read-back disagreed    */
+    EPD_STORE_BAD_VERSION = 7,  /* a face written by an older DSL revision */
 } epd_store_res_t;
 
 /** Write `script`/`len` to flash, then read it back and check it landed.
