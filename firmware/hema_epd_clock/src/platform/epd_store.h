@@ -54,4 +54,11 @@ epd_store_res_t epd_store_load(char *out, uint16_t out_size, uint16_t *out_len);
 /** Result of the most recent save, readable over SWD for bring-up. */
 epd_store_res_t epd_store_last_result(void);
 
+/** Result of the most recent load, likewise. Separate from the save result on
+ *  purpose: one variable holding whichever happened last cannot say which it
+ *  was, and the load is the interesting one at boot - a stale (BAD_VERSION) or
+ *  corrupt (BAD_CRC) face is invisible otherwise, since either simply brings
+ *  the tag up on the built-in default. */
+epd_store_res_t epd_store_last_load(void);
+
 #endif // _EPD_STORE_H_

@@ -74,6 +74,12 @@ static const spi_flash_cfg_t flash_cfg = {
  * they are the only window into whether a save actually worked, read over SWD.
  * s_last_stage narrows an IO error to the operation that produced it. */
 static volatile epd_store_res_t s_last_result = EPD_STORE_EMPTY;
+/* Kept apart from s_last_result rather than sharing it: a load and a save
+ * answer different questions, and one variable holding whichever happened most
+ * recently cannot say which it was. The load result is the more useful of the
+ * two at boot, since that is where a stale or corrupt face shows up - and
+ * EPD_STORE_BAD_VERSION exists precisely to be read here. */
+static volatile epd_store_res_t s_last_load = EPD_STORE_EMPTY;
 static volatile uint32_t s_last_stage;      /* 1 acquire 2 erase 3 program
                                                4 readback 5 compare 9 done  */
 static volatile uint32_t s_last_jedec;      /* JEDEC id seen on the bus      */
@@ -234,7 +240,8 @@ epd_store_res_t epd_store_load(char *out, uint16_t out_size, uint16_t *out_len)
 
     if (!flash_bus_acquire()) {
         flash_bus_release();
-        return EPD_STORE_IO_ERR;
+        s_last_load = EPD_STORE_IO_ERR;
+        return s_last_load;
     }
 
     if (spi_flash_read_data((uint8_t *)&hdr, EPD_STORE_ADDR, sizeof(hdr), &got)
@@ -264,7 +271,13 @@ epd_store_res_t epd_store_load(char *out, uint16_t out_size, uint16_t *out_len)
     }
 
     flash_bus_release();
+    s_last_load = res;
     return res;
+}
+
+epd_store_res_t epd_store_last_load(void)
+{
+    return s_last_load;
 }
 
 epd_store_res_t epd_store_last_result(void)
