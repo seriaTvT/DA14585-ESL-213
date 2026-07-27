@@ -29,7 +29,8 @@ BANK=${3:-1}
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=$(mktemp -t hema-flash-XXXXXX.bin)
 SCRIPT=$(mktemp -t hema-flash-XXXXXX.jlink)
-trap 'rm -f "$OUT" "$SCRIPT"' EXIT
+LOG=$(mktemp -t hema-flash-XXXXXX.log)
+trap 'rm -f "$OUT" "$SCRIPT" "$LOG"' EXIT
 
 for f in "$STOCK" "$FW"; do
     [ -r "$f" ] || { echo "flash.sh: cannot read $f" >&2; exit 1; }
@@ -51,7 +52,25 @@ loadbin $OUT, 0x04000000
 q
 EOF
 
-JLinkExe -CommanderScript "$SCRIPT"
+JLinkExe -CommanderScript "$SCRIPT" | tee "$LOG"
+
+# JLinkExe exits 0 even when it never reached the probe, so `set -e` cannot see
+# a flash that was never written - it just prints "FAILED: Cannot connect" for
+# every command and returns success. Check what it printed instead: loadbin
+# ends with a bare "O.K." line only when its own program+verify passed, which
+# is the one readback path on this board that can be trusted (see the note on
+# verifybin in docs). Without this the script cheerfully claims "Programmed."
+# over a tag it never touched.
+if ! grep -q '^O\.K\.' "$LOG"; then
+    echo >&2
+    echo "flash.sh: FAILED - the flash was NOT written." >&2
+    if grep -q 'Cannot connect to the probe' "$LOG"; then
+        echo "flash.sh: J-Link did not enumerate. A JLinkGUIServerExe left over" >&2
+        echo "          from an earlier failed run holds the probe; kill it with" >&2
+        echo "          pkill -f 'JLinkGUIServer[E]xe' and retry." >&2
+    fi
+    exit 1
+fi
 
 cat <<'EOF'
 
