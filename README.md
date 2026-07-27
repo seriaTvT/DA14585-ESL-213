@@ -81,6 +81,16 @@ Flashing needs the community J-Link device definition that exposes the DA14585's
 QSPI bank (`JLinkDevices.xml` plus Dialog's `jtag_programmer.axf`, installed into
 `/opt/SEGGER/JLink`). Without it `device DA14585` has no flash bank at all.
 
+**Flashing from the J-Flash GUI** is the fallback worth knowing, because it
+separates "our script is broken" from "the board will not take a program".
+Open the image as a *data file* at start address `0x04000000` (not 0 — that is
+the QSPI bank base), device DA14585, SWD.
+
+**Erase before programming.** This flash does not take a program over occupied
+sectors: skip the erase and verification fails with
+`Failed to verify @ address 0x04000008`, having silently written nothing
+useful. Erase, then program, then power-cycle.
+
 **Iterating without flashing.** For a quick edit/test loop, load straight into
 SysRAM instead — non-destructive, and it reverts on the next power cut:
 
