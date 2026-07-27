@@ -1,23 +1,36 @@
 /**
- * epd_cmdparser.h - parser for the vendor's ASCII drawing command language.
+ * epd_cmdparser.h - the tag's drawing language.
  *
- * Implements a subset of the DSL documented in
- * the vendor's own login-gated documentation, transcribed and analysed in
- * PROTOCOL_NOTES.md section 4:
- *   CLEAR, RECT, LINE, CIRCLE, POINT, FONT, ROTATE
- * plus the {} template-variable substitution engine (date/time subset) and
- * TIME(), our own extension - see epd_cmdparser.c.
- * Not yet implemented (see PROTOCOL_NOTES.md for full command list):
- *   CAL, CLOCK, TABLE, IMG, ICON, MIRROR, SHOW, INV, LET, SRAND,
- *   RANDS, DATE_OFF, TIME_OFF. Those are meaningful follow-up work, not
- *   stubbed here by accident - they need either a numeric expression
- *   evaluator or the flash-resident font/icon asset format, neither of
- *   which exists yet.
+ * A face is a short ASCII script, newline terminated, stored on the tag and
+ * re-run on a timer so that {} variables re-expand and the picture keeps up
+ * with the clock. That is what makes it a clock rather than an image.
  *
- * Commands arrive newline-terminated over the BLE command characteristic,
- * exactly as documented ("每条函数以换行符结尾"), so this parser can be fed
- * directly with the bytes from a CUSTS1_VAL_WRITE_IND on the command
- * characteristic.
+ *   CLEAR   fill the frame
+ *   POINT   LINE   RECT   CIRCLE   INVERT      geometry
+ *   TEXT    a string, in one of two fonts
+ *   ROTATE  screen orientation, in degrees
+ *   EVERY   how often to repaint
+ *   TIME    RESET                              control, applied and not stored
+ *
+ * Numeric arguments are integer expressions - + - * / %, parentheses, unary
+ * minus - and {} variables work inside them as well as inside text, so a face
+ * can draw itself rather than only label itself. Required geometry is
+ * positional; everything else is named and optional, which is what lets an
+ * option be added later without disturbing a face already on a tag.
+ *
+ * Nothing throws. A malformed expression, an unknown variable and division by
+ * zero all evaluate to 0, and an unrecognised line is skipped. A shelf label
+ * with no host in range has to keep drawing something, so it degrades to a
+ * wrong-looking face rather than a hung one - and the problems are counted
+ * and reported, so that forgiveness does not also mean silence. See the
+ * status report at the bottom of this file.
+ *
+ * The language began as a subset of the vendor's, which is where the shape of
+ * it comes from and why PROTOCOL_NOTES.md is worth reading for background.
+ * It is not that any more: the names that were actively misleading have been
+ * changed, the dead arguments dropped, and the parts of their list that this
+ * does not implement are out of scope rather than pending. Read this file for
+ * what the language is; read theirs only for where it came from.
  */
 
 #ifndef _EPD_CMDPARSER_H_

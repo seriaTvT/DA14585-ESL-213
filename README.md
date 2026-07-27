@@ -9,10 +9,17 @@ from anything but the vendor's own tooling. This repository contains firmware
 written from scratch against Renesas's official DA1458x SDK6 that takes the tag
 over completely, plus a browser control panel for driving it.
 
-**Status: phase one complete.** The firmware is programmed into the tag's SPI
-flash and boots and runs standalone — no debugger attached. It keeps time, draws
-a configurable clock face, remembers it across power cuts, and accepts new faces
+**Status: the language is its own.** The firmware is programmed into the tag's
+SPI flash and boots and runs standalone — no debugger attached. It keeps time,
+draws a configurable face, remembers it across power cuts, and accepts new faces
 or arbitrary images over Bluetooth.
+
+The drawing language and the GATT UUIDs started as the vendor's, so that their
+web tool could drive this firmware unmodified. They are ours now. That
+compatibility stopped being worth having once the language diverged: the old
+tool would still connect, still push, and produce a garbage face with nothing
+reporting a problem. It now fails to find the service instead, which is the
+honest answer.
 
 ## Hardware
 
@@ -23,12 +30,18 @@ or arbitrary images over Bluetooth.
 
 ## What the firmware does
 
-- Drives the panel directly — framebuffer, lines, rects, circles, a 5×7 font,
-  and four screen rotations.
+- Drives the panel directly — framebuffer, lines, rects, circles, pixel
+  inversion, two fonts, and four screen rotations.
+- Runs a small drawing language with integer expressions and date/time
+  variables, so a face can draw itself rather than only label itself.
 - Keeps a software clock. The DA14585 has no RTC, so a 1 Hz timer counts from a
   2000-01-01 epoch and the host sets it on connect; it resets on power loss.
-- Stores the clock face in SPI flash, so it survives a power cut.
-- Exposes two BLE services: one for the template, one for a raw image.
+- Repaints on the face's own schedule — every minute for a clock, once a day
+  for a calendar. A full panel refresh is the most expensive thing it does.
+- Stores the face in SPI flash, so it survives a power cut, and versions it so
+  a face written against an older language falls back rather than misdraws.
+- Reports what it made of a script, so a typo is visible without a debugger.
+- Exposes two BLE services: one for the face, one for a raw image.
 
 ## Building and flashing
 

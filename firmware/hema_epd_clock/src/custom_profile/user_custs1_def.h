@@ -1,26 +1,29 @@
 /**
  * user_custs1_def.h - Custom Server 1 (CUSTS1) profile database definitions.
  *
- * Defines two GATT services matching the UUIDs discovered by reverse
- * engineering the community reference firmware's companion Web Bluetooth
- * page (webpage/esl_clock.php, see PROTOCOL_NOTES.md section 7). Reusing
- * the same UUIDs means the existing esl_clock.php web tool can talk to
- * this firmware without modification.
+ * Two GATT services, both with UUIDs of our own:
  *
- *  - Command service: ASCII drawing-command text, newline terminated
- *    (see epd_cmdparser.h). UUIDs 00001f10 / 00001f1f are 16-bit UUIDs
- *    expanded into the standard Bluetooth Base UUID
- *    (0000XXXX-0000-1000-8000-00805F9B34FB).
- *  - Image service: raw 1bpp framebuffer bytes (see epd_gfx.h), full
- *    128-bit vendor-specific UUIDs.
+ *  - Command service. ASCII drawing-command text, newline terminated, plus a
+ *    read-only characteristic reporting what the last render made of it. See
+ *    epd_cmdparser.h for the language and the status layout.
+ *  - Image service. A raw 1bpp framebuffer, EPD_BUF_SIZE bytes, streamed from
+ *    the top with no header and no offset. See epd_gfx.h.
  *
- * The vendor's third, SUOTA-based OTA service (0000fef5-...) is NOT
- * implemented here - out of scope for this first pass, see
- * PROTOCOL_NOTES.md section 7.
+ * These began as the UUIDs the vendor's own web tool used, so that tool could
+ * drive this firmware unmodified. That stopped being worth having once the
+ * command language diverged: the tool would still connect and still push, and
+ * produce a garbage face with nothing reporting a problem. They are ours now,
+ * and an old client fails to find the service instead - see the note above
+ * each pair.
  *
- * UUID byte arrays below are little-endian (as transmitted over the air /
- * as the SDK's other examples store them) - i.e. the reverse of the
- * standard dashed display string.
+ * There is no OTA service. The vendor's is SUOTA-based (0000fef5-...) and
+ * flashing here goes over SWD; adding it is a decision to be taken on its own
+ * merits rather than inherited.
+ *
+ * UUID byte arrays below are little-endian (as transmitted over the air, and
+ * as the SDK's other examples store them) - i.e. the reverse of the standard
+ * dashed display string. webui/ble.js carries the same values in text order,
+ * and a test compares the two rather than trusting the transcription.
  */
 
 #ifndef _USER_CUSTS1_DEF_H_
