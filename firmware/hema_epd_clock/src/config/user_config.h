@@ -200,11 +200,27 @@ static const struct advertise_configuration user_adv_conf = {
 /// Device name
 #define USER_DEVICE_NAME        "HemaEPD-Clock"
 
-/// Panel resolution select - define EPD_PANEL_HIGH_RES (e.g. add
-/// "-DEPD_PANEL_HIGH_RES" to the project's preprocessor defines) if your
-/// tag is the 122x250 high-res variant; leave undefined for the 104x212
-/// low-res variant. See epd_ssd1680.h and PROTOCOL_NOTES.md section 2.
-// #define EPD_PANEL_HIGH_RES
+/// Panel resolution select - the 122x250 high-res panel is the default;
+/// define EPD_PANEL_LOW_RES for the 104x212 part (Type 3 tags). See
+/// epd_ssd1680.h and PROTOCOL_NOTES.md section 2.
+// #define EPD_PANEL_LOW_RES
+
+/// Board wiring select. This header is force-included ahead of every other,
+/// so defining it here settles the variant before epd_ssd1680.h picks its
+/// own default.
+///
+/// B is the Type 1 reference board: hardware SPI shared with the boot flash,
+/// and the only panel we have ever actually driven. A is the Type 2 wiring -
+/// bit-banged, disjoint from the flash - and is still unconfirmed on hardware,
+/// because the one Type 2 panel we have does not respond to its own retail
+/// firmware either.
+///
+/// Getting this wrong is silent in the worst way: the tag boots, advertises
+/// and takes connections perfectly normally, and only the panel stays dead.
+/// If a board goes quiet on the panel alone, suspect this first - it has now
+/// cost us a working tag in both directions.
+#define EPD_BOARD_VARIANT_B
+// #define EPD_BOARD_VARIANT_A
 
 /// Device name length
 #define USER_DEVICE_NAME_LEN    (sizeof(USER_DEVICE_NAME)-1)
