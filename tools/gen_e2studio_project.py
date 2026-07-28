@@ -13,8 +13,23 @@ it from Renesas and accept their licence yourself. See BUILD_AND_FLASH.md.
 """
 import os, re, shutil
 
-# Repo-relative: this script lives in <project>/tools/.
-PROJ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Repo-relative: this script lives in <repo>/tools/, and the firmware it
+# generates a project for is one level further in.
+#
+# This used to assume <project>/tools/ - correct when a copy of this script sat
+# in firmware/hema_epd_clock/tools/, wrong once it moved to the repo root. The
+# failure was not quiet: it died on a missing <repo>/src/config. But the
+# obvious recovery was to run the old in-project copy instead, and that copy
+# predates the SDK linker-script patch below - so the SDK came out unpatched
+# and the tag hard-faulted inside Reset_Handler before main(). The stale copy
+# has been deleted; this exists so nobody goes looking for it again.
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJ = os.path.join(REPO, 'firmware', 'hema_epd_clock')
+
+if not os.path.isdir(f'{PROJ}/src/config'):
+    raise SystemExit(f'not found: {PROJ}/src/config\n'
+                     'this script expects to live in <repo>/tools/ with the '
+                     'firmware under <repo>/firmware/hema_epd_clock/')
 
 SDK = os.environ.get('DA1458X_SDK')
 if not SDK:
