@@ -36,7 +36,7 @@ function monthGrid() {
      * end of the month, so the number is simply pushed off the panel and
      * clipped - February stops at 28 without a conditional. */
     const off = n >= 29 ? `+(${n}/({D}+1))*200` : '';
-    s += `TEXT(8+${dayCol(n)}*34,32+${dayRow(n)}*14${off},'${n}')\n`;
+    s += `TEXT(8+${dayCol(n)}*34,42+${dayRow(n)}*14${off},'${n}')\n`;
   }
   return s;
 }
@@ -74,7 +74,7 @@ export const PRESETS = {
   'Big clock':
     'ROTATE(270)\n' +
     'CLEAR(1)\n' +
-    `TEXT(${MID},37,'{H:02d}:{N:02d}',font=1,scale=2,align=1)\n`,
+    `TEXT(${MID},34,'{H:02d}:{N:02d}',font=1,scale=2,align=1)\n`,
 
   /* The old big clock: 5x7 at scale 7 is 203 px wide against font=1 scale 2's
    * 168, so this is still the widest HH:MM available - just a coarser one.
@@ -96,9 +96,9 @@ export const PRESETS = {
     'CLEAR(1)\n' +
     'RECT(3,3,246,118,width=2)\n' +
     'LINE(3,74,246,74)\n' +
-    `TEXT(${MID},20,'{H:02d}:{N:02d}',font=1,scale=2,align=1)\n` +
-    `TEXT(${MID},84,'{W}',scale=2,align=1)\n` +
-    `TEXT(${MID},100,'{y}-{m:02d}-{d:02d}',scale=2,align=1)\n`,
+    `TEXT(${MID},14,'{H:02d}:{N:02d}',font=1,scale=2,align=1)\n` +
+    `TEXT(${MID},81,'{W}',scale=2,align=1)\n` +
+    `TEXT(${MID},99,'{y}-{m:02d}-{d:02d}',scale=2,align=1)\n`,
 
   /* Seconds rule out the large font - it has no 'S' problem, but eight glyphs
    * at font=1 would be 271 px wide. The 5x7 font at scale 4 fits. */
@@ -114,11 +114,11 @@ export const PRESETS = {
   'Calendar':
     'ROTATE(270)\n' +
     'CLEAR(1)\n' +
-    "TEXT(10,8,'{W} {d:02d} {M} {y}',scale=2)\n" +
-    'LINE(10,30,239,30)\n' +         /* 239 = 249 - 10, so both margins match */
-    `TEXT(${MID},44,'{H:02d}:{N:02d}',font=1,scale=2,align=1)\n` +
+    "TEXT(8,8,'{W} {d:02d} {M} {y}',scale=2)\n" +
+    'LINE(8,30,239,30)\n' +         /* 239 = 249 - 10, so both margins match */
+    `TEXT(${MID},38,'{H:02d}:{N:02d}',font=1,scale=2,align=1)\n` +
     "TEXT(10,102,'WEEK {V:02d} OF {G}')\n" +
-    "TEXT(239,102,'DAY {j:03d}/{J}',align=2)\n",
+    "TEXT(235,102,'DAY {j:03d}/{J}',align=2)\n",
 
   /* Draws itself rather than just labelling itself: the fill is an expression
    * over {d} and {D}, so it grows across the month and resets on the 1st.
@@ -135,11 +135,11 @@ export const PRESETS = {
   'Month progress':
     'ROTATE(270)\n' +
     'CLEAR(1)\n' +
-    "TEXT(4,4,'{H:02d}:{N:02d}',scale=3)\n" +
-    "TEXT(4,44,'{W} {d} {M} {y}',scale=2)\n" +
+    "TEXT(12,12,'{H:02d}:{N:02d}',scale=3)\n" +
+    "TEXT(12,46,'{W} {d} {M} {y}',scale=2)\n" +
     'RECT(4,70,245,82)\n' +
     'RECT(4,70,4+{d}*241/{D},82,fill=1)\n' +
-    "TEXT(4,92,'DAY {j} OF {J}   WEEK {V}')\n",
+    "TEXT(12,94,'DAY {j} OF {J}   WEEK {V}')\n",
 
   /* A real month grid, with today boxed out.
    *
@@ -160,11 +160,11 @@ export const PRESETS = {
     'ROTATE(270)\n' +
     'CLEAR(1)\n' +
     'EVERY(1440)\n' +
-    `TEXT(${MID},2,'{M} {y}',scale=2,align=1)\n` +
-    "TEXT(8,20,'S  M  T  W  T  F  S')\n" +
-    'LINE(4,29,245,29)\n' +
+    `TEXT(${MID},10,'{M} {y}',scale=2,align=1)\n` +
+    "TEXT(8,30,'S     M    T     W     T     F    S')\n" +
+    'LINE(4,39,245,39)\n' +
     monthGrid() +
-    `INVERT(6+{w}*34,30+((${FIRST_COL}+{d}-1)/7)*14,20,13)\n`,
+    `INVERT(4+{w}*34,39+((${FIRST_COL}+{d}-1)/7)*14,20,13)\n`,
 
   /* Portrait, so the frame is 122x250 and MID does not apply - 61 is the
    * middle here. Hours and minutes stack because HH:MM will not fit across
