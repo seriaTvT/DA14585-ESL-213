@@ -203,24 +203,32 @@ static const struct advertise_configuration user_adv_conf = {
 /// Panel resolution select - the 122x250 high-res panel is the default;
 /// define EPD_PANEL_LOW_RES for the 104x212 part (Type 3 tags). See
 /// epd_ssd1680.h and PROTOCOL_NOTES.md section 2.
-// #define EPD_PANEL_LOW_RES
+#define EPD_PANEL_LOW_RES
 
 /// Board wiring select. This header is force-included ahead of every other,
 /// so defining it here settles the variant before epd_ssd1680.h picks its
 /// own default.
 ///
-/// B is the Type 1 reference board: hardware SPI shared with the boot flash,
-/// and the only panel we have ever actually driven. A is the Type 2 wiring -
-/// bit-banged, disjoint from the flash - and is still unconfirmed on hardware,
-/// because the one Type 2 panel we have does not respond to its own retail
-/// firmware either.
+/// B is the Type 1 reference board: hardware SPI shared with the boot flash.
+/// A is the Type 2 and Type 3 wiring - bit-banged, disjoint from the flash.
+///
+/// Type 3 was read straight off its own running firmware: exactly one table of
+/// eight distinct (port, pin) pairs exists in its 96 KiB of SysRAM, at
+/// 0x07FD4310, and it is P2_1 P2_2 P1_0 P0_1 P2_0 P0_7 P1_1 P2_3 - the same
+/// eight pins in the same order as Type 2's table at 0x07FD4428.
+///
+/// Do not try to tell the variants apart by sampling GPIO modes while the
+/// stock firmware boots. The bit-banged pins are only in output mode during a
+/// transfer, e-paper is bistable so a tag need not refresh at boot at all, and
+/// the pins that *are* driven early (P0_7, P2_1, P2_3) belong to both maps. It
+/// reads as variant B and is wrong.
 ///
 /// Getting this wrong is silent in the worst way: the tag boots, advertises
 /// and takes connections perfectly normally, and only the panel stays dead.
 /// If a board goes quiet on the panel alone, suspect this first - it has now
 /// cost us a working tag in both directions.
-#define EPD_BOARD_VARIANT_B
-// #define EPD_BOARD_VARIANT_A
+// #define EPD_BOARD_VARIANT_B
+#define EPD_BOARD_VARIANT_A
 
 /// Device name length
 #define USER_DEVICE_NAME_LEN    (sizeof(USER_DEVICE_NAME)-1)
