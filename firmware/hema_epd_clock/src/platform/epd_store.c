@@ -10,13 +10,20 @@
 #include "gpio.h"
 #include "arch_wdg.h"
 
-/* Last 4 KiB sector of the 256 KiB part.
+/* Last 4 KiB sector of the first 256 KiB.
  *
  * Deliberately outside everything the bootloader reads: SUOTA bank 1 is at
  * 0x002000, bank 2 at 0x014000 and the product header at 0x038000, so a
  * corrupt write here cannot cost us a bootable image. tools/mksuota.py blanks
  * this sector when it builds a flash image, so a freshly flashed tag starts
- * with no stored face and comes up on the built-in default. */
+ * with no stored face and comes up on the built-in default.
+ *
+ * The parts we have measured are 512 KiB, so this is *not* the last sector of
+ * the chip, and it deliberately stays where it is. Moving it to 0x07F000 would
+ * orphan the face on every tag already in the field, and would brick the store
+ * outright on any variant whose flash turns out to be 256 KiB - Type 3's is
+ * still unmeasured. 0x03F000 is the one address that works on both. The
+ * 0x040000-0x080000 half is untouched and free for anything that wants it. */
 #define EPD_STORE_ADDR      0x03F000u
 #define EPD_STORE_SECTOR    4096u
 /* "EPD2". Bumped once from "EPDS" when the DSL was redesigned: the old records
@@ -48,7 +55,37 @@
 #define FLASH_DI_PORT   GPIO_PORT_0
 #define FLASH_DI_PIN    GPIO_PIN_5
 
-#define FLASH_CHIP_SIZE (256 * 1024)
+/* Fallback size, used until the JEDEC id says otherwise.
+ *
+ * 256 KiB rather than the 512 KiB actually fitted, because chip_size is only
+ * ever used by the SDK as a clamp - `if (size > chip_size - address)` - so
+ * guessing low costs nothing while guessing high would let a write run off the
+ * end of a smaller part. It has to be at least 0x40000 for the store sector at
+ * 0x03F000 to be reachable at all, so this is also the smallest safe value. */
+#define FLASH_CHIP_SIZE_FALLBACK    (256u * 1024u)
+
+/* Capacity byte range we will believe, as a power of two: 64 KiB to 16 MiB.
+ * Anything outside that is a misread rather than a real part. */
+#define FLASH_CAP_SHIFT_MIN 16u
+#define FLASH_CAP_SHIFT_MAX 24u
+
+/* Third JEDEC byte is log2 of the capacity in bytes: 0x13 -> 512 KiB, which is
+ * what the 0xA14013 part fitted to every tag we have measured reports.
+ *
+ * Needed because spi_flash_auto_detect() only knows the parts in the SDK's own
+ * table and ours is not one of them - it returns SPI_FLASH_ERR_NOT_DETECTED and
+ * leaves chip_size at whatever was configured before. Deriving it here keeps us
+ * correct on tag variants whose flash nobody has measured yet, instead of
+ * carrying a hardcoded number that happens to be right for two boards. */
+static uint32_t flash_size_from_jedec(uint32_t jedec_id)
+{
+    uint32_t shift = jedec_id & 0xFFu;
+
+    if (shift < FLASH_CAP_SHIFT_MIN || shift > FLASH_CAP_SHIFT_MAX) {
+        return FLASH_CHIP_SIZE_FALLBACK;
+    }
+    return 1u << shift;
+}
 
 /* Header precedes the script in flash. `reserved` is explicit rather than left
  * to the compiler: the struct is written to flash byte for byte and read back
@@ -74,7 +111,7 @@ static const spi_cfg_t flash_spi_cfg = {
 };
 
 static const spi_flash_cfg_t flash_cfg = {
-    .chip_size = FLASH_CHIP_SIZE,
+    .chip_size = FLASH_CHIP_SIZE_FALLBACK,
 };
 
 /* volatile so LTO keeps the stores: nothing in the firmware reads these, but
@@ -90,6 +127,8 @@ static volatile epd_store_res_t s_last_load = EPD_STORE_EMPTY;
 static volatile uint32_t s_last_stage;      /* 1 acquire 2 erase 3 program
                                                4 readback 5 compare 9 done  */
 static volatile uint32_t s_last_jedec;      /* JEDEC id seen on the bus      */
+static volatile uint32_t s_last_chip_size;  /* size the SDK ended up clamping
+                                               to, derived or fallback        */
 static uint8_t         s_buf[sizeof(store_hdr_t) + EPD_STORE_MAX];
 
 /* CRC-16/CCITT. Only has to catch a torn or half-erased record, so the cheap
@@ -137,6 +176,28 @@ static bool flash_bus_acquire(void)
     uint32_t id = 0;
     spi_flash_read_jedec_id(&id);
     s_last_jedec = id;
+
+    /* dev_id is left at 0 when the part is not in the SDK's table, which is our
+     * case. Only then do we override the size: a recognised part keeps the
+     * env the SDK just wrote, because dev_index is not merely informational -
+     * spi_flash_configure_memory_protection() branches on it for the
+     * AT25xy021A - and writing our own cfg over it would zero that.
+     *
+     * Note spi_flash_enable_with_autodetect() cannot tell us this through its
+     * return value: it assigns the autodetect result to `status` and then
+     * overwrites it with the memory-protection result before returning, so a
+     * part that is not in the table still reports SPI_FLASH_ERR_OK. dev_id is
+     * the only honest signal, which is why `ok` above is not enough. */
+    s_last_chip_size = FLASH_CHIP_SIZE_FALLBACK;
+    if (ok && dev_id == 0) {
+        spi_flash_cfg_t cfg = {
+            .dev_index = 0,
+            .jedec_id  = id,
+            .chip_size = flash_size_from_jedec(id),
+        };
+        spi_flash_configure_env(&cfg);
+        s_last_chip_size = cfg.chip_size;
+    }
 
     return ok;
 }
