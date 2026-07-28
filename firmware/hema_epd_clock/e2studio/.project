@@ -565,14 +565,14 @@
 			<locationURI>$%7BPARENT-1-PROJECT_LOC%7D/src/platform/user_periph_setup.c</locationURI>
 		</link>
 		<link>
-			<name>user_platform/flash_writer.c</name>
+			<name>user_platform/epd_store.c</name>
 			<type>1</type>
-			<locationURI>$%7BPARENT-1-PROJECT_LOC%7D/src/platform/flash_writer.c</locationURI>
+			<locationURI>$%7BPARENT-1-PROJECT_LOC%7D/src/platform/epd_store.c</locationURI>
 		</link>
 		<link>
-			<name>user_platform/flash_writer.h</name>
+			<name>user_platform/epd_store.h</name>
 			<type>1</type>
-			<locationURI>$%7BPARENT-1-PROJECT_LOC%7D/src/platform/flash_writer.h</locationURI>
+			<locationURI>$%7BPARENT-1-PROJECT_LOC%7D/src/platform/epd_store.h</locationURI>
 		</link>
 		<link>
 			<name>user_profile/user_custs1_def.c</name>

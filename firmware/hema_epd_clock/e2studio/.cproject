@@ -213,7 +213,7 @@
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_gfx.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_cmdparser.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_time.o&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;.\user_platform\flash_writer.o&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;.\user_platform\epd_store.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs_common.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs_task.o&quot;"/>
@@ -569,7 +569,7 @@
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_gfx.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_cmdparser.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_time.o&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;.\user_platform\flash_writer.o&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;.\user_platform\epd_store.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs_common.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs_task.o&quot;"/>
@@ -923,7 +923,7 @@
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_gfx.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_cmdparser.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_time.o&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;.\user_platform\flash_writer.o&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;.\user_platform\epd_store.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs_common.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs_task.o&quot;"/>
@@ -1293,7 +1293,7 @@
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_gfx.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_cmdparser.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_time.o&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;.\user_platform\flash_writer.o&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;.\user_platform\epd_store.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs_common.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs_task.o&quot;"/>
@@ -1661,7 +1661,7 @@
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_gfx.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_cmdparser.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_time.o&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;.\user_platform\flash_writer.o&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;.\user_platform\epd_store.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs_common.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\sdk_app\app_customs_task.o&quot;"/>
