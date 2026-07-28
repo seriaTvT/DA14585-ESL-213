@@ -31,6 +31,15 @@
 #include "systick.h"    // systick_wait() blocking delay
 #include "arch_wdg.h"   // wdg_reload() to survive the long refresh wait
 
+/* Stamp the board variant into the image so tools/flash.sh can check it
+ * against the variant named on its command line before programming a tag.
+ *
+ * `used` is not optional: nothing in the firmware reads this, and the build
+ * is -flto, so without it the string is dropped and the flasher would see
+ * every image as variant-less. */
+__attribute__((used))
+const char epd_board_variant_tag[] = EPD_BOARD_VARIANT_TAG;
+
 /* Pixel polarity, CONFIRMED ON HARDWARE (2026-07-25).
  *
  * Our framebuffer uses 1 = white / 0 = black (matching the vendor's drawing

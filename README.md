@@ -82,13 +82,19 @@ header to find two SUOTA image banks, picks the newest valid one and copies it
 to SysRAM. So the image has to be wrapped in a bank:
 
 ```sh
-tools/flash.sh <stock_dump.bin> <path/to>/hema_epd_clock.bin
+tools/flash.sh --variant <a|b> <stock_dump.bin> <path/to>/hema_epd_clock.bin
 ```
 
 That wraps the build into bank 1 (`tools/mksuota.py`), leaves the stock image in
 bank 2 as a fallback, and programs the lot with J-Link Commander. Then
 **power-cycle the tag** — an SWD reset does not re-run the bootloader's bank
 scan, so the previous image keeps running until the power actually drops.
+
+`--variant` names the board wiring and is mandatory. It is checked against a
+stamp the firmware puts in its own image, and a mismatch stops the flash before
+anything is written. Flashing the wrong variant is silent — the tag boots and
+advertises normally and only the panel stays dead — so it is worth the extra
+word every time.
 
 Flashing needs the community J-Link device definition that exposes the DA14585's
 QSPI bank (`JLinkDevices.xml` plus Dialog's `jtag_programmer.axf`, installed into

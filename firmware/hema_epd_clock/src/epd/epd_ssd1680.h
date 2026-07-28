@@ -188,6 +188,21 @@
 
 #endif  /* board variant */
 
+/* Which wiring this image was built for, as a string, so the built binary can
+ * say so out loud. tools/flash.sh reads it back out of the .bin and refuses to
+ * program a tag whose variant was not stated and matched. A wrong variant is
+ * otherwise silent - the tag boots and advertises normally and only the panel
+ * stays dead - and it has cost a working tag twice. */
+#if defined(EPD_BOARD_VARIANT_A)
+#define EPD_BOARD_VARIANT_STR   "A"
+#else
+#define EPD_BOARD_VARIANT_STR   "B"
+#endif
+
+/* Literal the flasher greps for. Kept as one contiguous string so it survives
+ * into .rodata verbatim and cannot be confused with any other text. */
+#define EPD_BOARD_VARIANT_TAG   "HEMA-BOARD-VARIANT-" EPD_BOARD_VARIANT_STR
+
 /* ------------------------------------------------------------------------
  * API
  * ---------------------------------------------------------------------- */
