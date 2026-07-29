@@ -44,6 +44,9 @@
 #include "gpio.h"
 #include "systick.h"    // systick_wait() blocking delay
 #include "arch_wdg.h"   // wdg_reload() to survive the long refresh wait
+#if EPD_TEMP_SWEEP
+#include "epd_gfx.h"    // epd_framebuffer[], the surface the sweep repaints
+#endif
 
 /* Stamp the board variant into the image so tools/flash.sh can check it
  * against the variant named on its command line before programming a tag.
@@ -420,6 +423,112 @@ int8_t epd_read_temperature(void)
 
 #endif  /* EPD_TEMP_READ */
 
+#if EPD_TEMP_SWEEP
+
+volatile int8_t   epd_sweep_asked[EPD_SWEEP_N];
+volatile int8_t   epd_sweep_echo[EPD_SWEEP_N];
+volatile uint16_t epd_sweep_ms[EPD_SWEEP_N];
+volatile uint8_t  epd_sweep_done;
+
+/* Tell the controller it is `c` degrees, whatever the sensor thinks.
+ *
+ * 0x18 <- 0x48 is external-temperature mode: the controller stops sampling
+ * its own sensor and uses the register instead. 0x1A then writes that
+ * register, and 0x22 <- 0xB1 makes it act on the new value - the same load
+ * the OTP init path does, so the waveform is reselected for the temperature
+ * we just invented.
+ *
+ * Two bytes go to 0x1A because the register is 12-bit: whole degrees in the
+ * first, fraction in the top nibble of the second. Only the first is
+ * interesting, and only the first is what the retail firmware reads back.
+ *
+ * Unlike the read side, this half is NOT something we have seen the vendor
+ * do - its driver only ever reads. 0x48 and the two-byte write are the
+ * conventional counterparts of what we did verify, which is why every step
+ * reads the value back: if the echo does not follow, the forcing is not
+ * working and no timing below means anything.
+ */
+static void epd_force_temperature(int8_t c)
+{
+    epd_write_cmd(0x18);
+    epd_write_data(0x48);        /* external / register-supplied */
+
+    epd_write_cmd(0x1A);
+    epd_write_data((uint8_t)c);  /* whole degrees, signed */
+    epd_write_data(0x00);        /* fraction, top nibble - unused */
+
+    epd_write_cmd(0x22);
+    epd_write_data(0xB1);        /* load temperature + LUT, do not display */
+    epd_write_cmd(0x20);
+    epd_wait_busy();
+}
+
+/* Time one refresh at a forced temperature, in milliseconds.
+ *
+ * Deliberately blocking and deliberately not the app's 50 ms poll timer: this
+ * is measuring, and 50 ms of quantisation is coarse next to the ~650 ms
+ * difference two panels showed at the same temperature. The watchdog is
+ * reloaded the way epd_wait_busy() does, since a refresh outlasts it. */
+static uint16_t epd_time_one_refresh(void)
+{
+    uint16_t ms = 0;
+
+    epd_display_start(epd_framebuffer);
+
+    /* Cap well past any plausible waveform so a panel that never releases
+     * BUSY ends the step instead of the sweep. */
+    while (epd_display_busy() && ms < 10000u) {
+        epd_delay_ms(1);
+        ms++;
+        wdg_reload(0xFF);
+    }
+    return ms;
+}
+
+void epd_temp_sweep(void)
+{
+    uint32_t i;
+
+    epd_sweep_done = 0;
+
+    for (i = 0; i < EPD_SWEEP_N; i++) {
+        int8_t t = (int8_t)(EPD_SWEEP_FIRST + (int)i * EPD_SWEEP_STEP);
+        uint32_t b;
+
+        epd_force_temperature(t);
+
+        epd_sweep_asked[i] = t;
+
+        /* Straight back out of the register, so the timing on this row can be
+         * trusted or discarded on its own merits. */
+        epd_write_cmd(0x1B);
+        epd_sweep_echo[i] = (int8_t)epd_read_byte(INPUT);
+
+        /* Invert the framebuffer between steps so every refresh has real work
+         * to do and the panel visibly counts through the sweep. A full update
+         * runs the whole waveform regardless of content, but identical frames
+         * would make it impossible to tell progress from a wedge. */
+        for (b = 0; b < EPD_BUF_SIZE; b++) {
+            epd_framebuffer[b] = (uint8_t)~epd_framebuffer[b];
+        }
+
+        epd_sweep_ms[i] = epd_time_one_refresh();
+    }
+
+    /* Hand the controller back its own sensor, so whatever runs afterwards is
+     * not stuck on the last value we invented. */
+    epd_write_cmd(0x18);
+    epd_write_data(0x80);
+    epd_write_cmd(0x22);
+    epd_write_data(0xB1);
+    epd_write_cmd(0x20);
+    epd_wait_busy();
+
+    epd_sweep_done = 1;
+}
+
+#endif  /* EPD_TEMP_SWEEP */
+
 #if EPD_BITBANG && EPD_PANEL_PROBE
 
 /* Is a panel actually answering?
@@ -558,6 +667,11 @@ void epd_init(bool full_lut)
      * is the number worth knowing. Reading it costs one command and one byte
      * back, and nothing downstream depends on it. */
     (void)epd_read_temperature();
+#endif
+#if EPD_TEMP_SWEEP
+    /* Last thing in init, so the panel and the bus are fully up and the sweep
+     * measures refreshes rather than bring-up. Blocks for about a minute. */
+    epd_temp_sweep();
 #endif
 #else
     const uint8_t *lut = full_lut ? epd_lut_full : epd_lut_partial;

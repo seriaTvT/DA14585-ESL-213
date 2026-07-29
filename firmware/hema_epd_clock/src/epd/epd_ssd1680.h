@@ -109,6 +109,30 @@
     #define EPD_TEMP_READ 0
 #endif
 
+/* Map the panel's OTP waveform against temperature, by lying to the
+ * controller about how warm it is.
+ *
+ * Nothing we can disassemble answers this: the firmware does not choose a
+ * waveform, it delegates (cmd 0x22 bit 4 loads the LUT the controller picks
+ * for itself), so the table lives in the PANEL's OTP and not in any image we
+ * hold. The only way to see it is from the outside.
+ *
+ * So cmd 0x18 is switched to external-temperature mode and cmd 0x1A supplies
+ * the number, which lets a whole range be swept in a minute without a fridge
+ * or a hairdryer. Each step forces a temperature, refreshes, and records how
+ * long the panel took. A STEP in those durations is an OTP band boundary.
+ *
+ * This is a bench build, not something to ship: it blocks for the whole sweep
+ * during init and it scribbles on the framebuffer. Implies EPD_TEMP_READ. */
+#if !defined(EPD_TEMP_SWEEP)
+    #define EPD_TEMP_SWEEP 0
+#endif
+
+#if EPD_TEMP_SWEEP && !EPD_TEMP_READ
+    #undef  EPD_TEMP_READ
+    #define EPD_TEMP_READ 1
+#endif
+
 /* ------------------------------------------------------------------------
  * BOARD VARIANT — set exactly one.
  *
@@ -362,6 +386,33 @@ extern volatile int8_t epd_temp_c;
  *  temperature also reloads the OTP waveform, which would overwrite the
  *  hand-written LUT that path just sent. */
 int8_t epd_read_temperature(void);
+#endif
+
+#if EPD_TEMP_SWEEP
+/** Number of steps in the sweep, and the range it covers. */
+#define EPD_SWEEP_N      16
+#define EPD_SWEEP_FIRST  (-20)   /* degrees C of step 0 */
+#define EPD_SWEEP_STEP   5
+
+/** Results, filled in by epd_temp_sweep() and read out over SWD.
+ *
+ *  epd_sweep_asked  what we wrote into the temperature register
+ *  epd_sweep_echo   what cmd 0x1B read back afterwards. MUST track `asked`,
+ *                   or the forcing did not work and the durations mean
+ *                   nothing - check this column first, before reading
+ *                   anything into the timings.
+ *  epd_sweep_ms     how long that refresh took, in ms. A step here is a band
+ *                   boundary in the panel's OTP.
+ *  epd_sweep_done   0 until the whole sweep has finished.
+ */
+extern volatile int8_t   epd_sweep_asked[EPD_SWEEP_N];
+extern volatile int8_t   epd_sweep_echo[EPD_SWEEP_N];
+extern volatile uint16_t epd_sweep_ms[EPD_SWEEP_N];
+extern volatile uint8_t  epd_sweep_done;
+
+/** Run the sweep. Blocks for the whole thing - about a minute - and leaves
+ *  the panel showing whatever the last step drew. Bench use only. */
+void epd_temp_sweep(void);
 #endif
 
 /** Push a full 1bpp framebuffer (EPD_BUF_SIZE bytes, MSB-first per row,
