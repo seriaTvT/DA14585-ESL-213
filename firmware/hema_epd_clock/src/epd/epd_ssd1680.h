@@ -105,8 +105,15 @@
  * and a stuck one look identical from the outside. That is worth knowing
  * before concluding anything from a refresh that did not speed up when the
  * tag was warmed. */
+/* On by default wherever it can work, which means the OTP path - that is the
+ * only one that may reload the temperature without destroying its own
+ * waveform. It stopped being purely a diagnostic when {T} started rendering
+ * from it, and the read has now been exercised on two tags. Set it to 0 to
+ * get the ~250 bytes back on a build that will never show a temperature.
+ *
+ * Waveshare builds cannot have it: there is no safe moment to sample. */
 #if !defined(EPD_TEMP_READ)
-    #define EPD_TEMP_READ 0
+    #define EPD_TEMP_READ EPD_INIT_FROM_OTP
 #endif
 
 /* Map the panel's OTP waveform against temperature, by lying to the
@@ -397,6 +404,26 @@ extern volatile int8_t epd_temp_c;
  *  temperature also reloads the OTP waveform, which would overwrite the
  *  hand-written LUT that path just sent. */
 int8_t epd_read_temperature(void);
+#endif
+
+#if EPD_INIT_FROM_OTP
+/** Re-sample the sensor and reload the waveform to match.
+ *
+ *  Call before each refresh. Without it the waveform is whatever the
+ *  temperature was when the tag booted, frozen for the life of the boot -
+ *  epd_display_start() sends 0x22 = 0xC7, which displays without reloading
+ *  either. A tag that boots warm and is then put somewhere cold would keep
+ *  using the short warm waveform and under-drive every pixel, which shows up
+ *  as ghosting rather than as an error. The panel's OTP table spans 2.6x
+ *  between its cold and warm plateaus, so this is not a small effect.
+ *
+ *  OTP builds only. On the Waveshare path the same load would pull the OTP
+ *  waveform back over the hand-written LUT.
+ *
+ *  Costs one command pair and a BUSY wait against a refresh of seconds. Also
+ *  refreshes epd_temp_c when EPD_TEMP_READ is on, which is what makes a
+ *  displayed temperature current rather than a boot-time souvenir. */
+void epd_resample_temperature(void);
 #endif
 
 #if EPD_TEMP_SWEEP

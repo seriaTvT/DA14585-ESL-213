@@ -426,6 +426,28 @@ int8_t epd_read_temperature(void)
 
 #endif  /* EPD_TEMP_READ */
 
+#if EPD_INIT_FROM_OTP
+
+void epd_resample_temperature(void)
+{
+    /* Exactly what epd_init() does, factored out so a refresh can repeat it.
+     * 0xB1 = enable clock, load temperature, load LUT - and notably NOT
+     * display, so this is safe to run immediately before pushing a frame. */
+    epd_write_cmd(0x18);
+    epd_write_data(0x80);   /* the controller's internal sensor */
+
+    epd_write_cmd(0x22);
+    epd_write_data(0xB1);
+    epd_write_cmd(0x20);    /* Master Activation */
+    epd_wait_busy();
+
+#if EPD_TEMP_READ
+    (void)epd_read_temperature();
+#endif
+}
+
+#endif  /* EPD_INIT_FROM_OTP */
+
 #if EPD_TEMP_SWEEP
 
 volatile int8_t   epd_sweep_asked[EPD_SWEEP_N];
@@ -653,24 +675,11 @@ void epd_init(bool full_lut)
     epd_write_cmd(0x3C);    /* Border Waveform Control */
     epd_write_data(0x01);
 
-    epd_write_cmd(0x18);    /* Temperature Sensor Control */
-    epd_write_data(0x80);   /* use the controller's internal sensor */
-
-    /* Load the temperature reading and the OTP waveform now, before any RAM
-     * write. 0xB1 = enable clock, load temperature, load LUT - note it does
-     * NOT display, unlike the 0xC7 epd_display_start() sends later. */
-    epd_write_cmd(0x22);
-    epd_write_data(0xB1);
-    epd_write_cmd(0x20);    /* Master Activation */
-    epd_wait_busy();
-
-#if EPD_TEMP_READ
-    /* Here and only here: the sensor has just been sampled and the register
-     * holds the value the controller went on to pick its waveform with, which
-     * is the number worth knowing. Reading it costs one command and one byte
-     * back, and nothing downstream depends on it. */
-    (void)epd_read_temperature();
-#endif
+    /* Select the sensor, load the temperature, load the OTP waveform for it -
+     * and read the value back if we were built to. Shared with every later
+     * refresh, which repeats it so the waveform tracks the temperature rather
+     * than being frozen at whatever it was when the tag booted. */
+    epd_resample_temperature();
 #if EPD_TEMP_SWEEP
     /* Last thing in init, so the panel and the bus are fully up and the sweep
      * measures refreshes rather than bring-up. Blocks for about a minute. */

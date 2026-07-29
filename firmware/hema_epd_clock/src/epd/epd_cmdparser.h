@@ -97,6 +97,14 @@ const char *epd_cmd_script(void);
  *  face's wish, it does not keep time. */
 uint16_t epd_cmd_every_min(void);
 
+/** Supply the panel temperature that {T} renders, in whole degrees Celsius.
+ *
+ *  Call before epd_cmd_run(), since the script is expanded there. Until it has
+ *  been called at least once {T} is not a known name and renders literally, so
+ *  a face asking for a temperature on a build with no sensor says so on the
+ *  panel instead of showing a confident zero. */
+void epd_cmd_set_temp(int8_t c);
+
 /** Replace the stored script wholesale, e.g. with one restored from flash.
  *  Does not mark the script dirty - it is already persisted. */
 void epd_cmd_load_script(const char *buf, uint16_t len);
