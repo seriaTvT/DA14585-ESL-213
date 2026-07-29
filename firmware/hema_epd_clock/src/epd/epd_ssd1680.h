@@ -89,6 +89,26 @@
     #define EPD_PANEL_PROBE 0
 #endif
 
+/* Build in the controller's temperature reading. Off by default: it costs a
+ * read turnaround on a bus that is shared with the boot flash on variant B,
+ * and a working tag has no use for it yet.
+ *
+ * Why it exists: on the OTP init path the controller picks its waveform from
+ * OTP according to this sensor (cmd 0x18 selects it, cmd 0x22 bit 4 loads the
+ * result), so a sensor reading wrongly would show up as a refresh that is
+ * slow, or poor, for no visible reason. Turn this on to ask the controller
+ * what it actually thinks the temperature is, rather than inferring it from
+ * how long a refresh took.
+ *
+ * Note the vendor's own driver only changes behaviour BELOW 10 C - see
+ * epd_read_temperature() - so between about 10 C and 40 C a healthy sensor
+ * and a stuck one look identical from the outside. That is worth knowing
+ * before concluding anything from a refresh that did not speed up when the
+ * tag was warmed. */
+#if !defined(EPD_TEMP_READ)
+    #define EPD_TEMP_READ 0
+#endif
+
 /* ------------------------------------------------------------------------
  * BOARD VARIANT — set exactly one.
  *
@@ -228,6 +248,25 @@
 #define EPD_PWR_PIN      GPIO_PIN_3     /* QFN40 pin 18 */
 #endif
 
+/* Clock and data, named here only so a read can borrow them.
+ *
+ * Writing never touches these: on this variant both pads belong to the
+ * hardware SPI block (SPI_CLK_PORT / SPI_DO_PORT in user_periph_setup.h, set
+ * to PID_SPI_CLK / PID_SPI_DO), and epd_tx() goes through spi_send(). But the
+ * panel's data line is bidirectional, and reading it means taking the pads
+ * back as GPIOs for the turnaround - see epd_read_byte(). They must therefore
+ * agree with user_periph_setup.h; they are the same two pins the table above
+ * lists as SCK and SDA. */
+#ifndef EPD_SCK_PORT
+#define EPD_SCK_PORT     GPIO_PORT_0
+#define EPD_SCK_PIN      GPIO_PIN_0     /* QFN40 pin 1  */
+#endif
+
+#ifndef EPD_SDA_PORT
+#define EPD_SDA_PORT     GPIO_PORT_0
+#define EPD_SDA_PIN      GPIO_PIN_6     /* QFN40 pin 9  */
+#endif
+
 #endif  /* board variant */
 
 /* Which wiring this image was built for, as a string, so the built binary can
@@ -299,6 +338,30 @@ void epd_init(bool full_lut);
 bool epd_panel_present(void);
 extern volatile uint8_t epd_probe_pullup;
 extern volatile uint8_t epd_probe_pulldown;
+#endif
+
+#if EPD_TEMP_READ
+/** The controller's own temperature, in whole degrees Celsius, signed.
+ *
+ *  Read straight out of the temperature register (cmd 0x1B) after the
+ *  controller has sampled its internal sensor. Both the width and the units
+ *  are the vendor's: its driver reads exactly one byte here and compares it
+ *  against 10 as a signed value, so this is degrees, not sixteenths, and the
+ *  fractional low byte is left unread.
+ *
+ *  EPD_TEMP_UNREAD until epd_init() has run once. Diagnostic for now - read
+ *  it over SWD next to s_poll_count. Nothing acts on it.
+ */
+#define EPD_TEMP_UNREAD  ((int8_t)-128)
+extern volatile int8_t epd_temp_c;
+
+/** Sample the sensor and read the temperature register back.
+ *
+ *  Called at the end of epd_init() on the OTP path, where the load has just
+ *  happened anyway. Do not call it on the Waveshare path: loading the
+ *  temperature also reloads the OTP waveform, which would overwrite the
+ *  hand-written LUT that path just sent. */
+int8_t epd_read_temperature(void);
 #endif
 
 /** Push a full 1bpp framebuffer (EPD_BUF_SIZE bytes, MSB-first per row,

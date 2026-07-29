@@ -322,6 +322,104 @@ void epd_gpio_init(void)
     GPIO_ConfigurePin(EPD_PWR_PORT,  EPD_PWR_PIN,  OUTPUT, PID_GPIO, true);
 }
 
+#if (EPD_BITBANG && EPD_PANEL_PROBE) || EPD_TEMP_READ
+
+/* Clock one byte back out of the controller, MSB first.
+ *
+ * The panel's data line is bidirectional - the controller drives it during a
+ * read - so the pad has to be turned around to an input and clocked by hand.
+ * Sampled while SCK is low and advanced on the rising edge, mirroring what
+ * epd_tx() does on the way out. Both directions were read off the retail
+ * driver's own bit loops rather than assumed; its read primitive is at
+ * 0x07FC266C in the Type 3 image, and it turns the same pad around the same
+ * way through the function pointer at +0x20 of its pin table.
+ *
+ * `sda_mode` is the internal pull to hold while reading. A real read wants
+ * INPUT; epd_panel_present() deliberately reads twice with PULLUP and then
+ * PULLDOWN, which is what distinguishes "the panel drove the line" from
+ * "nobody did and it followed the pull".
+ */
+static uint8_t epd_read_byte(uint32_t sda_mode)
+{
+    uint8_t v = 0;
+
+#if !EPD_BITBANG
+    /* Variant B writes through the hardware SPI block, so its clock and data
+     * pads are PID_SPI_CLK/PID_SPI_DO and cannot be driven by hand as they
+     * stand. Borrow them as GPIOs for the turnaround and give them back at
+     * the end. CS is manual on both variants and D/C is already an output, so
+     * those need nothing. */
+    GPIO_ConfigurePin(EPD_SCK_PORT, EPD_SCK_PIN, OUTPUT, PID_GPIO, false);
+#endif
+
+    epd_cs_low();
+    GPIO_SetInactive(EPD_SCK_PORT, EPD_SCK_PIN);
+    GPIO_SetActive(EPD_DC_PORT, EPD_DC_PIN);      /* data phase */
+    GPIO_ConfigurePin(EPD_SDA_PORT, EPD_SDA_PIN,
+                      (GPIO_PUPD)sda_mode, PID_GPIO, false);
+
+    for (uint8_t i = 0; i < 8; i++) {
+        GPIO_SetInactive(EPD_SCK_PORT, EPD_SCK_PIN);
+        v = (uint8_t)((v << 1) |
+                      (GPIO_GetPinStatus(EPD_SDA_PORT, EPD_SDA_PIN) ? 1u : 0u));
+        GPIO_SetActive(EPD_SCK_PORT, EPD_SCK_PIN);
+    }
+
+#if EPD_BITBANG
+    GPIO_ConfigurePin(EPD_SDA_PORT, EPD_SDA_PIN, OUTPUT, PID_GPIO, false);
+    epd_cs_high();
+#else
+    epd_cs_high();
+    /* Back to the SPI block, exactly as set_pad_functions() configures them.
+     * Note this does NOT re-run spi_initialize(): the block itself was never
+     * touched, only which pads it reaches. */
+    GPIO_ConfigurePin(EPD_SCK_PORT, EPD_SCK_PIN, OUTPUT, PID_SPI_CLK, false);
+    GPIO_ConfigurePin(EPD_SDA_PORT, EPD_SDA_PIN, OUTPUT, PID_SPI_DO,  false);
+#endif
+    return v;
+}
+
+#endif  /* read primitive */
+
+#if EPD_TEMP_READ
+
+volatile int8_t epd_temp_c = EPD_TEMP_UNREAD;
+
+/* Ask the controller what temperature it thinks it is.
+ *
+ * This matters because of what the vendor does with the same number. Its
+ * driver (Type 3 image, the panel init at 0x07FC2FAC) sends exactly what our
+ * OTP path sends - 0x18/0x80 to select the internal sensor, then 0x22/0xB1 to
+ * load the temperature and the OTP waveform - and then reads the register
+ * back with 0x1B. It takes ONE byte, stores it, forces it to 0 if bit 7 is
+ * set, and compares it against 10 as a signed value. Only if it is BELOW 10
+ * does it write anything extra (0x3D, 0x3E, 0x3F).
+ *
+ * Three things follow, and they are the reason this function exists:
+ *   - the register is whole degrees Celsius, signed, in the first byte. Not
+ *     sixteenths, and the second byte is not needed;
+ *   - between about 10 C and the top of the range the vendor's own driver
+ *     does not vary at all, so a refresh that does not change when the tag is
+ *     warmed proves nothing about the sensor;
+ *   - a wrong reading is invisible from the outside, which is exactly the
+ *     class of fault worth being able to measure directly.
+ *
+ * We deliberately do NOT clamp negatives to zero the way the vendor does.
+ * That clamp exists to make its own `< 10` comparison safe; here the honest
+ * value is the useful one, and a panel below freezing is a real state.
+ */
+int8_t epd_read_temperature(void)
+{
+    /* No 0x18/0x22/0x20 here: the caller has just done it. Repeating the load
+     * on the Waveshare path would pull the OTP waveform back over the LUT
+     * that path writes by hand - see the header. */
+    epd_write_cmd(0x1B);        /* Read Temperature Register */
+    epd_temp_c = (int8_t)epd_read_byte(INPUT);
+    return epd_temp_c;
+}
+
+#endif  /* EPD_TEMP_READ */
+
 #if EPD_BITBANG && EPD_PANEL_PROBE
 
 /* Is a panel actually answering?
@@ -349,27 +447,8 @@ void epd_gpio_init(void)
 volatile uint8_t epd_probe_pullup;
 volatile uint8_t epd_probe_pulldown;
 
-static uint8_t epd_read_byte(uint32_t sda_mode)
-{
-    uint8_t v = 0;
-
-    epd_cs_low();
-    GPIO_SetInactive(EPD_SCK_PORT, EPD_SCK_PIN);
-    GPIO_SetActive(EPD_DC_PORT, EPD_DC_PIN);      /* data phase */
-    GPIO_ConfigurePin(EPD_SDA_PORT, EPD_SDA_PIN,
-                      (GPIO_PUPD)sda_mode, PID_GPIO, false);
-
-    for (uint8_t i = 0; i < 8; i++) {
-        GPIO_SetInactive(EPD_SCK_PORT, EPD_SCK_PIN);
-        v = (uint8_t)((v << 1) |
-                      (GPIO_GetPinStatus(EPD_SDA_PORT, EPD_SDA_PIN) ? 1u : 0u));
-        GPIO_SetActive(EPD_SCK_PORT, EPD_SCK_PIN);
-    }
-
-    GPIO_ConfigurePin(EPD_SDA_PORT, EPD_SDA_PIN, OUTPUT, PID_GPIO, false);
-    epd_cs_high();
-    return v;
-}
+/* epd_read_byte() now lives above, shared with EPD_TEMP_READ. It was written
+ * for this probe and is unchanged in behaviour on this variant. */
 
 bool epd_panel_present(void)
 {
@@ -472,6 +551,14 @@ void epd_init(bool full_lut)
     epd_write_data(0xB1);
     epd_write_cmd(0x20);    /* Master Activation */
     epd_wait_busy();
+
+#if EPD_TEMP_READ
+    /* Here and only here: the sensor has just been sampled and the register
+     * holds the value the controller went on to pick its waveform with, which
+     * is the number worth knowing. Reading it costs one command and one byte
+     * back, and nothing downstream depends on it. */
+    (void)epd_read_temperature();
+#endif
 #else
     const uint8_t *lut = full_lut ? epd_lut_full : epd_lut_partial;
 
