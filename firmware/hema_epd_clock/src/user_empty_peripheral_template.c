@@ -110,6 +110,18 @@ static void epd_begin_refresh(epd_queued_t what)
         return;
     }
 
+#if EPD_RESAMPLE_PER_REFRESH
+    /* Before the script runs, not after: the waveform this picks is the one
+     * this refresh will use, and epd_cmd_run() expands {T} from whatever the
+     * reading leaves behind. Doing it here rather than once at init is what
+     * keeps a tag that has been moved somewhere colder from driving every
+     * pixel with the short warm waveform. */
+    epd_resample_temperature();
+#if EPD_TEMP_READ
+    epd_cmd_set_temp(epd_temp_c);
+#endif
+#endif
+
     if (what == EPD_Q_SCRIPT) {
         if (epd_cmd_script_len() == 0) {
             return;                   /* nothing configured yet */

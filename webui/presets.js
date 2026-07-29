@@ -198,6 +198,31 @@ const HIGH = {
     "TEXT(61,108,'{N:02d}',font=1,scale=2,align=1)\n" +
     "TEXT(61,170,'{y}-{m:02d}-{d:02d}',align=1)\n" +
     "TEXT(61,186,'{W}',align=1)\n",
+
+  /* Thermometer. The tag can report its own panel temperature ({T}, whole
+   * degrees Celsius), so this face makes that the headline and keeps the clock
+   * underneath it.
+   *
+   * The glyph is drawn rather than typed: the fonts are uppercase ASCII and
+   * have no degree sign, let alone a thermometer. A filled bulb, an outlined
+   * stem with a filled column inside it, and three ticks read as one at a
+   * glance and cost five commands.
+   *
+   * {T} renders literally as "{T}" on a build with no temperature reading -
+   * see EPD_TEMP_READ - which is deliberate: it says "this tag cannot measure
+   * that" rather than showing a confident 0. */
+  'Thermometer':
+    'ROTATE(270)\n' +
+    'CLEAR(1)\n' +
+    'CIRCLE(32,98,12,color=0,fill=1)\n' +
+    'RECT(26,26,38,92,color=0,width=2,fill=0)\n' +
+    'RECT(29,55,35,92,color=0,fill=1)\n' +
+    'LINE(44,40,56,40,0,2)\n' +
+    'LINE(44,58,56,58,0,2)\n' +
+    'LINE(44,76,56,76,0,2)\n' +
+    "TEXT(165,22,'{T}C',scale=4,align=1)\n" +
+    "TEXT(165,62,'{H:02d}:{N:02d}',scale=3,align=1)\n" +
+    "TEXT(165,95,'{y}-{m:02d}-{d:02d}',scale=2,align=1)\n",
 };
 
 /* ---- low-res faces (212 x 104 landscape) -----------------------------------
@@ -318,6 +343,21 @@ const LOW = {
     "TEXT(52,92,'{N:02d}',font=1,scale=2,align=1)\n" +
     "TEXT(52,156,'{y}-{m:02d}-{d:02d}',align=1)\n" +
     "TEXT(52,169,'{W}',align=1)\n",
+
+  /* Thermometer, same idea in 212x104. The glyph shrinks and the date drops to
+   * make room: 10 characters at scale 2 is 120 px, which still goes beside a
+   * narrower thermometer, but only just. */
+  'Thermometer':
+    'ROTATE(270)\n' +
+    'CLEAR(1)\n' +
+    'CIRCLE(26,84,10,color=0,fill=1)\n' +
+    'RECT(21,22,31,78,color=0,width=2,fill=0)\n' +
+    'RECT(23,48,29,78,color=0,fill=1)\n' +
+    'LINE(36,34,46,34,0,2)\n' +
+    'LINE(36,50,46,50,0,2)\n' +
+    "TEXT(135,18,'{T}C',scale=3,align=1)\n" +
+    "TEXT(135,48,'{H:02d}:{N:02d}',scale=3,align=1)\n" +
+    "TEXT(135,80,'{y}-{m:02d}-{d:02d}',scale=2,align=1)\n",
 };
 
 /** Faces by panel key, matching PANELS in epd.js. */

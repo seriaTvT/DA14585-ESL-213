@@ -44,6 +44,9 @@
 #include "gpio.h"
 #include "systick.h"    // systick_wait() blocking delay
 #include "arch_wdg.h"   // wdg_reload() to survive the long refresh wait
+#if EPD_TEMP_SWEEP
+#include "epd_gfx.h"    // epd_framebuffer[], the surface the sweep repaints
+#endif
 
 /* Stamp the board variant into the image so tools/flash.sh can check it
  * against the variant named on its command line before programming a tag.
@@ -62,6 +65,9 @@ const char epd_panel_tag[] = EPD_PANEL_TAG;
 
 __attribute__((used))
 const char hema_tag_type_tag[] = HEMA_TAG_TYPE_TAG;
+
+__attribute__((used))
+const char hema_waveform_tag[] = HEMA_WAVEFORM_TAG;
 
 /* Pixel polarity, CONFIRMED ON HARDWARE (2026-07-25).
  *
@@ -322,6 +328,288 @@ void epd_gpio_init(void)
     GPIO_ConfigurePin(EPD_PWR_PORT,  EPD_PWR_PIN,  OUTPUT, PID_GPIO, true);
 }
 
+#if (EPD_BITBANG && EPD_PANEL_PROBE) || EPD_TEMP_READ
+
+/* Clock one byte back out of the controller, MSB first.
+ *
+ * The panel's data line is bidirectional - the controller drives it during a
+ * read - so the pad has to be turned around to an input and clocked by hand.
+ * Sampled while SCK is low and advanced on the rising edge, mirroring what
+ * epd_tx() does on the way out. Both directions were read off the retail
+ * driver's own bit loops rather than assumed; its read primitive is at
+ * 0x07FC266C in the Type 3 image, and it turns the same pad around the same
+ * way through the function pointer at +0x20 of its pin table.
+ *
+ * `sda_mode` is the internal pull to hold while reading. A real read wants
+ * INPUT; epd_panel_present() deliberately reads twice with PULLUP and then
+ * PULLDOWN, which is what distinguishes "the panel drove the line" from
+ * "nobody did and it followed the pull".
+ */
+static uint8_t epd_read_byte(uint32_t sda_mode)
+{
+    uint8_t v = 0;
+
+#if !EPD_BITBANG
+    /* Variant B writes through the hardware SPI block, so its clock and data
+     * pads are PID_SPI_CLK/PID_SPI_DO and cannot be driven by hand as they
+     * stand. Borrow them as GPIOs for the turnaround and give them back at
+     * the end. CS is manual on both variants and D/C is already an output, so
+     * those need nothing. */
+    GPIO_ConfigurePin(EPD_SCK_PORT, EPD_SCK_PIN, OUTPUT, PID_GPIO, false);
+#endif
+
+    epd_cs_low();
+    GPIO_SetInactive(EPD_SCK_PORT, EPD_SCK_PIN);
+    GPIO_SetActive(EPD_DC_PORT, EPD_DC_PIN);      /* data phase */
+    GPIO_ConfigurePin(EPD_SDA_PORT, EPD_SDA_PIN,
+                      (GPIO_PUPD)sda_mode, PID_GPIO, false);
+
+    for (uint8_t i = 0; i < 8; i++) {
+        GPIO_SetInactive(EPD_SCK_PORT, EPD_SCK_PIN);
+        v = (uint8_t)((v << 1) |
+                      (GPIO_GetPinStatus(EPD_SDA_PORT, EPD_SDA_PIN) ? 1u : 0u));
+        GPIO_SetActive(EPD_SCK_PORT, EPD_SCK_PIN);
+    }
+
+#if EPD_BITBANG
+    GPIO_ConfigurePin(EPD_SDA_PORT, EPD_SDA_PIN, OUTPUT, PID_GPIO, false);
+    epd_cs_high();
+#else
+    epd_cs_high();
+    /* Back to the SPI block, exactly as set_pad_functions() configures them.
+     * Note this does NOT re-run spi_initialize(): the block itself was never
+     * touched, only which pads it reaches. */
+    GPIO_ConfigurePin(EPD_SCK_PORT, EPD_SCK_PIN, OUTPUT, PID_SPI_CLK, false);
+    GPIO_ConfigurePin(EPD_SDA_PORT, EPD_SDA_PIN, OUTPUT, PID_SPI_DO,  false);
+#endif
+    return v;
+}
+
+#endif  /* read primitive */
+
+#if EPD_TEMP_READ
+
+volatile int8_t epd_temp_c = EPD_TEMP_UNREAD;
+
+/* Ask the controller what temperature it thinks it is.
+ *
+ * This matters because of what the vendor does with the same number. Its
+ * driver (Type 3 image, the panel init at 0x07FC2FAC) sends exactly what our
+ * OTP path sends - 0x18/0x80 to select the internal sensor, then 0x22/0xB1 to
+ * load the temperature and the OTP waveform - and then reads the register
+ * back with 0x1B. It takes ONE byte, stores it, forces it to 0 if bit 7 is
+ * set, and compares it against 10 as a signed value. Only if it is BELOW 10
+ * does it write anything extra (0x3D, 0x3E, 0x3F).
+ *
+ * Three things follow, and they are the reason this function exists:
+ *   - the register is whole degrees Celsius, signed, in the first byte. Not
+ *     sixteenths, and the second byte is not needed;
+ *   - between about 10 C and the top of the range the vendor's own driver
+ *     does not vary at all, so a refresh that does not change when the tag is
+ *     warmed proves nothing about the sensor;
+ *   - a wrong reading is invisible from the outside, which is exactly the
+ *     class of fault worth being able to measure directly.
+ *
+ * We deliberately do NOT clamp negatives to zero the way the vendor does.
+ * That clamp exists to make its own `< 10` comparison safe; here the honest
+ * value is the useful one, and a panel below freezing is a real state.
+ */
+int8_t epd_read_temperature(void)
+{
+    /* No 0x18/0x22/0x20 here: the caller has just done it. Repeating the load
+     * on the Waveshare path would pull the OTP waveform back over the LUT
+     * that path writes by hand - see the header. */
+    epd_write_cmd(0x1B);        /* Read Temperature Register */
+    epd_temp_c = (int8_t)epd_read_byte(INPUT);
+    return epd_temp_c;
+}
+
+#endif  /* EPD_TEMP_READ */
+
+#if !EPD_INIT_FROM_OTP
+/* Install the hand-written waveform, and the five registers that only exist to
+ * go with one. Factored out of epd_init() because a temperature load overwrites
+ * all of it - see epd_resample_temperature(). */
+static void epd_load_waveshare_lut(const uint8_t *lut)
+{
+    epd_write_cmd(0x2C); /* Write VCOM Register */
+    epd_write_data(0x55);
+
+    epd_write_cmd(0x03); /* Gate driving voltage */
+    epd_write_data(lut[70]);
+
+    epd_write_cmd(0x04); /* Source driving voltage */
+    epd_write_data(lut[71]);
+    epd_write_data(lut[72]);
+    epd_write_data(lut[73]);
+
+    epd_write_cmd(0x3A); /* Dummy Line Period */
+    epd_write_data(lut[74]);
+    epd_write_cmd(0x3B); /* Gate Line Width */
+    epd_write_data(lut[75]);
+
+    epd_write_cmd(0x32); /* Write LUT Register - first 70 bytes only */
+    epd_write_data_buf(lut, 70);
+}
+#endif
+
+#if EPD_RESAMPLE_PER_REFRESH
+
+void epd_resample_temperature(void)
+{
+    /* 0xB1 = enable clock, load temperature, load LUT - and notably NOT
+     * display, so this is safe immediately before pushing a frame. */
+    epd_write_cmd(0x18);
+    epd_write_data(0x80);   /* the controller's internal sensor */
+
+    epd_write_cmd(0x22);
+#if EPD_INIT_FROM_OTP
+    /* 0xB1 - load the temperature AND the waveform that goes with it. Not
+     * negotiable on this path: reloading the LUT for the new temperature is
+     * the entire point, and 0xA1 would leave the tag on whatever waveform it
+     * booted with while still reporting a fresh number. */
+    epd_write_data(0xB1);
+#elif EPD_TEMP_LOAD_NOLUT
+    epd_write_data(0xA1);   /* temperature only; our hand-written LUT stands */
+#else
+    epd_write_data(0xB1);   /* takes the OTP LUT with it - restored below */
+#endif
+    epd_write_cmd(0x20);    /* Master Activation */
+    epd_wait_busy();
+
+#if EPD_TEMP_READ
+    (void)epd_read_temperature();
+#endif
+
+#if !EPD_INIT_FROM_OTP && !EPD_TEMP_LOAD_NOLUT
+    /* The load above also pulled the OTP waveform in over the hand-written
+     * one, because 0xB1 asks for both. Put ours back.
+     *
+     * This is why sampling on this path looked impossible at first, and it is
+     * not: the LUT is 70 bytes plus five small registers, which is microseconds
+     * of SPI against a refresh measured in seconds. Restoring is simply
+     * cheaper than avoiding.
+     *
+     * There may be a cheaper way still - if 0x22 bit 5 (load temperature) and
+     * bit 4 (load LUT) really are independent, then 0xA1 would sample without
+     * touching the waveform and this rewrite would be unnecessary. That is a
+     * datasheet claim we have never verified on this silicon, and the vendor's
+     * driver only ever sends 0xB1, so it is not assumed here. Worth testing:
+     * if a 0xA1 build keeps the Waveshare refresh duration, the bits split.
+     *
+     * Always the full-refresh table: nothing calls epd_init(false) today. */
+    epd_load_waveshare_lut(epd_lut_full);
+#endif
+}
+
+#endif  /* EPD_RESAMPLE_PER_REFRESH */
+
+#if EPD_TEMP_SWEEP
+
+volatile int8_t   epd_sweep_asked[EPD_SWEEP_N];
+volatile int8_t   epd_sweep_echo[EPD_SWEEP_N];
+volatile uint16_t epd_sweep_ms[EPD_SWEEP_N];
+volatile uint8_t  epd_sweep_done;
+
+/* Tell the controller it is `c` degrees, whatever the sensor thinks.
+ *
+ * 0x18 <- 0x48 is external-temperature mode: the controller stops sampling
+ * its own sensor and uses the register instead. 0x1A then writes that
+ * register, and 0x22 <- 0xB1 makes it act on the new value - the same load
+ * the OTP init path does, so the waveform is reselected for the temperature
+ * we just invented.
+ *
+ * Two bytes go to 0x1A because the register is 12-bit: whole degrees in the
+ * first, fraction in the top nibble of the second. Only the first is
+ * interesting, and only the first is what the retail firmware reads back.
+ *
+ * Unlike the read side, this half is NOT something we have seen the vendor
+ * do - its driver only ever reads. 0x48 and the two-byte write are the
+ * conventional counterparts of what we did verify, which is why every step
+ * reads the value back: if the echo does not follow, the forcing is not
+ * working and no timing below means anything.
+ */
+static void epd_force_temperature(int8_t c)
+{
+    epd_write_cmd(0x18);
+    epd_write_data(0x48);        /* external / register-supplied */
+
+    epd_write_cmd(0x1A);
+    epd_write_data((uint8_t)c);  /* whole degrees, signed */
+    epd_write_data(0x00);        /* fraction, top nibble - unused */
+
+    epd_write_cmd(0x22);
+    epd_write_data(0xB1);        /* load temperature + LUT, do not display */
+    epd_write_cmd(0x20);
+    epd_wait_busy();
+}
+
+/* Time one refresh at a forced temperature, in milliseconds.
+ *
+ * Deliberately blocking and deliberately not the app's 50 ms poll timer: this
+ * is measuring, and 50 ms of quantisation is coarse next to the ~650 ms
+ * difference two panels showed at the same temperature. The watchdog is
+ * reloaded the way epd_wait_busy() does, since a refresh outlasts it. */
+static uint16_t epd_time_one_refresh(void)
+{
+    uint16_t ms = 0;
+
+    epd_display_start(epd_framebuffer);
+
+    /* Cap well past any plausible waveform so a panel that never releases
+     * BUSY ends the step instead of the sweep. */
+    while (epd_display_busy() && ms < 10000u) {
+        epd_delay_ms(1);
+        ms++;
+        wdg_reload(0xFF);
+    }
+    return ms;
+}
+
+void epd_temp_sweep(void)
+{
+    uint32_t i;
+
+    epd_sweep_done = 0;
+
+    for (i = 0; i < EPD_SWEEP_N; i++) {
+        int8_t t = (int8_t)(EPD_SWEEP_FIRST + (int)i * EPD_SWEEP_STEP);
+        uint32_t b;
+
+        epd_force_temperature(t);
+
+        epd_sweep_asked[i] = t;
+
+        /* Straight back out of the register, so the timing on this row can be
+         * trusted or discarded on its own merits. */
+        epd_write_cmd(0x1B);
+        epd_sweep_echo[i] = (int8_t)epd_read_byte(INPUT);
+
+        /* Invert the framebuffer between steps so every refresh has real work
+         * to do and the panel visibly counts through the sweep. A full update
+         * runs the whole waveform regardless of content, but identical frames
+         * would make it impossible to tell progress from a wedge. */
+        for (b = 0; b < EPD_BUF_SIZE; b++) {
+            epd_framebuffer[b] = (uint8_t)~epd_framebuffer[b];
+        }
+
+        epd_sweep_ms[i] = epd_time_one_refresh();
+    }
+
+    /* Hand the controller back its own sensor, so whatever runs afterwards is
+     * not stuck on the last value we invented. */
+    epd_write_cmd(0x18);
+    epd_write_data(0x80);
+    epd_write_cmd(0x22);
+    epd_write_data(0xB1);
+    epd_write_cmd(0x20);
+    epd_wait_busy();
+
+    epd_sweep_done = 1;
+}
+
+#endif  /* EPD_TEMP_SWEEP */
+
 #if EPD_BITBANG && EPD_PANEL_PROBE
 
 /* Is a panel actually answering?
@@ -349,27 +637,8 @@ void epd_gpio_init(void)
 volatile uint8_t epd_probe_pullup;
 volatile uint8_t epd_probe_pulldown;
 
-static uint8_t epd_read_byte(uint32_t sda_mode)
-{
-    uint8_t v = 0;
-
-    epd_cs_low();
-    GPIO_SetInactive(EPD_SCK_PORT, EPD_SCK_PIN);
-    GPIO_SetActive(EPD_DC_PORT, EPD_DC_PIN);      /* data phase */
-    GPIO_ConfigurePin(EPD_SDA_PORT, EPD_SDA_PIN,
-                      (GPIO_PUPD)sda_mode, PID_GPIO, false);
-
-    for (uint8_t i = 0; i < 8; i++) {
-        GPIO_SetInactive(EPD_SCK_PORT, EPD_SCK_PIN);
-        v = (uint8_t)((v << 1) |
-                      (GPIO_GetPinStatus(EPD_SDA_PORT, EPD_SDA_PIN) ? 1u : 0u));
-        GPIO_SetActive(EPD_SCK_PORT, EPD_SCK_PIN);
-    }
-
-    GPIO_ConfigurePin(EPD_SDA_PORT, EPD_SDA_PIN, OUTPUT, PID_GPIO, false);
-    epd_cs_high();
-    return v;
-}
+/* epd_read_byte() now lives above, shared with EPD_TEMP_READ. It was written
+ * for this probe and is unchanged in behaviour on this variant. */
 
 bool epd_panel_present(void)
 {
@@ -462,16 +731,16 @@ void epd_init(bool full_lut)
     epd_write_cmd(0x3C);    /* Border Waveform Control */
     epd_write_data(0x01);
 
-    epd_write_cmd(0x18);    /* Temperature Sensor Control */
-    epd_write_data(0x80);   /* use the controller's internal sensor */
-
-    /* Load the temperature reading and the OTP waveform now, before any RAM
-     * write. 0xB1 = enable clock, load temperature, load LUT - note it does
-     * NOT display, unlike the 0xC7 epd_display_start() sends later. */
-    epd_write_cmd(0x22);
-    epd_write_data(0xB1);
-    epd_write_cmd(0x20);    /* Master Activation */
-    epd_wait_busy();
+    /* Select the sensor, load the temperature, load the OTP waveform for it -
+     * and read the value back if we were built to. Shared with every later
+     * refresh, which repeats it so the waveform tracks the temperature rather
+     * than being frozen at whatever it was when the tag booted. */
+    epd_resample_temperature();
+#if EPD_TEMP_SWEEP
+    /* Last thing in init, so the panel and the bus are fully up and the sweep
+     * measures refreshes rather than bring-up. Blocks for about a minute. */
+    epd_temp_sweep();
+#endif
 #else
     const uint8_t *lut = full_lut ? epd_lut_full : epd_lut_partial;
 
@@ -517,24 +786,7 @@ void epd_init(bool full_lut)
         epd_write_cmd(0x3C); /* Border Waveform Control */
         epd_write_data(0x03);
 
-        epd_write_cmd(0x2C); /* Write VCOM Register */
-        epd_write_data(0x55);
-
-        epd_write_cmd(0x03); /* Gate driving voltage */
-        epd_write_data(lut[70]);
-
-        epd_write_cmd(0x04); /* Source driving voltage */
-        epd_write_data(lut[71]);
-        epd_write_data(lut[72]);
-        epd_write_data(lut[73]);
-
-        epd_write_cmd(0x3A); /* Dummy Line Period */
-        epd_write_data(lut[74]);
-        epd_write_cmd(0x3B); /* Gate Line Width */
-        epd_write_data(lut[75]);
-
-        epd_write_cmd(0x32); /* Write LUT Register - first 70 bytes only */
-        epd_write_data_buf(lut, 70);
+        epd_load_waveshare_lut(lut);
 
         /* RAM address counters to the window origin (0,0) - Y increments. */
         epd_write_cmd(0x4E);

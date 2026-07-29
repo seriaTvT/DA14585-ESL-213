@@ -45,6 +45,48 @@
  * ------------------------------------------------------------------------- */
 
 static void append_uint(char *out, uint16_t out_size, uint16_t *n,
+                        uint32_t val, uint8_t width, bool zero_pad);
+
+/* Signed wrapper. Every variable was non-negative until {T} arrived, so the
+ * unsigned version below was correct by construction and the cast at the call
+ * site was invisible - a negative would have rendered as 4294967291 rather
+ * than -5. A panel below freezing is a real state (the OTP waveform table runs
+ * to -20 C), so it needs the sign.
+ *
+ * Zero padding puts the sign first, as printf("%03d", -5) does: "-05", not
+ * "0-5". The width counts the sign, so {T:03d} is three characters either way.
+ * webui/epd.js does the same; the byte-identity test covers a negative. */
+static void append_int(char *out, uint16_t out_size, uint16_t *n,
+                       int32_t val, uint8_t width, bool zero_pad)
+{
+    uint32_t mag;
+
+    if (val >= 0) {
+        append_uint(out, out_size, n, (uint32_t)val, width, zero_pad);
+        return;
+    }
+
+    /* Negated as unsigned so INT32_MIN does not overflow on the way. */
+    mag = (uint32_t)0 - (uint32_t)val;
+
+    if (zero_pad) {
+        if (*n < out_size - 1) out[(*n)++] = '-';
+        append_uint(out, out_size, n, mag, width ? width - 1 : 0, true);
+    } else {
+        char tmp[12];
+        uint8_t len = 0;
+        uint32_t v = mag;
+
+        do { tmp[len++] = (char)('0' + (v % 10)); v /= 10; }
+        while (v && len < sizeof(tmp));
+        tmp[len++] = '-';
+
+        while (len < width && len < sizeof(tmp)) tmp[len++] = ' ';
+        while (len-- > 0 && *n < out_size - 1) out[(*n)++] = tmp[len];
+    }
+}
+
+static void append_uint(char *out, uint16_t out_size, uint16_t *n,
                         uint32_t val, uint8_t width, bool zero_pad)
 {
     char tmp[12];
@@ -95,6 +137,13 @@ static uint32_t  s_now;
 #define CMD_EVERY_MAX  1440u          /* a day; longer has no useful meaning */
 static uint16_t  s_every_min = 1;
 
+/* Panel temperature for {T}, pushed in by the caller rather than read from the
+ * driver directly: this file is compiled on the host against stubs, where
+ * epd_ssd1680.c does not exist to link against. Same reason the time arrives
+ * through epd_time.c rather than through a GPIO. */
+static int8_t    s_temp_c;
+static bool      s_temp_valid;
+
 /* Value of a {} variable as a number. False for the text-valued names ({W},
  * {M}, {P}, {VER}) and for anything unrecognised. Shared by expand_vars()
  * and the expression parser, so a name cannot mean one thing inside FONT text
@@ -129,6 +178,14 @@ static bool var_num(const char *name, int32_t *out)
     /* Seconds since 2000. Fits int32 until 2068, which is well past the point
      * at which a CR2032 is the limiting factor. */
     case 'u': *out = (int32_t)s_now; return true;
+    /* Panel temperature, whole degrees Celsius, signed. Only answers once
+     * something has supplied one - see epd_cmd_set_temp(). Until then it is
+     * deliberately NOT a known name, so {T} renders as the literal "{T}" on
+     * the panel rather than as a confident 0. A face asking for a temperature
+     * on a build that cannot measure one should say so visibly; that is the
+     * same reasoning as the {L} note above. */
+    case 'T': if (!s_temp_valid) { return false; }
+              *out = s_temp_c; return true;
     default:  return false;
     }
 }
@@ -176,7 +233,7 @@ static void expand_vars(const char *in, char *out, uint16_t out_size)
         int32_t num = 0;
 
         if (nlen && var_num(name, &num)) {
-            append_uint(out, out_size, &n, (uint32_t)num, width, zero_pad);
+            append_int(out, out_size, &n, num, width, zero_pad);
         } else if (name[0]=='W' && !name[1]) {
             append_str(out, out_size, &n, WDAY_NAME[s_tm.wday % 7]);
         } else if (name[0]=='M' && !name[1]) {
@@ -1071,6 +1128,12 @@ const char *epd_cmd_script(void)
 uint16_t epd_cmd_every_min(void)
 {
     return s_every_min;
+}
+
+void epd_cmd_set_temp(int8_t c)
+{
+    s_temp_c = c;
+    s_temp_valid = true;
 }
 
 void epd_cmd_load_script(const char *buf, uint16_t len)

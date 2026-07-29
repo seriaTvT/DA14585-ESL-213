@@ -817,20 +817,29 @@ test('the JS renderer is byte-identical to the firmware C', { skip:
     const scripts = [...Object.values(PRESETS[key]), ...common];
 
     for (const secs of dates) {
+      /* Three temperatures, not one. undefined is the build with no sensor,
+       * where {T} must render literally on BOTH sides; 26 is the ordinary
+       * case; -5 is the one that matters, because it is the only variable in
+       * the language that can be negative and it broke zero-padding in both
+       * renderers when it arrived - C printed 4294967291 and JS printed
+       * "0-5" where printf gives "-05". */
+      for (const [temp, extra] of [[undefined, []], [26, ['--temp', '26']],
+                                   [-5, ['--temp', '-5']]]) {
       for (const script of scripts) {
-        const c = execFileSync(bin, [String(secs)], {
+        const c = execFileSync(bin, [String(secs), ...extra], {
           input: script, maxBuffer: 1 << 20,
         });
 
         const p = new Panel(geom);
         p.clear(1);
-        runScript(p, script, secs);
+        runScript(p, script, secs, temp);
 
         assert.equal(c.length, p.fb.length, `${key}: framebuffer sizes differ`);
         const at = c.findIndex((b, i) => b !== p.fb[i]);
         assert.equal(at, -1, at < 0 ? '' :
           `${key}: first difference at byte ${at} ` +
           `(native row ${(at / geom.wbytes) | 0}) at t=${secs} for:\n${script}`);
+      }
       }
     }
   }

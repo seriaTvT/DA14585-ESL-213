@@ -31,10 +31,23 @@ int main(int argc, char **argv)
     int want_status = (argc > 2 && strcmp(argv[2], "--status") == 0);
     int want_every  = (argc > 2 && strcmp(argv[2], "--every") == 0);
 
+    /* --temp <c> supplies what the panel's sensor would have reported, so a
+     * face using {T} can be rendered here and compared against the JS
+     * preview. Without it {T} stays an unknown name and renders literally,
+     * which is what the firmware does before anything has called
+     * epd_cmd_set_temp() - and what the JS does with no temperature. The two
+     * only agree if both are given the same value or neither is. */
+    int i;
+    for (i = 2; i + 1 < argc; i++) {
+        if (strcmp(argv[i], "--temp") == 0) {
+            epd_cmd_set_temp((int8_t)strtol(argv[i + 1], NULL, 10));
+        }
+    }
+
     if (argc < 2) {
         fprintf(stderr,
                 "usage: %s <seconds-since-2000> [--status|--every]"
-                " < script > fb.bin\n",
+                " [--temp <celsius>] < script > fb.bin\n",
                 argv[0]);
         return 2;
     }
