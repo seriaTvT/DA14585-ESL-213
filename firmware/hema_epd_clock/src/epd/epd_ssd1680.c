@@ -1,6 +1,17 @@
 /**
  * epd_ssd1680.c
  *
+ * There are two init sequences here, picked by EPD_PANEL_LOW_RES.
+ *
+ * LOW-RES (HINK-E0213A41, 104x212) takes the sequence from that tag's own
+ * retail firmware, and loads the waveform from the controller's OTP. See the
+ * comment in epd_init() and hema-local/re/type3/README.md.
+ *
+ * HIGH-RES (HINK-E0213A53, 122x250) is the Waveshare-derived path described
+ * below, with a hand-written LUT. It is the one proven on the Type 1 tag.
+ *
+ * Everything below this point describes the high-res path only.
+ *
  * Init sequence and LUT tables below now follow Waveshare's own
  * EPD_2IN13_V2 reference driver verbatim (STM32-F103ZET6/User/e-Paper/
  * EPD_2in13_V2.c, downloaded from the Baidu link the vendor's FAQ pointed
@@ -143,6 +154,17 @@ static void epd_wait_busy(void)
 
 static void epd_hw_reset(void)
 {
+#if defined(EPD_PANEL_LOW_RES)
+    /* The A41's own retail driver holds every phase for 100ms, including the
+     * low pulse - where Waveshare's is 2ms. Transcribed from the reset routine
+     * at 0x07FC3960 in the tag's stock image. */
+    GPIO_SetActive(EPD_RST_PORT, EPD_RST_PIN);
+    epd_delay_ms(100);
+    GPIO_SetInactive(EPD_RST_PORT, EPD_RST_PIN);
+    epd_delay_ms(100);
+    GPIO_SetActive(EPD_RST_PORT, EPD_RST_PIN);
+    epd_delay_ms(100);
+#else
     /* Timing matches Waveshare's EPD_2IN13_V2_Reset() exactly. */
     GPIO_SetActive(EPD_RST_PORT, EPD_RST_PIN);
     epd_delay_ms(200);
@@ -150,9 +172,15 @@ static void epd_hw_reset(void)
     epd_delay_ms(2);
     GPIO_SetActive(EPD_RST_PORT, EPD_RST_PIN);
     epd_delay_ms(200);
+#endif
 }
 
+#if !defined(EPD_PANEL_LOW_RES)
+
 /* ---- LUT tables ------------------------------------------------------------
+ * High-res (A53) panels only. The low-res A41 takes its waveform from the
+ * controller's own OTP instead and never issues cmd 0x32 - see epd_init().
+ *
  * Verbatim from Waveshare's EPD_2IN13_V2_lut_full_update /
  * EPD_2IN13_V2_lut_partial_update. Layout: bytes[0:35) are the 5 waveform
  * groups (BB/BW/WB/WW/VCOM x 7 voltage-source steps), bytes[35:70) are the
@@ -196,6 +224,8 @@ static const uint8_t epd_lut_partial[76] = {
 
     0x15,0x41,0xA8,0x32,0x30,0x0A,
 };
+
+#endif  /* !EPD_PANEL_LOW_RES */
 
 /* ---- public API ----------------------------------------------------------- */
 
@@ -246,8 +276,12 @@ void epd_gpio_init(void)
     /* Panel clock and data as plain outputs, both idle low. */
     GPIO_ConfigurePin(EPD_SCK_PORT, EPD_SCK_PIN, OUTPUT, PID_GPIO, false);
     GPIO_ConfigurePin(EPD_SDA_PORT, EPD_SDA_PIN, OUTPUT, PID_GPIO, false);
-    /* Second enable line, held high for as long as the panel is in use. The
-     * retail firmware asserts it alongside PWR and never lowers it. */
+    /* P2_2 is in the retail firmware's pin table, so we drive it as the retail
+     * firmware does - but on this board it goes nowhere. Traced on the Type 3
+     * PCB it lands on R22, an unpopulated resistor position, and stops. It was
+     * described here as a "second enable line"; that was a guess and it was
+     * wrong. Kept because driving an unconnected pad costs nothing and other
+     * board revisions may well populate R22. */
     GPIO_ConfigurePin(EPD_AUX_PORT, EPD_AUX_PIN, OUTPUT, PID_GPIO, true);
 #endif
 
@@ -278,6 +312,87 @@ void epd_gpio_init(void)
 
 void epd_init(bool full_lut)
 {
+#if defined(EPD_PANEL_LOW_RES)
+    /* Transcribed from the A41 tag's own retail firmware - the panel-init
+     * routine at 0x07FC3960/0x07FC399E in re/type3/t3_bank1_running.bin, which
+     * is the driver its 104x212 descriptor actually points at. This is the only
+     * sequence we have that is known to drive this panel.
+     *
+     * The decisive difference from the high-res path below is that it writes
+     * NO waveform. There is no cmd 0x32 anywhere on this path (nor cmd 0x2C /
+     * 0x03 / 0x04 / 0x3A / 0x3B, which only exist to tune a hand-written one):
+     * instead cmd 0x18 selects the internal temperature sensor and cmd 0x22
+     * bit 4 tells the controller to load its own factory waveform from OTP.
+     * Our Waveshare LUT is an A53 table and this panel is an A41, which is the
+     * best explanation we have for it going busy and never coming back.
+     *
+     * Partial refresh has no equivalent here yet - nothing calls epd_init(false)
+     * today, and working out the OTP path's partial mode needs a panel we can
+     * actually refresh first. */
+    (void)full_lut;
+
+    epd_hw_reset();
+    epd_write_cmd(0x12);    /* SW Reset */
+    epd_wait_busy();
+
+    /* Analog + digital block control. The retail driver sends 0x7E as a data
+     * byte of 0x74 rather than as its own command, consistently in all four of
+     * its panel drivers - so it is the vendor's idiom, not a transcription
+     * slip on our side. Kept verbatim; this is the sequence that ships. */
+    epd_write_cmd(0x74);
+    epd_write_data(0x54);
+    epd_write_data(0x7E);
+    epd_write_data(0x3B);
+
+    epd_write_cmd(0x2B);
+    epd_write_data(0x04);
+    epd_write_data(0x63);
+
+    epd_write_cmd(0x0C);    /* Booster Soft Start Control */
+    epd_write_data(0x8B);
+    epd_write_data(0x9C);
+    epd_write_data(0x96);
+    epd_write_data(0x0F);
+
+    epd_write_cmd(0x01);    /* Driver Output Control */
+    epd_write_data((EPD_HEIGHT - 1) & 0xFF);
+    epd_write_data(((EPD_HEIGHT - 1) >> 8) & 0xFF);
+    epd_write_data(0x00);
+
+    /* Data Entry Mode and the RAM Y window deliberately keep OUR orientation
+     * (Y increment, window 0..H-1) rather than the retail driver's Y-decrement.
+     * Y direction is independent of the waveform problem, epd_display_start()
+     * below already sets the Y counter to 0 to match, and this is the pairing
+     * proven right way up on the high-res tag. If the first image that appears
+     * is mirrored top-to-bottom, this is the line to revisit - but a mirrored
+     * image would already mean the panel is refreshing. */
+    epd_write_cmd(0x11);
+    epd_write_data(0x03);
+
+    epd_write_cmd(0x44);    /* RAM X window */
+    epd_write_data(0x00);
+    epd_write_data((EPD_WIDTH_BYTES - 1) & 0xFF);
+
+    epd_write_cmd(0x45);    /* RAM Y window */
+    epd_write_data(0x00);
+    epd_write_data(0x00);
+    epd_write_data((EPD_HEIGHT - 1) & 0xFF);
+    epd_write_data(((EPD_HEIGHT - 1) >> 8) & 0xFF);
+
+    epd_write_cmd(0x3C);    /* Border Waveform Control */
+    epd_write_data(0x01);
+
+    epd_write_cmd(0x18);    /* Temperature Sensor Control */
+    epd_write_data(0x80);   /* use the controller's internal sensor */
+
+    /* Load the temperature reading and the OTP waveform now, before any RAM
+     * write. 0xB1 = enable clock, load temperature, load LUT - note it does
+     * NOT display, unlike the 0xC7 epd_display_start() sends later. */
+    epd_write_cmd(0x22);
+    epd_write_data(0xB1);
+    epd_write_cmd(0x20);    /* Master Activation */
+    epd_wait_busy();
+#else
     const uint8_t *lut = full_lut ? epd_lut_full : epd_lut_partial;
 
     epd_hw_reset();
@@ -373,6 +488,7 @@ void epd_init(bool full_lut)
         epd_write_cmd(0x3C); /* Border Waveform Control */
         epd_write_data(0x01);
     }
+#endif  /* EPD_PANEL_LOW_RES */
 }
 
 bool epd_display_busy(void)

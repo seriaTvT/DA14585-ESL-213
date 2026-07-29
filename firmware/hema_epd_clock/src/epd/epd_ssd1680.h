@@ -120,8 +120,11 @@
 #define EPD_PWR_PORT     GPIO_PORT_2
 #define EPD_PWR_PIN      GPIO_PIN_3
 
-/* Second enable line. Variant B's firmware drives its P2_2 low and we leave it
- * alone there; variant A's retail firmware holds it high, so we do too. */
+/* In variant A's retail pin table and held high there, so we hold it high too -
+ * but on the Type 3 board this pad is not connected to anything: it runs to the
+ * unpopulated resistor position R22 and stops. Do not read anything into its
+ * state. (It was documented here as a "second enable line"; that was a guess,
+ * and tracing the PCB disproved it.) */
 #define EPD_AUX_PORT     GPIO_PORT_2
 #define EPD_AUX_PIN      GPIO_PIN_2
 
