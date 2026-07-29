@@ -11,7 +11,7 @@ SRC      = ../src/epd
 CFLAGS   = -std=c99 -Wall -Wextra -Werror -O1 -I stub -I $(SRC)
 
 TESTS    = test_time test_gfx
-TOOLS    = render
+TOOLS    = render render-low
 
 .PHONY: all clean render
 all: $(addprefix run-,$(TESTS))
@@ -29,8 +29,17 @@ test_gfx: test_gfx.c $(SRC)/epd_gfx.c $(SRC)/epd_gfx.h
 	$(CC) $(CFLAGS) -o $@ test_gfx.c $(SRC)/epd_gfx.c
 
 # Not part of `all`: it is a diagnostic tool, not a test. See render.c.
+#
+# Built once per panel, because the geometry is a compile-time constant and the
+# webui's byte-identity test needs to compare against whichever panel the face
+# was written for. render.c itself is geometry-clean - it writes EPD_BUF_SIZE
+# bytes, whatever that is.
 render: render.c $(SRC)/epd_cmdparser.c $(SRC)/epd_gfx.c $(SRC)/epd_time.c
 	$(CC) $(CFLAGS) -o $@ render.c \
+		$(SRC)/epd_cmdparser.c $(SRC)/epd_gfx.c $(SRC)/epd_time.c
+
+render-low: render.c $(SRC)/epd_cmdparser.c $(SRC)/epd_gfx.c $(SRC)/epd_time.c
+	$(CC) $(CFLAGS) -DEPD_PANEL_LOW_RES -o $@ render.c \
 		$(SRC)/epd_cmdparser.c $(SRC)/epd_gfx.c $(SRC)/epd_time.c
 
 clean:

@@ -1,7 +1,8 @@
 /*
  * app.js - wiring: editor -> preview -> tag.
  */
-import { Panel, runScript, paint, tagSecondsNow, tagTime } from './epd.js';
+import { Panel, runScript, paint, tagSecondsNow, tagTime,
+         PANELS, activePanel, setActivePanel } from './epd.js';
 import { PRESETS } from './presets.js';
 import { Tag, bluetoothProblem, FLUSH_DELAY_MS } from './ble.js';
 import * as Img from './image.js';
@@ -12,7 +13,10 @@ const SCRIPT_MAX = 3072;   /* CMD_SCRIPT_MAX in epd_cmdparser.c */
 const LINE_MAX   = 128;    /* CMD_LINE_MAX   */
 
 const tag = new Tag();
-const panel = new Panel();
+
+/* Rebuilt when the panel changes - a Panel is fixed to the geometry it was
+ * constructed with, so switching panels means a new one rather than a resize. */
+let panel = new Panel();
 
 /* Which pane owns the preview and the Push button. The tag can show a
  * rendered template or an uploaded image but not both - they share one
@@ -380,17 +384,68 @@ function setMode(next) {
 /* Init                                                                */
 /* ------------------------------------------------------------------ */
 
-const presetSelect = $('preset');
-for (const name of Object.keys(PRESETS)) {
-  presetSelect.append(new Option(name, name));
+/* --- panel ---------------------------------------------------------- */
+
+/* Which panel the tag has is a property of the hardware, not of the session, so
+ * it is remembered: an operator with one kind of tag should not have to reset
+ * it on every visit, and picking it wrong is the one mistake here that produces
+ * garbage rather than a message (see PANELS in epd.js). */
+const PANEL_KEY = 'hema.panel';
+
+const panelSelect = $('panel');
+for (const p of Object.values(PANELS)) {
+  panelSelect.append(new Option(p.label, p.key));
 }
 
-let lastLoaded = PRESETS['Built-in default'];
+const presetSelect = $('preset');
+let lastLoaded;
+
+/* The preset list belongs to the panel - the faces are written per panel rather
+ * than scaled - so it is rebuilt rather than filtered. */
+function loadPanelPresets({ replaceEditor }) {
+  const faces = PRESETS[activePanel().key];
+
+  presetSelect.replaceChildren(new Option('Load a preset…', ''));
+  for (const name of Object.keys(faces)) {
+    presetSelect.append(new Option(name, name));
+  }
+
+  /* Only replace what the author is looking at when the *panel* changed and the
+   * editor still holds the other panel's default. Anything they have edited or
+   * deliberately loaded is theirs, and silently swapping it out on a panel
+   * change would be the rudest thing this page could do. */
+  const untouched = replaceEditor
+    && (!lastLoaded || $('editor').value === lastLoaded);
+
+  lastLoaded = faces['Built-in default'];
+  if (untouched) $('editor').value = lastLoaded;
+}
+
+panelSelect.addEventListener('change', () => {
+  setActivePanel(panelSelect.value);
+  try { localStorage.setItem(PANEL_KEY, panelSelect.value); } catch { /* private mode */ }
+
+  panel = new Panel();
+  imagePanel = null;      /* stale geometry; renderImage() rebuilds it */
+  loadPanelPresets({ replaceEditor: true });
+  log(`Panel set to ${activePanel().label}.`, 'ok');
+  render();
+});
+
+let storedPanel = null;
+try { storedPanel = localStorage.getItem(PANEL_KEY); } catch { /* private mode */ }
+if (storedPanel && PANELS[storedPanel]) {
+  setActivePanel(storedPanel);
+  panel = new Panel();
+}
+panelSelect.value = activePanel().key;
+
+loadPanelPresets({ replaceEditor: false });
 
 presetSelect.addEventListener('change', () => {
   const name = presetSelect.value;
   if (!name) return;
-  lastLoaded = PRESETS[name];
+  lastLoaded = PRESETS[activePanel().key][name];
   $('editor').value = lastLoaded;
   presetSelect.value = '';
   render();

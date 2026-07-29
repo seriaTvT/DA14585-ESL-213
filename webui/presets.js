@@ -5,11 +5,21 @@
  * how the "byte-identical to the firmware's default" claim below stays true
  * rather than merely intended.
  */
-/* Landscape geometry throughout, so the frame is 250x122 and its middle is
- * x=125. Faces centre with align=1 against that rather than with offsets
- * computed from the glyph metrics, which is what this file used to do and
- * what stopped being correct the moment a second font existed. */
+/* Two panels exist and their faces are written separately rather than scaled,
+ * because the small one is not a smaller version of the same layout - lines
+ * that fit across 250 px do not fit across 212, and the answer is usually a
+ * different line rather than a smaller one. See PANELS in epd.js.
+ *
+ *   high  landscape frame 250 x 122, middle x=125
+ *   low   landscape frame 212 x 104, middle x=106
+ *
+ * Text metrics, needed to check anything fits: n glyphs at `scale` are
+ * scale*(6n-1) px wide and 7*scale tall in the 5x7 font, scale*(17n-1) by
+ * 24*scale in font=1. Faces centre with align=1 rather than with offsets
+ * computed by hand, which is what this file used to do and what stopped being
+ * correct the moment a second font existed. */
 const MID = 125;
+const MID_LOW = 106;
 
 /* ---- month grid -----------------------------------------------------------
  * Built by a loop rather than written out, because the 31 lines differ only in
@@ -28,7 +38,7 @@ const FIRST_COL = '(({w}-{d}+71)%7)';
 const dayCol = (n) => `(({w}-{d}+${n}+70)%7)`;
 const dayRow = (n) => `((${FIRST_COL}+${n - 1})/7)`;
 
-function monthGrid() {
+function monthGrid({ x0, colW, y0, rowH }) {
   let s = '';
   for (let n = 1; n <= 31; n++) {
     /* Days 29-31 do not exist in every month, and there is no way to skip a
@@ -36,12 +46,24 @@ function monthGrid() {
      * end of the month, so the number is simply pushed off the panel and
      * clipped - February stops at 28 without a conditional. */
     const off = n >= 29 ? `+(${n}/({D}+1))*200` : '';
-    s += `TEXT(8+${dayCol(n)}*34,42+${dayRow(n)}*14${off},'${n}')\n`;
+    s += `TEXT(${x0}+${dayCol(n)}*${colW},${y0}+${dayRow(n)}*${rowH}${off},'${n}')\n`;
   }
   return s;
 }
 
-export const PRESETS = {
+/* Weekday header for the low-res grid. The high-res face spaces its letters
+ * with runs of spaces inside one string, which works only because its 34 px
+ * columns happen to be near a whole number of 6 px glyph pitches. At 29 px they
+ * are not, so the letters are placed individually - seven short lines rather
+ * than one string that drifts a pixel further out of true every column. */
+function dowHeader({ x0, colW, y }) {
+  const glyphMid = Math.round((colW - 5) / 2);
+  return ['S', 'M', 'T', 'W', 'T', 'F', 'S']
+    .map((c, i) => `TEXT(${x0 + glyphMid + i * colW},${y},'${c}')\n`)
+    .join('');
+}
+
+const HIGH = {
   /* Byte-identical to DEFAULT_FACE[] in epd_cmdparser.c, so "what the tag
    * ships with" is always one click away - and, since a test diffs the two,
    * stays that way if either side is edited. */
@@ -163,7 +185,7 @@ export const PRESETS = {
     `TEXT(${MID},10,'{M} {y}',scale=2,align=1)\n` +
     "TEXT(8,30,'S     M    T     W     T     F    S')\n" +
     'LINE(4,39,245,39)\n' +
-    monthGrid() +
+    monthGrid({ x0: 8, colW: 34, y0: 42, rowH: 14 }) +
     `INVERT(4+{w}*34,39+((${FIRST_COL}+{d}-1)/7)*14,20,13)\n`,
 
   /* Portrait, so the frame is 122x250 and MID does not apply - 61 is the
@@ -177,3 +199,126 @@ export const PRESETS = {
     "TEXT(61,170,'{y}-{m:02d}-{d:02d}',align=1)\n" +
     "TEXT(61,186,'{W}',align=1)\n",
 };
+
+/* ---- low-res faces (212 x 104 landscape) -----------------------------------
+ * Not the high-res faces rescaled. The frame is 38 px narrower and 18 px
+ * shorter, which is enough to break the lines rather than merely crowd them:
+ * 'WEDNESDAY 2026-07-29' at scale 2 is 238 px and simply does not go, so the
+ * faces that carried it lose a field or drop a scale instead.
+ *
+ * The big font is unchanged across panels, so HH:MM at font=1 scale=2 is still
+ * 168x48 and still the centrepiece - it just leaves 56 px of height for
+ * everything else here rather than 74. */
+const LOW = {
+  /* Byte-identical to DEFAULT_FACE[] built with EPD_PANEL_LOW_RES, the same
+   * way the high-res one is - and diffed against it by the same test. */
+  'Built-in default':
+    'ROTATE(270)\n' +
+    'CLEAR(1)\n' +
+    `TEXT(${MID_LOW},8,'{H:02d}:{N:02d}',font=1,scale=2,align=1)\n` +
+    `TEXT(${MID_LOW},64,'{y}-{m:02d}-{d:02d}',scale=2,align=1)\n` +
+    `TEXT(${MID_LOW},84,'{W}',scale=2,align=1)\n`,
+
+  /* The 5x7 face. scale=5 gives a 145x35 HH:MM, which still has 33 px of slack
+   * across this frame - the coarse digits were never the width problem. */
+  'Classic':
+    'ROTATE(270)\n' +
+    'CLEAR(1)\n' +
+    `TEXT(${MID_LOW},14,'{H:02d}:{N:02d}',scale=5,align=1)\n` +
+    `TEXT(${MID_LOW},60,'{y}-{m:02d}-{d:02d}',scale=2,align=1)\n` +
+    `TEXT(${MID_LOW},80,'{W}',scale=2,align=1)\n`,
+
+  /* Nothing but the time. Centred on both axes: (104 - 48) / 2 = 28. */
+  'Big clock':
+    'ROTATE(270)\n' +
+    'CLEAR(1)\n' +
+    `TEXT(${MID_LOW},28,'{H:02d}:{N:02d}',font=1,scale=2,align=1)\n`,
+
+  /* 5x7 at scale 7 is 203 px against a 212 px frame - a 4 px margin each side,
+   * and still the widest HH:MM available. What does not survive is the date
+   * line under it: '{W} {y}-{m:02d}-{d:02d}' would be 238 px, so it becomes
+   * day and month instead of the full date. */
+  'Classic big clock':
+    'ROTATE(270)\n' +
+    'CLEAR(1)\n' +
+    `TEXT(${MID_LOW},16,'{H:02d}:{N:02d}',scale=7,align=1)\n` +
+    `TEXT(${MID_LOW},76,'{W} {d} {M}',scale=2,align=1)\n`,
+
+  'Inverted':
+    'ROTATE(270)\n' +
+    'CLEAR(0)\n' +
+    `TEXT(${MID_LOW},16,'{H:02d}:{N:02d}',font=1,scale=2,color=1,bg=0,align=1)\n` +
+    `TEXT(${MID_LOW},76,'{y}-{m:02d}-{d:02d}',color=1,bg=0,scale=2,align=1)\n`,
+
+  /* Frame inset 3 px like the high-res card, against a last column of 211 and
+   * a last row of 103. */
+  'Framed card':
+    'ROTATE(270)\n' +
+    'CLEAR(1)\n' +
+    'RECT(3,3,208,100,width=2)\n' +
+    'LINE(3,60,208,60)\n' +
+    `TEXT(${MID_LOW},6,'{H:02d}:{N:02d}',font=1,scale=2,align=1)\n` +
+    `TEXT(${MID_LOW},66,'{W}',scale=2,align=1)\n` +
+    `TEXT(${MID_LOW},82,'{y}-{m:02d}-{d:02d}',scale=2,align=1)\n`,
+
+  /* HH:MM:SS at 5x7 scale 4 is 188 px, so seconds still fit across this frame.
+   * The pair is centred as a block: (104 - 28 - 12 - 14) / 2 = 25. */
+  'With seconds':
+    'ROTATE(270)\n' +
+    'CLEAR(1)\n' +
+    `TEXT(${MID_LOW},25,'{H:02d}:{N:02d}:{S:02d}',scale=4,align=1)\n` +
+    `TEXT(${MID_LOW},65,'{y}-{m:02d}-{d:02d}',scale=2,align=1)\n`,
+
+  /* The high-res calendar puts weekday, day, month and year on one scale-2 line
+   * (250 px worth). That is 21 glyphs and will not go here, so the header
+   * splits: weekday on the left margin, day and month on the right, both
+   * anchored so they stay put as the numbers change width. */
+  'Calendar':
+    'ROTATE(270)\n' +
+    'CLEAR(1)\n' +
+    "TEXT(8,6,'{W}',scale=2)\n" +
+    "TEXT(203,6,'{d:02d} {M}',scale=2,align=2)\n" +
+    'LINE(8,26,203,26)\n' +
+    `TEXT(${MID_LOW},32,'{H:02d}:{N:02d}',font=1,scale=2,align=1)\n` +
+    "TEXT(8,88,'WEEK {V:02d} OF {G}')\n" +
+    "TEXT(203,88,'DAY {j:03d}/{J}',align=2)\n",
+
+  /* Same idea as the high-res bar, re-fitted: the frame is x 4..207 - a 4 px
+   * margin against a last column of 211 - so the fill spans 203 px and the
+   * multiply still comes before the divide, or integer arithmetic would
+   * collapse the fraction and the bar would jump rather than creep. */
+  'Month progress':
+    'ROTATE(270)\n' +
+    'CLEAR(1)\n' +
+    "TEXT(10,10,'{H:02d}:{N:02d}',scale=3)\n" +
+    "TEXT(10,38,'{W} {d} {M}',scale=2)\n" +
+    'RECT(4,60,207,72)\n' +
+    'RECT(4,60,4+{d}*203/{D},72,fill=1)\n' +
+    "TEXT(10,80,'DAY {j} OF {J}   WEEK {V}')\n",
+
+  /* 7 columns of 29 px span 203 of the 212, leaving a 4 px margin each side.
+   * Rows are 11 px rather than 14, which is what keeps six of them inside a
+   * 104 px frame: 38 + 5*11 + 7 = 100. */
+  'Month grid':
+    'ROTATE(270)\n' +
+    'CLEAR(1)\n' +
+    'EVERY(1440)\n' +
+    `TEXT(${MID_LOW},4,'{M} {y}',scale=2,align=1)\n` +
+    dowHeader({ x0: 4, colW: 29, y: 25 }) +
+    'LINE(4,34,207,34)\n' +
+    monthGrid({ x0: 8, colW: 29, y0: 38, rowH: 11 }) +
+    `INVERT(4+{w}*29,37+((${FIRST_COL}+{d}-1)/7)*11,18,10)\n`,
+
+  /* Portrait: the frame is 104x212 and the middle is x=52. The date drops to
+   * scale 1 - at scale 2 it would be 118 px against a 104 px frame. */
+  'Portrait':
+    'ROTATE(0)\n' +
+    'CLEAR(1)\n' +
+    "TEXT(52,36,'{H:02d}',font=1,scale=2,align=1)\n" +
+    "TEXT(52,92,'{N:02d}',font=1,scale=2,align=1)\n" +
+    "TEXT(52,156,'{y}-{m:02d}-{d:02d}',align=1)\n" +
+    "TEXT(52,169,'{W}',align=1)\n",
+};
+
+/** Faces by panel key, matching PANELS in epd.js. */
+export const PRESETS = { high: HIGH, low: LOW };

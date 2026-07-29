@@ -16,11 +16,11 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 import { Panel, runScript, expandVars, tagTime, tagSecondsNow, textWidth, evalArg,
-         OPTIONS, EVERY_MAX }
+         OPTIONS, EVERY_MAX, PANELS }
   from './epd.js';
 import { PRESETS } from './presets.js';
 import { dither, toPanel, surface, DITHERS } from './image.js';
-import { IMAGE_BYTES, RENDER_ERRORS, CMD_SERVICE, CMD_CHAR,
+import { imageBytes, RENDER_ERRORS, CMD_SERVICE, CMD_CHAR,
          IMG_SERVICE, IMG_CHAR, STATUS_CHAR } from './ble.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -44,15 +44,30 @@ const LINE_MAX = cdef('CMD_LINE_MAX');
  * 2026-07-26 14:37:05, a Sunday. */
 const SECS = Math.floor(Date.UTC(2026, 6, 26, 14, 37, 5) / 1000) - 946684800;
 
-test('the default preset matches the firmware byte for byte', () => {
-  const c = readFileSync(PARSER_C, 'utf8');
-  const block = c.split('static const char DEFAULT_FACE[] =')[1].split(';')[0];
-  const firmware = [...block.matchAll(/"((?:[^"\\]|\\.)*)"/g)]
+/* Concatenate the C string literals of the one DEFAULT_FACE[] in `chunk`. */
+function firmwareFace(chunk) {
+  const block = chunk.split('static const char DEFAULT_FACE[] =')[1].split(';')[0];
+  return [...block.matchAll(/"((?:[^"\\]|\\.)*)"/g)]
     .map((m) => m[1].replace(/\\n/g, '\n'))
     .join('');
+}
 
-  assert.equal(PRESETS['Built-in default'], firmware,
-    'the built-in preset has drifted from DEFAULT_FACE[] in epd_cmdparser.c');
+test('the default preset matches the firmware byte for byte', () => {
+  const c = readFileSync(PARSER_C, 'utf8');
+
+  /* There are two faces now, one per panel, in a single #if/#else. Attribute
+   * them by which arm they sit in rather than by order of appearance, so
+   * swapping the arms around cannot quietly swap the assertions too. */
+  const lo = c.indexOf('#if defined(EPD_PANEL_LOW_RES)');
+  const mid = c.indexOf('#else', lo);
+  const end = c.indexOf('#endif', mid);
+  assert.ok(lo >= 0 && mid > lo && end > mid,
+    'could not find the DEFAULT_FACE #if/#else in epd_cmdparser.c');
+
+  for (const [key, chunk] of [['low', c.slice(lo, mid)], ['high', c.slice(mid, end)]]) {
+    assert.equal(PRESETS[key]['Built-in default'], firmwareFace(chunk),
+      `the ${key} built-in preset has drifted from DEFAULT_FACE[] in epd_cmdparser.c`);
+  }
 });
 
 test('{} expansion matches expand_vars()', () => {
@@ -119,8 +134,10 @@ test('drawing clips instead of wrapping', () => {
 });
 
 test('every preset renders cleanly and fits on the panel', () => {
-  for (const [name, script] of Object.entries(PRESETS)) {
-    const p = new Panel();
+  for (const [key, faces] of Object.entries(PRESETS)) {
+  for (const [face, script] of Object.entries(faces)) {
+    const name = `${key}/${face}`;
+    const p = new Panel(PANELS[key]);
     p.setRotation(0);
     p.clear(1);
     const { warnings } = runScript(p, script, SECS);
@@ -143,6 +160,7 @@ test('every preset renders cleanly and fits on the panel', () => {
     const total = p.width * p.height;
     assert.ok(ink > total * 0.01, `${name}: renders (nearly) blank`);
     assert.ok(ink < total * 0.99, `${name}: renders (nearly) solid`);
+  }
   }
 });
 
@@ -421,20 +439,31 @@ const flat = (w, h, v) => new Float32Array(w * h).fill(v);
 test('the image framebuffer is exactly what the tag waits for', () => {
   /* The protocol has no header and no length: the tag refreshes on the
    * EPD_BUF_SIZE'th byte, so a packing bug that produced one byte too few
-   * would simply hang the transfer forever. */
-  const { w, h, rot } = surface(true);
-  const p = toPanel(new Uint8Array(w * h), w, h, rot);
-  assert.equal(p.fb.length, IMAGE_BYTES);
-  assert.equal(IMAGE_BYTES, 4000);
+   * would simply hang the transfer forever - and one that produced too many
+   * shears the picture, because the tag's stride is not this one.
+   *
+   * Checked per panel: the geometry is chosen at runtime now, and picking it
+   * wrong is the failure this arithmetic exists to make impossible. */
+  for (const geom of Object.values(PANELS)) {
+    const { w, h, rot } = surface(true, geom);
+    const p = toPanel(new Uint8Array(w * h), w, h, rot, geom);
+    assert.equal(p.fb.length, imageBytes(geom), `${geom.key}: wrong buffer size`);
+  }
+  assert.equal(imageBytes(PANELS.high), 4000);
+  assert.equal(imageBytes(PANELS.low), 2756);
 });
 
 test('both orientations cover the whole panel', () => {
-  for (const landscape of [true, false]) {
-    const { w, h } = surface(landscape);
-    assert.equal(w * h, 122 * 250);
+  for (const geom of Object.values(PANELS)) {
+    for (const landscape of [true, false]) {
+      const { w, h } = surface(landscape, geom);
+      assert.equal(w * h, geom.w * geom.h, `${geom.key}: orientation lost pixels`);
+    }
   }
-  assert.deepEqual(surface(true), { w: 250, h: 122, rot: 3 });
-  assert.deepEqual(surface(false), { w: 122, h: 250, rot: 0 });
+  assert.deepEqual(surface(true, PANELS.high), { w: 250, h: 122, rot: 3 });
+  assert.deepEqual(surface(false, PANELS.high), { w: 122, h: 250, rot: 0 });
+  assert.deepEqual(surface(true, PANELS.low), { w: 212, h: 104, rot: 3 });
+  assert.deepEqual(surface(false, PANELS.low), { w: 104, h: 212, rot: 0 });
 });
 
 test('every dither maps flat black and flat white to solid output', () => {
@@ -625,14 +654,17 @@ test('the new variables pad like the old ones', () => {
 /* ------------------------------------------------------------------ */
 
 const RENDER = join(HERE, '../firmware/hema_epd_clock/test/render');
+const RENDER_LOW = join(HERE, '../firmware/hema_epd_clock/test/render-low');
 
 test('the JS renderer is byte-identical to the firmware C', { skip:
-      existsSync(RENDER) ? false : 'run: make -C firmware/hema_epd_clock/test render'
+      existsSync(RENDER) && existsSync(RENDER_LOW) ? false
+        : 'run: make -C firmware/hema_epd_clock/test render render-low'
     }, () => {
-  /* Every preset, plus scripts aimed at the places the two could drift:
-   * clipping, odd rotations, the new calendar variables, quoting. */
-  const scripts = [
-    ...Object.values(PRESETS),
+  /* Scripts aimed at the places the two could drift: clipping, odd rotations,
+   * the calendar variables, quoting. Run against both panels below, along with
+   * that panel's own presets - the clipping cases in particular land on a
+   * different edge at 212x104 than at 250x122, which is free extra coverage. */
+  const common = [
     "ROTATE(90)\nCLEAR(0)\nTEXT(2,2,'{W} {M} {j} {V} {G} {L}',color=1,bg=0)\n",
     "ROTATE(90)\nCLEAR(0)\nTEXT(2,2,'{d}/{D} {j}/{J} {L}',color=1,bg=0)\n",
     "ROTATE(180)\nCLEAR(1)\nCIRCLE(60,60,40,width=2)\nRECT(5,5,50,30,fill=1)\n",
@@ -780,21 +812,26 @@ test('the JS renderer is byte-identical to the firmware C', { skip:
     Math.floor(Date.UTC(2024, 1, 29, 9, 5, 0) / 1000) - 946684800,
   ];
 
-  for (const secs of dates) {
-    for (const script of scripts) {
-      const c = execFileSync(RENDER, [String(secs)], {
-        input: script, maxBuffer: 1 << 20,
-      });
+  for (const [key, bin] of [['high', RENDER], ['low', RENDER_LOW]]) {
+    const geom = PANELS[key];
+    const scripts = [...Object.values(PRESETS[key]), ...common];
 
-      const p = new Panel();
-      p.clear(1);
-      runScript(p, script, secs);
+    for (const secs of dates) {
+      for (const script of scripts) {
+        const c = execFileSync(bin, [String(secs)], {
+          input: script, maxBuffer: 1 << 20,
+        });
 
-      assert.equal(c.length, p.fb.length);
-      const at = c.findIndex((b, i) => b !== p.fb[i]);
-      assert.equal(at, -1, at < 0 ? '' :
-        `first difference at byte ${at} (native row ${(at / 16) | 0}) ` +
-        `at t=${secs} for:\n${script}`);
+        const p = new Panel(geom);
+        p.clear(1);
+        runScript(p, script, secs);
+
+        assert.equal(c.length, p.fb.length, `${key}: framebuffer sizes differ`);
+        const at = c.findIndex((b, i) => b !== p.fb[i]);
+        assert.equal(at, -1, at < 0 ? '' :
+          `${key}: first difference at byte ${at} ` +
+          `(native row ${(at / geom.wbytes) | 0}) at t=${secs} for:\n${script}`);
+      }
     }
   }
 });
@@ -1133,8 +1170,12 @@ test('the month grid highlights today, and only today', () => {
    *
    * Column is the weekday; row is how many weeks in from the 1st. The box is
    * the 20x13 one INVERT() draws, sitting 4px left and 3px above the glyph at
-   * (8 + col*34, 42 + row*14) so it frames the number rather than clipping it. */
-  const grid = PRESETS['Month grid'];
+   * (8 + col*34, 42 + row*14) so it frames the number rather than clipping it.
+   *
+   * High-res only, deliberately: the numbers below are that face's 34x14 cells,
+   * not a property of the calendar arithmetic. The low-res grid is checked for
+   * frame-parity against the C by the byte-identity test instead. */
+  const grid = PRESETS.high['Month grid'];
   const noHighlight = grid.replace(/INVERT\(.*\n/, '');
   assert.notEqual(noHighlight, grid, 'the INVERT line was not found to strip');
 
@@ -1190,7 +1231,7 @@ test('the month grid stops at the end of the month', () => {
     const p = new Panel();
     p.setRotation(0);
     p.clear(1);
-    runScript(p, PRESETS['Month grid'], secs);
+    runScript(p, PRESETS.high['Month grid'], secs);
     let dark = 0;
     for (let yy = 0; yy < 122; yy++)
       for (let xx = 0; xx < 250; xx++) if (!p.get(xx, yy)) dark++;
@@ -1277,7 +1318,7 @@ test('the month bar is symmetric and scales to the month', () => {
   const row = (secs, y) => {
     const p = new Panel();
     p.clear(1);
-    runScript(p, PRESETS['Month progress'], secs);
+    runScript(p, PRESETS.high['Month progress'], secs);
     p.setRotation(3);
     return p;
   };

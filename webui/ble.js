@@ -59,15 +59,20 @@ export function decodeStatus(view) {
  * carries is unchanged; only the handles moved, alongside the command
  * service's - a client that could find one and not the other would be a worse
  * failure than one that finds neither. */
+import { activePanel, PANELS } from './epd.js';
+
 export const IMG_SERVICE = '86c08205-f21a-4257-aabd-4602d25c2448';
 export const IMG_CHAR    = '855c0ea3-ae40-4bab-8a7a-52d86e9a5a2b';
 
 export const DEVICE_NAME = 'HemaEPD-Clock';
 
-/* EPD_BUF_SIZE: ((122 + 7) / 8) * 250. The tag refreshes when exactly this
- * many bytes have arrived, with no header and no offset in the protocol, so a
- * transfer that is short by even one byte simply never completes. */
-export const IMAGE_BYTES = 16 * 250;
+/* The tag's EPD_BUF_SIZE, which depends on which panel it has - see PANELS in
+ * epd.js. It refreshes when exactly this many bytes have arrived, with no
+ * header and no offset in the protocol, so a transfer short by even one byte
+ * simply never completes, and one that overruns is truncated and sheared.
+ *
+ * A function rather than a constant because the panel is chosen at runtime. */
+export function imageBytes(geom = activePanel()) { return geom.bytes; }
 
 /* The firmware repaints EPD_FLUSH_DELAY (400 ms) after the last byte lands,
  * so a push must not stall longer than that mid-script or the tag would
@@ -249,7 +254,7 @@ export class Tag extends EventTarget {
   /**
    * Send a full framebuffer to the image characteristic.
    *
-   * The tag counts bytes and refreshes on the 4000th, so this is all-or-
+   * The tag counts bytes and refreshes on the last one, so this is all-or-
    * nothing: there is no header, no offset and no way to resume. A transfer
    * that dies partway leaves the top of the framebuffer overwritten, which the
    * firmware handles by staying in clock mode and repainting over it on the
@@ -262,9 +267,19 @@ export class Tag extends EventTarget {
       throw new Error('This tag has no image service - it is running firmware '
                     + 'from before image push existed.');
     }
-    if (fb.length !== IMAGE_BYTES) {
-      throw new Error(`Framebuffer is ${fb.length} bytes; the tag waits for `
-                    + `exactly ${IMAGE_BYTES} and would never refresh.`);
+    const want = imageBytes();
+    if (fb.length !== want) {
+      /* Name the panel the buffer *would* fit, because the overwhelmingly
+       * likely cause is the wrong one being selected - and that mistake
+       * otherwise shows up as a screen full of diagonal hash rather than as
+       * anything resembling an error. */
+      const other = Object.values(PANELS).find(p => p.bytes === fb.length);
+      throw new Error(
+        `Framebuffer is ${fb.length} bytes; this tag is set to `
+        + `${activePanel().label} and waits for exactly ${want}, so it would `
+        + `never refresh.`
+        + (other ? ` That size is a ${other.label} panel - check the panel`
+                 + ` selector matches the tag.` : ''));
     }
 
     await this._stream(this.imgChar, fb, { onProgress });

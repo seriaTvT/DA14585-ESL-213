@@ -898,16 +898,40 @@ void epd_cmd_begin_batch(void)
  *
  * Unset, the clock reads 00:00 on 2000-01-01 (the epoch), matching the stock
  * firmware's cold-boot behaviour; a host re-syncs with TIME() on connect. */
-/* Centred on x=125, the middle of the 250px landscape frame, rather than at
+/* Centred with align=1 on the middle of the landscape frame, rather than at
  * offsets worked out from the glyph metrics by hand. The old face carried a
  * note like "5 glyphs @5 -> 145 wide" beside each line and an x derived from
- * it, all of which silently became wrong the moment a second font existed. */
+ * it, all of which silently became wrong the moment a second font existed.
+ *
+ * Written out per panel rather than computed from EPD_WIDTH/EPD_HEIGHT. The
+ * small panel is not the large one scaled - it is 38 px narrower and 18 px
+ * shorter, which changes the spacing between the three lines rather than their
+ * sizes, since the fonts do not scale with the frame. Both are mirrored in
+ * webui/presets.js as 'Built-in default' and a test diffs them, so the preset
+ * and the tag cannot drift apart. */
+#if defined(EPD_PANEL_LOW_RES)
+
+/* 212 x 104 landscape, middle x=106. HH:MM at font=1 scale=2 is 168x48, which
+ * leaves 56 px for the two 14 px lines under it: 8 above, 8 between, 6 and 6
+ * around the pair, 6 below. */
+static const char DEFAULT_FACE[] =
+    "ROTATE(270)\n"
+    "CLEAR(1)\n"
+    "TEXT(106,8,'{H:02d}:{N:02d}',font=1,scale=2,align=1)\n"
+    "TEXT(106,64,'{y}-{m:02d}-{d:02d}',scale=2,align=1)\n"
+    "TEXT(106,84,'{W}',scale=2,align=1)\n";
+
+#else
+
+/* 250 x 122 landscape, middle x=125. */
 static const char DEFAULT_FACE[] =
     "ROTATE(270)\n"
     "CLEAR(1)\n"
     "TEXT(125,18,'{H:02d}:{N:02d}',font=1,scale=2,align=1)\n"
     "TEXT(125,78,'{y}-{m:02d}-{d:02d}',scale=2,align=1)\n"
     "TEXT(125,100,'{W}',scale=2,align=1)\n";
+
+#endif
 
 void epd_cmd_load_default(void)
 {

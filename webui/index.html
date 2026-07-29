@@ -192,6 +192,12 @@
 <main>
   <section>
     <h2>Preview</h2>
+
+    <div class="row" style="margin-bottom:12px">
+      <label for="panel">Panel</label>
+      <select id="panel"></select>
+    </div>
+
     <div class="screen"><canvas id="canvas"></canvas></div>
 
     <div class="meta">
@@ -217,6 +223,12 @@
       The panel takes ~2&nbsp;s to refresh after a push, and the tag stays
       connected throughout. If the link does drop, the next action reconnects
       on its own.
+    </p>
+    <p class="hint">
+      Nothing in the protocol says which panel a tag has, so pick it above to
+      match the hardware. A template sent to the wrong one lands off-centre; an
+      image sent to the wrong one arrives as diagonal hash, because its row
+      stride is decided here rather than on the tag.
     </p>
 
     <h2 style="margin-top:20px">Activity</h2>

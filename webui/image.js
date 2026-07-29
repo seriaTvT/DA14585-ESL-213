@@ -9,7 +9,7 @@
  * beyond the canvas it rasterises through. The output is a Panel from epd.js,
  * which means the preview and the upload are the same bytes - see toPanel().
  */
-import { Panel, EPD_W, EPD_H } from './epd.js';
+import { Panel, activePanel } from './epd.js';
 
 export const FITS = {
   contain: 'Contain — whole image, padded',
@@ -235,10 +235,10 @@ export function dither(gray, w, h, { dither: mode = 'floyd-steinberg',
  * Landscape is rotation 3 rather than 1 so that "up" agrees with the preset
  * faces, which is the only reason to prefer one over the other.
  */
-export function surface(landscape) {
+export function surface(landscape, geom = activePanel()) {
   return landscape
-    ? { w: EPD_H, h: EPD_W, rot: 3 }
-    : { w: EPD_W, h: EPD_H, rot: 0 };
+    ? { w: geom.h, h: geom.w, rot: 3 }
+    : { w: geom.w, h: geom.h, rot: 0 };
 }
 
 /**
@@ -246,11 +246,11 @@ export function surface(landscape) {
  *
  * Goes through Panel.set() rather than writing panel.fb directly, so the
  * rotation transform is the firmware's own (fb_set in epd_gfx.c) and there is
- * no second copy of it to drift. panel.fb afterwards is exactly the 4000 bytes
- * the tag expects on its image characteristic.
+ * no second copy of it to drift. panel.fb afterwards is exactly the number of
+ * bytes the selected panel's tag expects on its image characteristic.
  */
-export function toPanel(bits, w, h, rot) {
-  const panel = new Panel();
+export function toPanel(bits, w, h, rot, geom = activePanel()) {
+  const panel = new Panel(geom);
   panel.setRotation(rot);
   panel.clear(1);
   for (let y = 0; y < h; y++) {

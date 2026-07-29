@@ -14,10 +14,42 @@
  * helpful thing possible.
  */
 
-/* Native panel geometry - portrait, as the SSD1680 sees it. */
-export const EPD_W = 122;
-export const EPD_H = 250;
-const WBYTES = (EPD_W + 7) >> 3;
+/* Native panel geometry - portrait, as the SSD1680 sees it.
+ *
+ * Two panels are in the field and they are not interchangeable. Which one a tag
+ * has is a property of the tag, and nothing in the BLE protocol says which -
+ * so it is the operator's job to pick the right one here.
+ *
+ * Getting it wrong is worth understanding, because it does not fail politely.
+ * A template merely lands off-centre, since the *tag* draws it and uses its own
+ * stride. An uploaded image is a raw framebuffer whose stride this file
+ * chooses, so a mismatch shifts every row against the one above it and the
+ * picture arrives as diagonal hash. pushImage() refuses a wrongly-sized buffer,
+ * which catches the common case, but a wrong choice here is still the one
+ * mistake that produces garbage rather than a message. */
+export const PANELS = {
+  high: { key: 'high', w: 122, h: 250, label: '122 × 250 — HINK-E0213A53' },
+  low:  { key: 'low',  w: 104, h: 212, label: '104 × 212 — HINK-E0213A41' },
+};
+
+for (const p of Object.values(PANELS)) {
+  p.wbytes = (p.w + 7) >> 3;
+  p.bytes  = p.wbytes * p.h;
+}
+
+let activeGeom = PANELS.high;
+
+/** The panel geometry new Panels default to. */
+export function activePanel() { return activeGeom; }
+
+/** Choose the panel this session is talking to. Returns the new geometry.
+ *  Panels already constructed keep the geometry they were built with. */
+export function setActivePanel(key) {
+  const p = PANELS[key];
+  if (!p) throw new Error(`Unknown panel '${key}'.`);
+  activeGeom = p;
+  return p;
+}
 
 /* 5x7 fallback font, transcribed from FONT_5X7 in epd_gfx.c.
  * One byte per column, LSB = top row. Uppercase only; lowercase folds up. */
@@ -171,23 +203,28 @@ export function tagTime(secs) {
 /* ------------------------------------------------------------------ */
 
 export class Panel {
-  constructor() {
-    this.fb = new Uint8Array(WBYTES * EPD_H);
+  /* Geometry is captured here rather than read from the module on every access,
+   * so a Panel stays self-consistent even if the active panel is switched while
+   * it is alive - and so the tests can build both sizes side by side. */
+  constructor(geom = activeGeom) {
+    this.geom = geom;
+    this.fb = new Uint8Array(geom.bytes);
     this.rot = 0;
     this.clear(0);
   }
 
-  get width()  { return (this.rot & 1) ? EPD_H : EPD_W; }
-  get height() { return (this.rot & 1) ? EPD_W : EPD_H; }
+  get width()  { return (this.rot & 1) ? this.geom.h : this.geom.w; }
+  get height() { return (this.rot & 1) ? this.geom.w : this.geom.h; }
 
   setRotation(r) { this.rot = r & 3; }
 
   /* Rotated (drawing) coords -> native panel coords. Mirrors fb_set(). */
   _map(x, y) {
+    const { w, h } = this.geom;
     switch (this.rot) {
-      case 1:  return [EPD_W - 1 - y, x];
-      case 2:  return [EPD_W - 1 - x, EPD_H - 1 - y];
-      case 3:  return [y, EPD_H - 1 - x];
+      case 1:  return [w - 1 - y, x];
+      case 2:  return [w - 1 - x, h - 1 - y];
+      case 3:  return [y, h - 1 - x];
       default: return [x, y];
     }
   }
@@ -197,7 +234,7 @@ export class Panel {
      * does - so a shape clips against what the author can actually see. */
     if (x < 0 || y < 0 || x >= this.width || y >= this.height) return;
     const [px, py] = this._map(x, y);
-    const idx = py * WBYTES + (px >> 3);
+    const idx = py * this.geom.wbytes + (px >> 3);
     const mask = 0x80 >> (px & 7);
     if (color) this.fb[idx] |= mask;      /* 1 = white */
     else       this.fb[idx] &= ~mask;     /* 0 = black */
@@ -205,7 +242,7 @@ export class Panel {
 
   get(x, y) {
     const [px, py] = this._map(x, y);
-    const idx = py * WBYTES + (px >> 3);
+    const idx = py * this.geom.wbytes + (px >> 3);
     return (this.fb[idx] & (0x80 >> (px & 7))) ? 1 : 0;
   }
 
@@ -221,7 +258,7 @@ export class Panel {
       for (let x = x1; x <= x2; x++) {
         if (x < 0 || y < 0 || x >= this.width || y >= this.height) continue;
         const [px, py] = this._map(x, y);
-        this.fb[py * WBYTES + (px >> 3)] ^= 0x80 >> (px & 7);
+        this.fb[py * this.geom.wbytes + (px >> 3)] ^= 0x80 >> (px & 7);
       }
     }
   }
