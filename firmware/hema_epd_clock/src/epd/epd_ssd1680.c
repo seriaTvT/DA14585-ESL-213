@@ -463,10 +463,16 @@ void epd_resample_temperature(void)
     epd_write_data(0x80);   /* the controller's internal sensor */
 
     epd_write_cmd(0x22);
-#if EPD_TEMP_LOAD_NOLUT
-    epd_write_data(0xA1);   /* load temperature, and NOT the LUT - untested */
-#else
+#if EPD_INIT_FROM_OTP
+    /* 0xB1 - load the temperature AND the waveform that goes with it. Not
+     * negotiable on this path: reloading the LUT for the new temperature is
+     * the entire point, and 0xA1 would leave the tag on whatever waveform it
+     * booted with while still reporting a fresh number. */
     epd_write_data(0xB1);
+#elif EPD_TEMP_LOAD_NOLUT
+    epd_write_data(0xA1);   /* temperature only; our hand-written LUT stands */
+#else
+    epd_write_data(0xB1);   /* takes the OTP LUT with it - restored below */
 #endif
     epd_write_cmd(0x20);    /* Master Activation */
     epd_wait_busy();

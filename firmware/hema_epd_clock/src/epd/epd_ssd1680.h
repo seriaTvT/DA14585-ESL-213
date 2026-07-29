@@ -99,19 +99,17 @@
  *
  * Works on BOTH waveform paths, but defaults on only for OTP.
  *
- * Sampling means cmd 0x22 = 0xB1, which loads the temperature and the OTP
- * waveform together. On the OTP path that is exactly what we want anyway. On
- * the Waveshare path it lands on top of the hand-written LUT - so that path
- * writes the LUT back afterwards, which costs 70 bytes plus five registers of
- * SPI, microseconds against a refresh of seconds. It is not impossible there,
- * just not free.
+ * Sampling on the OTP path means cmd 0x22 = 0xB1, which loads the temperature
+ * and the waveform that matches it - exactly what that path wants anyway. On
+ * the Waveshare path it means 0xA1, which loads only the temperature and
+ * leaves the hand-written LUT alone (see EPD_TEMP_LOAD_NOLUT). So it is close
+ * to free on either.
  *
- * The default differs because the VALUE differs. An OTP build needs the
- * reading to keep its waveform matched to the temperature, so it pays for
- * itself. A Waveshare build gets nothing from it but the number, since that
- * LUT is fixed and temperature-independent - so it is opt-in there, and the
- * cost is perturbing a working waveform once per refresh rather than the ~250
- * bytes of code.
+ * The default differs because the VALUE differs, not the cost. An OTP build
+ * needs the reading to keep its waveform matched to the temperature, so it
+ * pays for itself. A Waveshare build gains only the number, since that LUT is
+ * fixed and temperature-independent - worth having for {T}, not worth
+ * spending ~250 bytes on by default.
  *
  * Turn it on for a fast tag that should display {T}:
  *     tools/build.sh --type 4 --fast --temp
@@ -126,26 +124,27 @@
  * the life of the boot. */
 #define EPD_RESAMPLE_PER_REFRESH  (EPD_INIT_FROM_OTP || EPD_TEMP_READ)
 
-/* Experiment: are cmd 0x22's "load temperature" and "load LUT" separable?
+/* Sample the temperature WITHOUT reloading the waveform.
  *
- * We send 0xB1 because that is what the vendor sends, and it does both - which
- * is why a Waveshare build has to write its LUT back afterwards. If bit 4 (load
- * LUT) really is independent of bit 5 (load temperature), then 0xA1 would
- * sample the sensor and leave the waveform alone, and that rewrite could go.
+ * cmd 0x22 bit 5 (load temperature) and bit 4 (load LUT) are independent, so
+ * 0xA1 samples the sensor and leaves the LUT alone where 0xB1 would replace it
+ * with the panel's OTP one. Measured on the tag that drives on either waveform:
+ * with 0xA1 the refresh stayed at 31 polls (Waveshare) rather than the ~60 an
+ * OTP load would give, and epd_temp_c still read a correct 26 C. Both halves of
+ * the claim, one reading.
  *
- * Set this to 1 to send 0xA1 and skip the restore. Then measure: the answer is
- * the refresh duration, because the two waveforms are far apart. On the panel
- * that accepts both, Waveshare is ~60 frames (about 24 polls of s_poll_count)
- * and OTP is 3003 ms (60 polls). So:
+ * That makes 0xA1 the default, and it is also the safer one: it never touches
+ * the waveform, so there is nothing to restore and nothing to restore wrongly.
+ * If a controller revision turned out not to honour bit 5 on its own the
+ * symptom would be a stale epd_temp_c - visible, and harmless to the display.
  *
- *   ~24 polls, epd_temp_c sane   the bits split - drop the rewrite
- *   ~60 polls                    0xA1 loaded the OTP waveform anyway
- *   epd_temp_c stale or absurd   bit 5 alone does not load the temperature
- *
- * Run it on a panel that Waveshare actually drives, or "waveform preserved"
- * and "panel inert" are indistinguishable. */
+ * Set to 0 to go back to 0xB1 followed by rewriting the LUT, which is what the
+ * vendor's driver does and is equally proven (31 polls, 27 C on the same tag).
+ * Verified on one panel; the bit semantics belong to the controller rather than
+ * the panel, so it should generalise, but that is reasoning and not a
+ * measurement. */
 #if !defined(EPD_TEMP_LOAD_NOLUT)
-    #define EPD_TEMP_LOAD_NOLUT 0
+    #define EPD_TEMP_LOAD_NOLUT 1
 #endif
 
 /* Map the panel's OTP waveform against temperature, by lying to the
