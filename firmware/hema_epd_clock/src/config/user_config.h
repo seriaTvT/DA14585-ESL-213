@@ -237,8 +237,8 @@ static const struct advertise_configuration user_adv_conf = {
 /// and takes connections perfectly normally, and only the panel stays dead.
 /// If a board goes quiet on the panel alone, suspect this first - it has now
 /// cost us a working tag in both directions.
-// #define EPD_BOARD_VARIANT_B
-#define EPD_BOARD_VARIANT_A
+#define EPD_BOARD_VARIANT_B
+// #define EPD_BOARD_VARIANT_A
 
 /// Device name length
 #define USER_DEVICE_NAME_LEN    (sizeof(USER_DEVICE_NAME)-1)
