@@ -245,6 +245,26 @@
  * into .rodata verbatim and cannot be confused with any other text. */
 #define EPD_BOARD_VARIANT_TAG   "HEMA-BOARD-VARIANT-" EPD_BOARD_VARIANT_STR
 
+/* The same again for the geometry, which the wiring stamp says nothing about.
+ * Nothing used to check it, so a high-res image on a low-res tag passed the
+ * flasher and turned up as a garbled panel - a wrong build presenting as a
+ * hardware fault, which is the failure mode this whole apparatus exists to
+ * stop. Built from EPD_WIDTH/EPD_HEIGHT so it cannot disagree with them. */
+#define EPD__STR2(x)            #x
+#define EPD__STR(x)             EPD__STR2(x)
+#define EPD_PANEL_TAG           "HEMA-PANEL-" EPD__STR(EPD_WIDTH) "x" \
+                                EPD__STR(EPD_HEIGHT)
+
+/* And the type number itself, which is what a person actually says out loud
+ * and what tools/flash.sh takes. It comes from config/tag_types.h, force-
+ * included ahead of this header in a firmware build; the fallback is for the
+ * host test builds, which compile this driver's neighbours against stubs and
+ * never see that header. "0" is not a tag type, so an image built outside the
+ * normal path is stamped unusable rather than stamped wrong. */
+#if !defined(HEMA_TAG_TYPE_TAG)
+#define HEMA_TAG_TYPE_TAG       "HEMA-TAG-TYPE-0"
+#endif
+
 /* ------------------------------------------------------------------------
  * API
  * ---------------------------------------------------------------------- */

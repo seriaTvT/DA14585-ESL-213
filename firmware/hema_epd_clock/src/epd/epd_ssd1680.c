@@ -54,6 +54,15 @@
 __attribute__((used))
 const char epd_board_variant_tag[] = EPD_BOARD_VARIANT_TAG;
 
+/* The panel geometry and the tag type, stamped the same way and for the same
+ * reason - see EPD_PANEL_TAG. `used` for the same reason too: nothing reads
+ * these, and -flto would otherwise drop them. */
+__attribute__((used))
+const char epd_panel_tag[] = EPD_PANEL_TAG;
+
+__attribute__((used))
+const char hema_tag_type_tag[] = HEMA_TAG_TYPE_TAG;
+
 /* Pixel polarity, CONFIRMED ON HARDWARE (2026-07-25).
  *
  * Our framebuffer uses 1 = white / 0 = black (matching the vendor's drawing

@@ -200,13 +200,22 @@ static const struct advertise_configuration user_adv_conf = {
 /// Device name
 #define USER_DEVICE_NAME        "HemaEPD-Clock"
 
-/// Panel resolution select - the 122x250 high-res panel is the default;
-/// define EPD_PANEL_LOW_RES for the 104x212 part (Type 3 tags). See
-/// epd_ssd1680.h and PROTOCOL_NOTES.md section 2.
+/// Which tag this image is for. This header is force-included ahead of every
+/// other, so the selection lands before epd_ssd1680.h picks its own defaults.
 ///
-/// This is only the resolution. Which init sequence the panel gets follows the
-/// board variant below, not this - see EPD_INIT_FROM_OTP in epd_ssd1680.h.
-#define EPD_PANEL_LOW_RES
+/// Board wiring and panel size both come from the one type number in
+/// tag_types.h, and the build scripts set it - `tools/build.sh --type 3`.
+/// There is nothing to edit here per tag, which is the point: the two used to
+/// be set by hand in this file, independently, and keeping them consistent
+/// with each other and with the flasher's --variant was left to whoever
+/// remembered.
+///
+/// Getting the wiring wrong is silent in the worst way: the tag boots,
+/// advertises and takes connections perfectly normally, and only the panel
+/// stays dead. It cost a working tag in both directions before the image
+/// carried a stamp the flasher could check. If a board goes quiet on the panel
+/// alone, suspect the build target first.
+#include "tag_types.h"
 
 /// Panel-presence probe, off by default. Builds in epd_panel_present(), which
 /// asks the controller directly with cmd 0x2F the way the retail firmware
@@ -214,31 +223,6 @@ static const struct advertise_configuration user_adv_conf = {
 /// BUSY reading idle, so the refresh returns instantly and looks exactly like
 /// a bad init sequence. Costs ~240 bytes, so it stays out of a shipping image.
 // #define EPD_PANEL_PROBE 1
-
-/// Board wiring select. This header is force-included ahead of every other,
-/// so defining it here settles the variant before epd_ssd1680.h picks its
-/// own default.
-///
-/// B is the Type 1 reference board: hardware SPI shared with the boot flash.
-/// A is the Type 2 and Type 3 wiring - bit-banged, disjoint from the flash.
-///
-/// Type 3 was read straight off its own running firmware: exactly one table of
-/// eight distinct (port, pin) pairs exists in its 96 KiB of SysRAM, at
-/// 0x07FD4310, and it is P2_1 P2_2 P1_0 P0_1 P2_0 P0_7 P1_1 P2_3 - the same
-/// eight pins in the same order as Type 2's table at 0x07FD4428.
-///
-/// Do not try to tell the variants apart by sampling GPIO modes while the
-/// stock firmware boots. The bit-banged pins are only in output mode during a
-/// transfer, e-paper is bistable so a tag need not refresh at boot at all, and
-/// the pins that *are* driven early (P0_7, P2_1, P2_3) belong to both maps. It
-/// reads as variant B and is wrong.
-///
-/// Getting this wrong is silent in the worst way: the tag boots, advertises
-/// and takes connections perfectly normally, and only the panel stays dead.
-/// If a board goes quiet on the panel alone, suspect this first - it has now
-/// cost us a working tag in both directions.
-#define EPD_BOARD_VARIANT_B
-// #define EPD_BOARD_VARIANT_A
 
 /// Device name length
 #define USER_DEVICE_NAME_LEN    (sizeof(USER_DEVICE_NAME)-1)

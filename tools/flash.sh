@@ -2,6 +2,7 @@
 #
 # flash.sh - build a full SPI-flash image and program it over SWD.
 #
+#   tools/flash.sh --type <n> <hema_epd_clock.bin> [bank]
 #   tools/flash.sh --variant <a|b> <stock_dump.bin> <hema_epd_clock.bin> [bank]
 #
 # Wraps the two steps that actually put firmware on the tag: mksuota.py to wrap
@@ -12,17 +13,26 @@
 # image banks, so writing bank 1 and leaving the stock image in bank 2 means a
 # bad build falls back to something that works rather than bricking the tag.
 #
-# --variant is mandatory and has no default. Flashing a board with the other
-# variant's wiring is the worst kind of wrong: the tag boots, advertises and
-# takes connections exactly as normal, and only the panel stays dead - so it
-# presents as a broken screen, not as a bad flash. It has cost a working tag
-# twice, in both directions, and neither time was diagnosed from the symptom.
-# A default is what let that happen by omission, so there is not one.
+# Say which tag this is and everything else follows. --type takes the number
+# from hema-local/docs/TAG_VARIANTS.md and picks that type's stock dump; the
+# wiring is then read out of the image rather than typed, because the image
+# knows. The older --variant form still works for an image built before the
+# type stamp existed, and needs the dump named by hand.
 #
-# Naming it is only half of it, since a typed letter can be as wrong as a
-# default. The firmware stamps EPD_BOARD_VARIANT_TAG into its own image, so the
-# letter is checked against the binary about to be written and a mismatch stops
-# the flash.
+# One of the two is mandatory and there is no default. Flashing a board with
+# the other variant's wiring is the worst kind of wrong: the tag boots,
+# advertises and takes connections exactly as normal, and only the panel stays
+# dead - so it presents as a broken screen, not as a bad flash. It has cost a
+# working tag twice, in both directions, and neither time was diagnosed from
+# the symptom. A default is what let that happen by omission.
+#
+# Saying it is only half of it, since a typed number can be as wrong as a
+# default. The firmware stamps its type, its wiring and its panel geometry into
+# its own image, so what you said is checked against the binary about to be
+# written and a mismatch stops the flash.
+#
+# The stock dumps live outside this repo (they are vendor images). Point
+# HEMA_STOCK_DIR at them if they are not in ../hema-local/re.
 #
 # Requires the community J-Link device definition for the DA14585 QSPI bank
 # (JLinkDevices.xml + Devices/jtag_programmer.axf in /opt/SEGGER/JLink) -
@@ -30,42 +40,86 @@
 # nowhere to write.
 set -euo pipefail
 
+HERE=$(cd "$(dirname "$0")" && pwd)          # tools/, where mksuota.py lives
+STOCK_DIR=${HEMA_STOCK_DIR:-$(cd "$HERE/.." && pwd)/../hema-local/re}
+
+usage() {
+    cat >&2 <<'EOF'
+usage: flash.sh --type <n> <hema_epd_clock.bin> [bank]
+       flash.sh --variant <a|b> <stock_dump.bin> <hema_epd_clock.bin> [bank]
+
+  --type <n>       which tag this is (see hema-local/docs/TAG_VARIANTS.md).
+                   Picks that type's stock dump and checks the image was built
+                   for it. Pass a dump before the firmware to override.
+  --variant <a|b>  the older form: name the wiring and the dump by hand.
+  --unverified     flash an image that carries no stamp to check.
+EOF
+}
+
 VARIANT=
+TYPE=
 UNVERIFIED=0
 args=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --variant)     VARIANT=${2:-}; shift 2 ;;
         --variant=*)   VARIANT=${1#*=}; shift ;;
+        --type)        TYPE=${2:-}; shift 2 ;;
+        --type=*)      TYPE=${1#*=}; shift ;;
         --unverified)  UNVERIFIED=1; shift ;;
-        -h|--help)     sed -n '3,24p' "$0" >&2; exit 2 ;;
+        -h|--help)     usage; exit 2 ;;
         -*)            echo "flash.sh: unknown option $1" >&2; exit 2 ;;
         *)             args+=("$1"); shift ;;
     esac
 done
 
-if [ ${#args[@]} -lt 2 ]; then
-    sed -n '3,24p' "$0" >&2
-    exit 2
-fi
-
 # Uppercase once here so the comparison below is against one canonical form,
 # and so the message can echo back what was actually meant.
 VARIANT=$(printf '%s' "$VARIANT" | tr '[:lower:]' '[:upper:]')
-case "$VARIANT" in
-    A|B) ;;
-    "")  echo "flash.sh: --variant is required (a or b)." >&2
-         echo "          Which wiring is this board? Type 1 is B, Type 2 is A." >&2
-         echo "          See hema-local/docs/TAG_VARIANTS.md if unsure - guessing" >&2
-         echo "          costs a tag, and the symptom will not tell you." >&2
-         exit 2 ;;
-    *)   echo "flash.sh: --variant must be a or b, not '$VARIANT'." >&2; exit 2 ;;
-esac
 
-STOCK=${args[0]}
-FW=${args[1]}
-BANK=${args[2]:-1}
-HERE=$(cd "$(dirname "$0")" && pwd)
+if [ -n "$TYPE" ]; then
+    case "$TYPE" in
+        ''|*[!0-9]*) echo "flash.sh: --type takes a number, not '$TYPE'." >&2
+                     exit 2 ;;
+    esac
+    # A dump given explicitly wins; otherwise it follows from the type. Getting
+    # this wrong matters more than it looks: the bank offsets differ between
+    # Type 1 and the rest, and mksuota.py reads them out of whichever dump it
+    # is handed.
+    if [ ${#args[@]} -ge 2 ]; then
+        STOCK=${args[0]}; FW=${args[1]}; BANK=${args[2]:-1}
+    elif [ ${#args[@]} -eq 1 ]; then
+        STOCK=$STOCK_DIR/type$TYPE/stock_flash_512k.bin
+        FW=${args[0]}; BANK=1
+    else
+        usage; exit 2
+    fi
+    if [ ! -r "$STOCK" ]; then
+        echo "flash.sh: no stock dump for type $TYPE at" >&2
+        echo "          $STOCK" >&2
+        echo "          Set HEMA_STOCK_DIR, or name the dump before the" >&2
+        echo "          firmware. Do not substitute another type's - the bank" >&2
+        echo "          offsets differ and this is where they come from." >&2
+        exit 1
+    fi
+elif [ ${#args[@]} -ge 2 ]; then
+    case "$VARIANT" in
+        A|B) ;;
+        "")  echo "flash.sh: say which tag this is: --type <n>, or --variant" >&2
+             echo "          <a|b> for an image with no type stamp." >&2
+             echo "          Type 1 is B, Type 2 is A, Type 3 is A, Type 4 is B." >&2
+             echo "          See hema-local/docs/TAG_VARIANTS.md if unsure -" >&2
+             echo "          guessing costs a tag, and the symptom will not" >&2
+             echo "          tell you." >&2
+             exit 2 ;;
+        *)   echo "flash.sh: --variant must be a or b, not '$VARIANT'." >&2
+             exit 2 ;;
+    esac
+    STOCK=${args[0]}; FW=${args[1]}; BANK=${args[2]:-1}
+else
+    usage; exit 2
+fi
+
 OUT=$(mktemp -t hema-flash-XXXXXX.bin)
 SCRIPT=$(mktemp -t hema-flash-XXXXXX.jlink)
 LOG=$(mktemp -t hema-flash-XXXXXX.log)
@@ -75,14 +129,55 @@ for f in "$STOCK" "$FW"; do
     [ -r "$f" ] || { echo "flash.sh: cannot read $f" >&2; exit 1; }
 done
 
-# ------------------------------------------------------- variant cross-check
-# Read the variant the image was actually built for, rather than trusting the
-# letter on the command line. -a because the string lives in .rodata, not in a
-# section `strings` would look at by default.
-built=$(strings -a "$FW" | grep -om1 'HEMA-BOARD-VARIANT-[AB]' || true)
-built=${built##*-}
+# --------------------------------------------------------- image cross-check
+# Read what the image says it is, rather than trusting what was typed. -a
+# because the strings live in .rodata, not in a section `strings` would look at
+# by default.
+stamp() { strings -a "$FW" | grep -om1 "$1" || true; }
+built_type=$(stamp 'HEMA-TAG-TYPE-[0-9]\+');      built_type=${built_type##*-}
+built_var=$(stamp 'HEMA-BOARD-VARIANT-[AB]');     built_var=${built_var##*-}
+built_panel=$(stamp 'HEMA-PANEL-[0-9x]\+');       built_panel=${built_panel#HEMA-PANEL-}
 
-if [ -z "$built" ]; then
+# Type 0 is what an image built outside the normal path is stamped with - see
+# HEMA_TAG_TYPE_TAG in epd_ssd1680.h. It is not a tag, so treat it as unstamped
+# rather than as a mismatch.
+[ "$built_type" = 0 ] && built_type=
+
+if [ -n "$TYPE" ]; then
+    if [ -z "$built_type" ]; then
+        if [ "$UNVERIFIED" != 1 ]; then
+            echo "flash.sh: $FW carries no type stamp." >&2
+            echo "          Every image from tools/build.sh has one, so this" >&2
+            echo "          is either an older build or not our firmware, and" >&2
+            echo "          there is no way to tell from here which tag it" >&2
+            echo "          expects." >&2
+            echo "          Rebuild it with tools/build.sh --type $TYPE, or" >&2
+            echo "          pass --unverified to flash it anyway." >&2
+            exit 1
+        fi
+        echo "flash.sh: WARNING - no type stamp in $FW; flashing unverified."
+    elif [ "$built_type" != "$TYPE" ]; then
+        echo "flash.sh: REFUSING - type mismatch, nothing was written." >&2
+        echo "          you asked for  : type $TYPE" >&2
+        echo "          image is built : type $built_type" \
+             "(variant $built_var, $built_panel)" >&2
+        echo >&2
+        echo "          Build the right one - tools/build.sh --type $TYPE -" >&2
+        echo "          or flash a Type $built_type tag instead." >&2
+        exit 1
+    fi
+    # The wiring is the image's to state, not the operator's. Only cross-check
+    # it if it was also typed, which is the one case where the two can differ.
+    if [ -n "$VARIANT" ] && [ -n "$built_var" ] && [ "$VARIANT" != "$built_var" ]; then
+        echo "flash.sh: REFUSING - you passed --variant $VARIANT but type" \
+             "$TYPE" >&2
+        echo "          is variant $built_var. Nothing was written." >&2
+        exit 1
+    fi
+    [ -n "$built_type" ] && echo "type $TYPE confirmed against the image:" \
+                                 "variant $built_var, panel $built_panel."
+    VARIANT=${built_var:-$VARIANT}
+elif [ -z "$built_var" ]; then
     if [ "$UNVERIFIED" != 1 ]; then
         echo "flash.sh: $FW carries no variant stamp." >&2
         echo "          Every build since EPD_BOARD_VARIANT_TAG was added has" >&2
@@ -93,13 +188,13 @@ if [ -z "$built" ]; then
         exit 1
     fi
     echo "flash.sh: WARNING - no variant stamp in $FW; flashing unverified."
-elif [ "$built" != "$VARIANT" ]; then
+elif [ "$built_var" != "$VARIANT" ]; then
     echo "flash.sh: REFUSING - variant mismatch, nothing was written." >&2
     echo "          you asked for : $VARIANT" >&2
-    echo "          image is built : $built" >&2
+    echo "          image is built : $built_var" >&2
     echo >&2
-    echo "          Set EPD_BOARD_VARIANT_$VARIANT in src/config/user_config.h" >&2
-    echo "          and rebuild, or flash a board of variant $built instead." >&2
+    echo "          Build the right one - tools/build.sh --type <n> - or" >&2
+    echo "          flash a board of variant $built_var instead." >&2
     exit 1
 else
     echo "variant $VARIANT confirmed against the image."

@@ -54,6 +54,9 @@ node_modules/
 .settings/
 *.launch
 
+# Built images, one per tag type, from tools/build.sh.
+out/
+
 # ---- safety net -----------------------------------------------------------
 # None of these belongs in the repo; all of them have a home in ../hema-local.
 # Listed anyway because they are big, non-redistributable, or both, and an

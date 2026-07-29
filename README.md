@@ -64,15 +64,32 @@ until `4 × sizeof(.bss)` runs off the top of SysRAM, at which point the tag
 hard-faults inside `Reset_Handler` before `main()` and never advertises. The
 original is kept beside it as `.lds.S.orig`; re-running the generator is safe.
 
-**2. Build.** The makefile lives under the generated project:
+**2. Build**, naming the tag you are building for:
 
 ```sh
-make -C "$DA1458X_SDK/projects/target_apps/template/hema_epd_clock/e2studio/DA14585" all -j4
+tools/build.sh --type 4      # -> out/hema_epd_clock-type4.bin
+tools/build.sh --all         # one image per known type, into out/
 ```
 
-Note the build compiles from **inside the SDK tree**, not from this repo. Edit
-here, re-run the generator (or copy the changed file across), then build —
-otherwise you get a clean, successful build of unchanged code.
+Four tag types exist, differing along two independent axes — board wiring
+(which pins drive the panel) and panel size. The type number picks both;
+`src/config/tag_types.h` is the table, and it is the only place the pairing is
+written down. Nothing needs editing to switch tags, and the build stamps the
+type into the image so the flasher can check it.
+
+The makefile underneath is plain, if you want it directly:
+
+```sh
+make -C "$DA1458X_SDK/projects/target_apps/template/hema_epd_clock/e2studio/DA14585" \
+     TAG_DEFS=-DHEMA_TAG_TYPE=4 all -j4
+```
+
+Two things to know if you do. The build compiles from **inside the SDK tree**,
+not from this repo — edit here, re-run the generator (or copy the changed file
+across), then build, otherwise you get a clean, successful build of unchanged
+code. And `make` cannot see that a `-D` changed, so switching type without a
+`clean` links stale objects into an image that is half one tag and half
+another. `build.sh` handles both.
 
 Output is `hema_epd_clock.bin` — a raw linker image, vector table first.
 
@@ -82,7 +99,7 @@ header to find two SUOTA image banks, picks the newest valid one and copies it
 to SysRAM. So the image has to be wrapped in a bank:
 
 ```sh
-tools/flash.sh --variant <a|b> <stock_dump.bin> <path/to>/hema_epd_clock.bin
+tools/flash.sh --type 4 out/hema_epd_clock-type4.bin
 ```
 
 That wraps the build into bank 1 (`tools/mksuota.py`), leaves the stock image in
@@ -90,11 +107,24 @@ bank 2 as a fallback, and programs the lot with J-Link Commander. Then
 **power-cycle the tag** — an SWD reset does not re-run the bootloader's bank
 scan, so the previous image keeps running until the power actually drops.
 
-`--variant` names the board wiring and is mandatory. It is checked against a
-stamp the firmware puts in its own image, and a mismatch stops the flash before
-anything is written. Flashing the wrong variant is silent — the tag boots and
-advertises normally and only the panel stays dead — so it is worth the extra
-word every time.
+Saying which tag it is, is mandatory and has no default. `--type` picks that
+type's stock dump (from `../hema-local/re/type<n>/`, or wherever
+`HEMA_STOCK_DIR` points; name a dump before the firmware to override) and then
+checks the type against a stamp the firmware puts in its own image. A mismatch
+stops the flash before anything is written. This matters because flashing an
+image built for the wrong wiring is *silent* — the tag boots and advertises
+normally and only the panel stays dead, which reads as a broken screen rather
+than a bad flash.
+
+The dump has to come from the same type: `mksuota.py` reads the image-bank
+offsets out of it, and Type 1's differ from the rest.
+
+For an image built before the type stamp existed, the older form still works
+and names the wiring by hand:
+
+```sh
+tools/flash.sh --variant <a|b> <stock_dump.bin> <path/to>/hema_epd_clock.bin
+```
 
 Flashing needs the community J-Link device definition that exposes the DA14585's
 QSPI bank (`JLinkDevices.xml` plus Dialog's `jtag_programmer.axf`, installed into
