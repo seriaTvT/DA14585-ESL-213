@@ -52,6 +52,9 @@ usage: flash.sh --type <n> <hema_epd_clock.bin> [bank]
                    Picks that type's stock dump and checks the image was built
                    for it. Pass a dump before the firmware to override.
   --variant <a|b>  the older form: name the wiring and the dump by hand.
+  --speed <kHz>    SWD clock, default 4000. Lower it (1000, or less) if a
+                   flash fails verifying RAMCode by only a bit or two - that
+                   is the link, not the target. Or set HEMA_SWD_SPEED.
   --unverified     flash an image that carries no stamp to check.
 EOF
 }
@@ -59,6 +62,12 @@ EOF
 VARIANT=
 TYPE=
 UNVERIFIED=0
+# SWD clock. 4 MHz is fine over a short, well-soldered link and is what this
+# used to hardcode. Drop it when the probe is a J-Link OB clone, when the wires
+# are long, or after a "Verification of RAMCode failed" whose write and read
+# differ by only a bit or two - that is signal integrity, not the SysRAM
+# contention the error message suggests, and it usually clears at 1000 or below.
+SPEED=${HEMA_SWD_SPEED:-4000}
 args=()
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -66,6 +75,8 @@ while [ $# -gt 0 ]; do
         --variant=*)   VARIANT=${1#*=}; shift ;;
         --type)        TYPE=${2:-}; shift 2 ;;
         --type=*)      TYPE=${1#*=}; shift ;;
+        --speed)       SPEED=${2:-}; shift 2 ;;
+        --speed=*)     SPEED=${1#*=}; shift ;;
         --unverified)  UNVERIFIED=1; shift ;;
         -h|--help)     usage; exit 2 ;;
         -*)            echo "flash.sh: unknown option $1" >&2; exit 2 ;;
@@ -207,7 +218,7 @@ python3 "$HERE/mksuota.py" "$STOCK" "$FW" "$OUT" "$BANK"
 # switches off SWD until the tag is physically power-cycled.
 cat > "$SCRIPT" <<EOF
 si SWD
-speed 4000
+speed $SPEED
 device DA14585
 connect
 r
@@ -236,9 +247,23 @@ if grep -qE '^\*+ Error:|Failed to (download|prepare|preserve|read back)' "$LOG"
     echo "flash.sh: FAILED - J-Link reported an error, flash NOT written:" >&2
     grep -E '^\*+ Error:|Failed to ' "$LOG" | sed 's/^/          /' >&2
     echo >&2
-    echo "flash.sh: 'RAMCode' errors mean the loader could not be placed in" >&2
-    echo "          SysRAM, which it shares with the running firmware. Power-" >&2
-    echo "          cycle the tag and flash as the FIRST J-Link operation." >&2
+    if grep -q 'Verification of RAMCode failed' "$LOG"; then
+        echo "flash.sh: compare the Write:/Read: lines above before doing" >&2
+        echo "          anything else. If they differ by only a bit or two," >&2
+        echo "          the loader was placed fine and the SWD link corrupted" >&2
+        echo "          it in transit - reseat the wires, try another USB" >&2
+        echo "          cable, and retry with --speed 1000. These probes are" >&2
+        echo "          often OB clones and the wires are soldered to test" >&2
+        echo "          points, so this is the common case, and no amount of" >&2
+        echo "          power-cycling fixes it." >&2
+        echo "          If they differ wholesale, it IS the SysRAM clash" >&2
+        echo "          below." >&2
+        echo >&2
+    fi
+    echo "flash.sh: 'RAMCode' errors otherwise mean the loader could not be" >&2
+    echo "          placed in SysRAM, which it shares with the running" >&2
+    echo "          firmware. Power-cycle the tag and flash as the FIRST" >&2
+    echo "          J-Link operation." >&2
     exit 1
 fi
 
