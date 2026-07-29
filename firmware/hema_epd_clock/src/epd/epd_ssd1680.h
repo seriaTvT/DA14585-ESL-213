@@ -89,32 +89,42 @@
     #define EPD_PANEL_PROBE 0
 #endif
 
-/* Build in the controller's temperature reading. Off by default: it costs a
- * read turnaround on a bus that is shared with the boot flash on variant B,
- * and a working tag has no use for it yet.
- *
- * Why it exists: on the OTP init path the controller picks its waveform from
- * OTP according to this sensor (cmd 0x18 selects it, cmd 0x22 bit 4 loads the
- * result), so a sensor reading wrongly would show up as a refresh that is
- * slow, or poor, for no visible reason. Turn this on to ask the controller
- * what it actually thinks the temperature is, rather than inferring it from
- * how long a refresh took.
+/* Build in the controller's temperature reading. It feeds {T}, and on the OTP
+ * path it also reports the value the controller picked its waveform with.
  *
  * Note the vendor's own driver only changes behaviour BELOW 10 C - see
- * epd_read_temperature() - so between about 10 C and 40 C a healthy sensor
- * and a stuck one look identical from the outside. That is worth knowing
- * before concluding anything from a refresh that did not speed up when the
- * tag was warmed. */
-/* On by default wherever it can work, which means the OTP path - that is the
- * only one that may reload the temperature without destroying its own
- * waveform. It stopped being purely a diagnostic when {T} started rendering
- * from it, and the read has now been exercised on two tags. Set it to 0 to
- * get the ~250 bytes back on a build that will never show a temperature.
+ * epd_read_temperature() - and the panel's OTP curve is flat above ~30 C, so
+ * between those a healthy sensor and a stuck one look identical from the
+ * outside. Read the number; do not infer it from how long a refresh took.
  *
- * Waveshare builds cannot have it: there is no safe moment to sample. */
+ * Works on BOTH waveform paths, but defaults on only for OTP.
+ *
+ * Sampling means cmd 0x22 = 0xB1, which loads the temperature and the OTP
+ * waveform together. On the OTP path that is exactly what we want anyway. On
+ * the Waveshare path it lands on top of the hand-written LUT - so that path
+ * writes the LUT back afterwards, which costs 70 bytes plus five registers of
+ * SPI, microseconds against a refresh of seconds. It is not impossible there,
+ * just not free.
+ *
+ * The default differs because the VALUE differs. An OTP build needs the
+ * reading to keep its waveform matched to the temperature, so it pays for
+ * itself. A Waveshare build gets nothing from it but the number, since that
+ * LUT is fixed and temperature-independent - so it is opt-in there, and the
+ * cost is perturbing a working waveform once per refresh rather than the ~250
+ * bytes of code.
+ *
+ * Turn it on for a fast tag that should display {T}:
+ *     tools/build.sh --type 4 --fast --temp
+ */
 #if !defined(EPD_TEMP_READ)
     #define EPD_TEMP_READ EPD_INIT_FROM_OTP
 #endif
+
+/* Whether a refresh re-samples at all. Two independent reasons: an OTP build
+ * must, to keep the waveform matched to the current temperature; any build
+ * that reports a temperature must, or {T} would show the boot-time value for
+ * the life of the boot. */
+#define EPD_RESAMPLE_PER_REFRESH  (EPD_INIT_FROM_OTP || EPD_TEMP_READ)
 
 /* Map the panel's OTP waveform against temperature, by lying to the
  * controller about how warm it is.
@@ -406,7 +416,7 @@ extern volatile int8_t epd_temp_c;
 int8_t epd_read_temperature(void);
 #endif
 
-#if EPD_INIT_FROM_OTP
+#if EPD_RESAMPLE_PER_REFRESH
 /** Re-sample the sensor and reload the waveform to match.
  *
  *  Call before each refresh. Without it the waveform is whatever the
@@ -417,8 +427,9 @@ int8_t epd_read_temperature(void);
  *  as ghosting rather than as an error. The panel's OTP table spans 2.6x
  *  between its cold and warm plateaus, so this is not a small effect.
  *
- *  OTP builds only. On the Waveshare path the same load would pull the OTP
- *  waveform back over the hand-written LUT.
+ *  On the Waveshare path the same load pulls the OTP waveform back over the
+ *  hand-written LUT, so that build writes its own LUT back afterwards - see
+ *  the implementation. Nothing about it is OTP-only.
  *
  *  Costs one command pair and a BUSY wait against a refresh of seconds. Also
  *  refreshes epd_temp_c when EPD_TEMP_READ is on, which is what makes a

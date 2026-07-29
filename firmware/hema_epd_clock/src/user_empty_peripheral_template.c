@@ -110,7 +110,7 @@ static void epd_begin_refresh(epd_queued_t what)
         return;
     }
 
-#if EPD_INIT_FROM_OTP
+#if EPD_RESAMPLE_PER_REFRESH
     /* Before the script runs, not after: the waveform this picks is the one
      * this refresh will use, and epd_cmd_run() expands {T} from whatever the
      * reading leaves behind. Doing it here rather than once at init is what

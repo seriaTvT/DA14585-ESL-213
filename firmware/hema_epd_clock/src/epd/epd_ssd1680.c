@@ -426,13 +426,39 @@ int8_t epd_read_temperature(void)
 
 #endif  /* EPD_TEMP_READ */
 
-#if EPD_INIT_FROM_OTP
+#if !EPD_INIT_FROM_OTP
+/* Install the hand-written waveform, and the five registers that only exist to
+ * go with one. Factored out of epd_init() because a temperature load overwrites
+ * all of it - see epd_resample_temperature(). */
+static void epd_load_waveshare_lut(const uint8_t *lut)
+{
+    epd_write_cmd(0x2C); /* Write VCOM Register */
+    epd_write_data(0x55);
+
+    epd_write_cmd(0x03); /* Gate driving voltage */
+    epd_write_data(lut[70]);
+
+    epd_write_cmd(0x04); /* Source driving voltage */
+    epd_write_data(lut[71]);
+    epd_write_data(lut[72]);
+    epd_write_data(lut[73]);
+
+    epd_write_cmd(0x3A); /* Dummy Line Period */
+    epd_write_data(lut[74]);
+    epd_write_cmd(0x3B); /* Gate Line Width */
+    epd_write_data(lut[75]);
+
+    epd_write_cmd(0x32); /* Write LUT Register - first 70 bytes only */
+    epd_write_data_buf(lut, 70);
+}
+#endif
+
+#if EPD_RESAMPLE_PER_REFRESH
 
 void epd_resample_temperature(void)
 {
-    /* Exactly what epd_init() does, factored out so a refresh can repeat it.
-     * 0xB1 = enable clock, load temperature, load LUT - and notably NOT
-     * display, so this is safe to run immediately before pushing a frame. */
+    /* 0xB1 = enable clock, load temperature, load LUT - and notably NOT
+     * display, so this is safe immediately before pushing a frame. */
     epd_write_cmd(0x18);
     epd_write_data(0x80);   /* the controller's internal sensor */
 
@@ -444,9 +470,29 @@ void epd_resample_temperature(void)
 #if EPD_TEMP_READ
     (void)epd_read_temperature();
 #endif
+
+#if !EPD_INIT_FROM_OTP
+    /* The load above also pulled the OTP waveform in over the hand-written
+     * one, because 0xB1 asks for both. Put ours back.
+     *
+     * This is why sampling on this path looked impossible at first, and it is
+     * not: the LUT is 70 bytes plus five small registers, which is microseconds
+     * of SPI against a refresh measured in seconds. Restoring is simply
+     * cheaper than avoiding.
+     *
+     * There may be a cheaper way still - if 0x22 bit 5 (load temperature) and
+     * bit 4 (load LUT) really are independent, then 0xA1 would sample without
+     * touching the waveform and this rewrite would be unnecessary. That is a
+     * datasheet claim we have never verified on this silicon, and the vendor's
+     * driver only ever sends 0xB1, so it is not assumed here. Worth testing:
+     * if a 0xA1 build keeps the Waveshare refresh duration, the bits split.
+     *
+     * Always the full-refresh table: nothing calls epd_init(false) today. */
+    epd_load_waveshare_lut(epd_lut_full);
+#endif
 }
 
-#endif  /* EPD_INIT_FROM_OTP */
+#endif  /* EPD_RESAMPLE_PER_REFRESH */
 
 #if EPD_TEMP_SWEEP
 
@@ -730,24 +776,7 @@ void epd_init(bool full_lut)
         epd_write_cmd(0x3C); /* Border Waveform Control */
         epd_write_data(0x03);
 
-        epd_write_cmd(0x2C); /* Write VCOM Register */
-        epd_write_data(0x55);
-
-        epd_write_cmd(0x03); /* Gate driving voltage */
-        epd_write_data(lut[70]);
-
-        epd_write_cmd(0x04); /* Source driving voltage */
-        epd_write_data(lut[71]);
-        epd_write_data(lut[72]);
-        epd_write_data(lut[73]);
-
-        epd_write_cmd(0x3A); /* Dummy Line Period */
-        epd_write_data(lut[74]);
-        epd_write_cmd(0x3B); /* Gate Line Width */
-        epd_write_data(lut[75]);
-
-        epd_write_cmd(0x32); /* Write LUT Register - first 70 bytes only */
-        epd_write_data_buf(lut, 70);
+        epd_load_waveshare_lut(lut);
 
         /* RAM address counters to the window origin (0,0) - Y increments. */
         epd_write_cmd(0x4E);
