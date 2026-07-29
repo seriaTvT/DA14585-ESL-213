@@ -1132,8 +1132,8 @@ test('the month grid highlights today, and only today', () => {
    * when both were wrong.
    *
    * Column is the weekday; row is how many weeks in from the 1st. The box is
-   * the 20x13 one INVERT() draws, offset 2px up and left of the glyph so it
-   * frames the number rather than clipping it. */
+   * the 20x13 one INVERT() draws, sitting 4px left and 3px above the glyph at
+   * (8 + col*34, 42 + row*14) so it frames the number rather than clipping it. */
   const grid = PRESETS['Month grid'];
   const noHighlight = grid.replace(/INVERT\(.*\n/, '');
   assert.notEqual(noHighlight, grid, 'the INVERT line was not found to strip');
@@ -1174,9 +1174,9 @@ test('the month grid highlights today, and only today', () => {
     const where = `${y}-${m}-${d}`;
 
     assert.equal(n, 20 * 13, `${where}: highlight is not a 20x13 box`);
-    assert.deepEqual([x0, x1], [6 + wday * 34, 6 + wday * 34 + 19],
+    assert.deepEqual([x0, x1], [4 + wday * 34, 4 + wday * 34 + 19],
       `${where}: highlight is in the wrong column`);
-    assert.deepEqual([y0, y1], [30 + rowIdx * 14, 30 + rowIdx * 14 + 12],
+    assert.deepEqual([y0, y1], [39 + rowIdx * 14, 39 + rowIdx * 14 + 12],
       `${where}: highlight is in the wrong row`);
   }
 });
