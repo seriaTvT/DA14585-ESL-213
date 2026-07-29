@@ -17,8 +17,9 @@ or arbitrary images over Bluetooth.
 ## Hardware
 
 - **SoC:** DA14585 (Cortex-M0, no internal flash — executes from SysRAM)
-- **Panel:** 2.13", SSD1680-family controller. Two board variants exist:
-  122×250 (`HINK-E0213A53-FPC-A0`, the default here) and 104×212.
+- **Panel:** 2.13", SSD1680-family controller. Two sizes are in the field —
+  122×250 (`HINK-E0213A53`) and 104×212 (`HINK-E0213A41`) — and they vary
+  independently of the board wiring, which has two variants of its own.
 - **Debug:** SWD on package pins 25 (SWDIO) and 26 (SW_CLK)
 
 ## What the firmware does
