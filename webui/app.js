@@ -96,10 +96,25 @@ tag.addEventListener('state', () => refreshConnState());
 /* ------------------------------------------------------------------ */
 
 /* Fit the panel to the column without going below 1:1 or above 3x - past that
- * the pixel grid stops reading as a screen and starts reading as art. */
+ * the pixel grid stops reading as a screen and starts reading as art.
+ *
+ * The zoom comes from a fixed reference panel rather than from the one being
+ * shown, so choosing a panel does not resize the preview. Sizing it from its
+ * own width made the *smaller* panel render much the larger of the two: the
+ * zoom is a clamped integer, and at a column width in the 640-750 px range
+ * floor(avail/212) is 3 where floor(avail/250) is still 2, so the low-res
+ * frame came out 636 px wide against the high-res one's 500.
+ *
+ * With a common reference the zoom is equal, one panel pixel is one preview
+ * pixel of the same size on both, and the low-res frame is simply the 15%
+ * narrower that it actually is. Rotation still sets the scale, since a
+ * portrait frame has a genuinely different width to fill. */
+const ZOOM_REF = PANELS.high;
+
 function show(p) {
   const avail = $('canvas').parentElement.clientWidth - 28;
-  paint(p, $('canvas'), Math.max(1, Math.min(3, Math.floor(avail / p.width))));
+  const refW = (p.rot & 1) ? ZOOM_REF.h : ZOOM_REF.w;
+  paint(p, $('canvas'), Math.max(1, Math.min(3, Math.floor(avail / refW))));
   $('rotOut').textContent = String(p.rot);
   $('dims').textContent = `${p.width}×${p.height}`;
 }
