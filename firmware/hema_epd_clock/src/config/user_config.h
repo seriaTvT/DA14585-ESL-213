@@ -208,6 +208,13 @@ static const struct advertise_configuration user_adv_conf = {
 /// board variant below, not this - see EPD_INIT_FROM_OTP in epd_ssd1680.h.
 #define EPD_PANEL_LOW_RES
 
+/// Panel-presence probe, off by default. Builds in epd_panel_present(), which
+/// asks the controller directly with cmd 0x2F the way the retail firmware
+/// does. Turn it on when a screen will not move: a disconnected panel leaves
+/// BUSY reading idle, so the refresh returns instantly and looks exactly like
+/// a bad init sequence. Costs ~240 bytes, so it stays out of a shipping image.
+// #define EPD_PANEL_PROBE 1
+
 /// Board wiring select. This header is force-included ahead of every other,
 /// so defining it here settles the variant before epd_ssd1680.h picks its
 /// own default.

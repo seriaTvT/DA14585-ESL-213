@@ -178,5 +178,13 @@ void periph_init(void)
     // panel just sits initialized-but-blank until the first CLEAR()/draw
     // commands arrive over the command GATT characteristic.
     epd_spi_claim();
+
+    /* Ask the panel whether it is there before driving it. The answer is only
+     * recorded, never acted on - see epd_panel_present(). A tag whose flex has
+     * come loose should still keep time and stay reachable over BLE. */
+#if EPD_BITBANG && EPD_PANEL_PROBE
+    (void)epd_panel_present();
+#endif
+
     epd_init(true);
 }

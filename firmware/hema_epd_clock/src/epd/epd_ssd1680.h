@@ -81,6 +81,14 @@
     #endif
 #endif
 
+/* Build the panel-presence probe in. Off by default: it is a bring-up tool for
+ * a tag whose screen will not move, not something a working tag needs, and it
+ * is ~240 bytes of flash that a shipping image should not carry. Turn it on in
+ * user_config.h when a panel is silent - see epd_panel_present(). */
+#if !defined(EPD_PANEL_PROBE)
+    #define EPD_PANEL_PROBE 0
+#endif
+
 /* ------------------------------------------------------------------------
  * BOARD VARIANT — set exactly one.
  *
@@ -254,6 +262,24 @@ void epd_spi_claim(void);
  *  full_lut: true = full-refresh waveform, false = partial-refresh waveform
  *  (mirrors the two 30-byte LUT tables found in the reference firmware). */
 void epd_init(bool full_lut);
+
+#if EPD_BITBANG && EPD_PANEL_PROBE
+/** True if a panel answers cmd 0x2F (Read Status Bit) with a driven level.
+ *
+ *  Diagnostic, not a gate: nothing refuses to run because this is false. It
+ *  exists because a disconnected panel is otherwise indistinguishable from a
+ *  bad init sequence - BUSY reads idle, the refresh returns immediately and
+ *  the screen simply stays as it was.
+ *
+ *  Only for the bit-banged boards. Variant B's D/C pin is the boot flash's
+ *  MISO, so turning the bus around there needs care this does not take.
+ *
+ *  epd_probe_pullup/epd_probe_pulldown hold the two raw reads for a debugger:
+ *  equal means a panel drove the line, 0xFF/0x00 means nothing did. */
+bool epd_panel_present(void);
+extern volatile uint8_t epd_probe_pullup;
+extern volatile uint8_t epd_probe_pulldown;
+#endif
 
 /** Push a full 1bpp framebuffer (EPD_BUF_SIZE bytes, MSB-first per row,
  *  1 = white / 0 = black - matches the vendor's own canvas2bytes() packing,

@@ -313,6 +313,70 @@ void epd_gpio_init(void)
     GPIO_ConfigurePin(EPD_PWR_PORT,  EPD_PWR_PIN,  OUTPUT, PID_GPIO, true);
 }
 
+#if EPD_BITBANG && EPD_PANEL_PROBE
+
+/* Is a panel actually answering?
+ *
+ * The retail firmware asks this before it draws anything - the routine at
+ * 0x07FC3BD6 resets the panel, sends 0x2F (Read Status Bit) and clocks one
+ * byte back, treating 0xFF as "no panel". Worth having for the same reason it
+ * had it: every other symptom of a disconnected panel looks like a driver bug.
+ * A dead BUSY line reads as permanently idle, so a refresh "succeeds" in no
+ * time and leaves the screen untouched, which is indistinguishable from a bad
+ * init sequence unless you ask the controller directly.
+ *
+ * The read is the retail one, clocked the same way: CS low, D/C high, SDA
+ * turned around to an input, then 8 x {SCK low, sample, SCK high}, MSB first.
+ *
+ * Sampled twice, once against each internal pull, which is what makes the
+ * answer trustworthy. A panel that is there drives the line and both passes
+ * agree; a line nobody is driving simply follows the pull and they come back
+ * 0xFF and 0x00. That distinguishes "absent" from "present and reporting all
+ * ones", which a single read cannot.
+ *
+ * Results are left here for a debugger to read - see epd_probe_pullup /
+ * epd_probe_pulldown. Nothing in the firmware acts on them: a tag whose panel
+ * has come loose should still keep its clock and its BLE link. */
+volatile uint8_t epd_probe_pullup;
+volatile uint8_t epd_probe_pulldown;
+
+static uint8_t epd_read_byte(uint32_t sda_mode)
+{
+    uint8_t v = 0;
+
+    epd_cs_low();
+    GPIO_SetInactive(EPD_SCK_PORT, EPD_SCK_PIN);
+    GPIO_SetActive(EPD_DC_PORT, EPD_DC_PIN);      /* data phase */
+    GPIO_ConfigurePin(EPD_SDA_PORT, EPD_SDA_PIN,
+                      (GPIO_PUPD)sda_mode, PID_GPIO, false);
+
+    for (uint8_t i = 0; i < 8; i++) {
+        GPIO_SetInactive(EPD_SCK_PORT, EPD_SCK_PIN);
+        v = (uint8_t)((v << 1) |
+                      (GPIO_GetPinStatus(EPD_SDA_PORT, EPD_SDA_PIN) ? 1u : 0u));
+        GPIO_SetActive(EPD_SCK_PORT, EPD_SCK_PIN);
+    }
+
+    GPIO_ConfigurePin(EPD_SDA_PORT, EPD_SDA_PIN, OUTPUT, PID_GPIO, false);
+    epd_cs_high();
+    return v;
+}
+
+bool epd_panel_present(void)
+{
+    epd_hw_reset();
+
+    epd_write_cmd(0x2F);
+    epd_probe_pullup = epd_read_byte(INPUT_PULLUP);
+
+    epd_write_cmd(0x2F);
+    epd_probe_pulldown = epd_read_byte(INPUT_PULLDOWN);
+
+    return epd_probe_pullup == epd_probe_pulldown;
+}
+
+#endif  /* EPD_BITBANG && EPD_PANEL_PROBE */
+
 void epd_init(bool full_lut)
 {
 #if EPD_INIT_FROM_OTP
