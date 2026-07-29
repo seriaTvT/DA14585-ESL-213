@@ -51,6 +51,37 @@
 #define EPD_BUF_SIZE     (EPD_WIDTH_BYTES * EPD_HEIGHT)
 
 /* ------------------------------------------------------------------------
+ * Which init sequence the panel gets.
+ *
+ * Two exist, and the axis that chooses between them is the BOARD, not the
+ * panel size:
+ *
+ *   OTP        the sequence the retail firmware uses. Writes no waveform at
+ *              all - cmd 0x18 selects the internal temperature sensor and cmd
+ *              0x22 bit 4 loads the factory LUT out of the controller's OTP.
+ *   WAVESHARE  a hand-written 70-byte LUT via cmd 0x32, from Waveshare's
+ *              EPD_2IN13_V2 reference. Proven on the Type 1 board.
+ *
+ * This was gated on panel resolution when the A41 was first driven, which
+ * happened to work but was the wrong reading. In the retail firmware the
+ * 104x212 and 122x250 panel descriptors register the *same* vtable - the
+ * constructor at 0x07FC3BF6, whose init is 0x07FC399E - so that one sequence
+ * drives both sizes. What it does not cover is variant B, which is the board
+ * we have only ever driven with the Waveshare LUT.
+ *
+ * So: variant A takes the sequence its own firmware ships with, at whatever
+ * geometry; variant B keeps the one proven on it. Set EPD_INIT_FROM_OTP
+ * explicitly to override.
+ * ---------------------------------------------------------------------- */
+#if !defined(EPD_INIT_FROM_OTP)
+    #if defined(EPD_BOARD_VARIANT_A)
+        #define EPD_INIT_FROM_OTP 1
+    #else
+        #define EPD_INIT_FROM_OTP 0
+    #endif
+#endif
+
+/* ------------------------------------------------------------------------
  * BOARD VARIANT — set exactly one.
  *
  * Two ESL boards exist carrying the same DA14585 and the same SSD1680-family

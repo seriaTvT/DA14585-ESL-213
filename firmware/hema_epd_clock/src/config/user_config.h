@@ -203,6 +203,9 @@ static const struct advertise_configuration user_adv_conf = {
 /// Panel resolution select - the 122x250 high-res panel is the default;
 /// define EPD_PANEL_LOW_RES for the 104x212 part (Type 3 tags). See
 /// epd_ssd1680.h and PROTOCOL_NOTES.md section 2.
+///
+/// This is only the resolution. Which init sequence the panel gets follows the
+/// board variant below, not this - see EPD_INIT_FROM_OTP in epd_ssd1680.h.
 #define EPD_PANEL_LOW_RES
 
 /// Board wiring select. This header is force-included ahead of every other,

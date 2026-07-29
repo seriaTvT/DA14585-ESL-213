@@ -1,16 +1,19 @@
 /**
  * epd_ssd1680.c
  *
- * There are two init sequences here, picked by EPD_PANEL_LOW_RES.
+ * There are two init sequences here, picked by EPD_INIT_FROM_OTP - which
+ * follows the board variant, not the panel size. See the comment on that macro
+ * in epd_ssd1680.h for why.
  *
- * LOW-RES (HINK-E0213A41, 104x212) takes the sequence from that tag's own
- * retail firmware, and loads the waveform from the controller's OTP. See the
- * comment in epd_init() and hema-local/re/type3/README.md.
+ * VARIANT A takes the sequence from those tags' own retail firmware and loads
+ * the waveform from the controller's OTP. One sequence covers both panel
+ * sizes, because the retail firmware points both panel descriptors at it. See
+ * epd_init() below and hema-local/re/type3/README.md.
  *
- * HIGH-RES (HINK-E0213A53, 122x250) is the Waveshare-derived path described
- * below, with a hand-written LUT. It is the one proven on the Type 1 tag.
+ * VARIANT B is the Waveshare-derived path described below, with a hand-written
+ * LUT. It is the one proven on the Type 1 tag.
  *
- * Everything below this point describes the high-res path only.
+ * Everything below this point describes the variant-B path only.
  *
  * Init sequence and LUT tables below now follow Waveshare's own
  * EPD_2IN13_V2 reference driver verbatim (STM32-F103ZET6/User/e-Paper/
@@ -154,10 +157,10 @@ static void epd_wait_busy(void)
 
 static void epd_hw_reset(void)
 {
-#if defined(EPD_PANEL_LOW_RES)
-    /* The A41's own retail driver holds every phase for 100ms, including the
+#if EPD_INIT_FROM_OTP
+    /* Variant A's own retail driver holds every phase for 100ms, including the
      * low pulse - where Waveshare's is 2ms. Transcribed from the reset routine
-     * at 0x07FC3960 in the tag's stock image. */
+     * at 0x07FC3960 in a stock image. */
     GPIO_SetActive(EPD_RST_PORT, EPD_RST_PIN);
     epd_delay_ms(100);
     GPIO_SetInactive(EPD_RST_PORT, EPD_RST_PIN);
@@ -175,7 +178,7 @@ static void epd_hw_reset(void)
 #endif
 }
 
-#if !defined(EPD_PANEL_LOW_RES)
+#if !EPD_INIT_FROM_OTP
 
 /* ---- LUT tables ------------------------------------------------------------
  * High-res (A53) panels only. The low-res A41 takes its waveform from the
@@ -225,7 +228,7 @@ static const uint8_t epd_lut_partial[76] = {
     0x15,0x41,0xA8,0x32,0x30,0x0A,
 };
 
-#endif  /* !EPD_PANEL_LOW_RES */
+#endif  /* !EPD_INIT_FROM_OTP */
 
 /* ---- public API ----------------------------------------------------------- */
 
@@ -312,19 +315,23 @@ void epd_gpio_init(void)
 
 void epd_init(bool full_lut)
 {
-#if defined(EPD_PANEL_LOW_RES)
-    /* Transcribed from the A41 tag's own retail firmware - the panel-init
-     * routine at 0x07FC3960/0x07FC399E in re/type3/t3_bank1_running.bin, which
-     * is the driver its 104x212 descriptor actually points at. This is the only
-     * sequence we have that is known to drive this panel.
+#if EPD_INIT_FROM_OTP
+    /* Transcribed from a variant-A tag's own retail firmware - the panel-init
+     * routine at 0x07FC3960/0x07FC399E in re/type3/t3_bank1_running.bin.
      *
-     * The decisive difference from the high-res path below is that it writes
+     * Geometry-independent on purpose. That firmware registers the same vtable
+     * for its 104x212 and its 122x250 descriptors (both call the constructor at
+     * 0x07FC3BF6), and the routine takes width and height as arguments, so this
+     * one sequence is what the vendor uses to drive either panel. Everything
+     * below reads its size from EPD_WIDTH/EPD_HEIGHT for the same reason.
+     *
+     * The decisive difference from the variant-B path below is that it writes
      * NO waveform. There is no cmd 0x32 anywhere on this path (nor cmd 0x2C /
      * 0x03 / 0x04 / 0x3A / 0x3B, which only exist to tune a hand-written one):
      * instead cmd 0x18 selects the internal temperature sensor and cmd 0x22
      * bit 4 tells the controller to load its own factory waveform from OTP.
-     * Our Waveshare LUT is an A53 table and this panel is an A41, which is the
-     * best explanation we have for it going busy and never coming back.
+     * Overriding that with a Waveshare LUT is what left the A41 going busy and
+     * never coming back.
      *
      * Partial refresh has no equivalent here yet - nothing calls epd_init(false)
      * today, and working out the OTP path's partial mode needs a panel we can
@@ -488,7 +495,7 @@ void epd_init(bool full_lut)
         epd_write_cmd(0x3C); /* Border Waveform Control */
         epd_write_data(0x01);
     }
-#endif  /* EPD_PANEL_LOW_RES */
+#endif  /* EPD_INIT_FROM_OTP */
 }
 
 bool epd_display_busy(void)
