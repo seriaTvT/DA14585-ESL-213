@@ -33,10 +33,13 @@
 #include "gpio.h"
 
 /* ------------------------------------------------------------------------
- * Panel geometry. This board's panel is HINK-E0213A53-FPC-A0 = the high-res
- * 122x250 variant (confirmed from the FPC label in the board photo), so
- * high-res is the default. To build for the low-res 104x212 panel instead,
- * define EPD_PANEL_LOW_RES project-wide.
+ * Panel geometry. Both sizes are in the field and vary independently of the
+ * board wiring, so this comes from the tag type - config/tag_types.h defines
+ * EPD_PANEL_LOW_RES for the types that carry the 104x212 A41. High-res is only
+ * the fallback for builds that never see that header, the host tests included.
+ *
+ * Read the size off the FPC label rather than inferring it: A53 is 122x250,
+ * A41 and A07 are 104x212.
  * ---------------------------------------------------------------------- */
 #if defined(EPD_PANEL_LOW_RES)
     #define EPD_WIDTH   104
@@ -53,25 +56,29 @@
 /* ------------------------------------------------------------------------
  * Which init sequence the panel gets.
  *
- * Two exist, and the axis that chooses between them is the BOARD, not the
- * panel size:
- *
  *   OTP        the sequence the retail firmware uses. Writes no waveform at
  *              all - cmd 0x18 selects the internal temperature sensor and cmd
  *              0x22 bit 4 loads the factory LUT out of the controller's OTP.
+ *              Temperature-compensated: measured 2.6x longer at 0 C than at
+ *              30 C, so it is also the slower of the two at room temperature.
  *   WAVESHARE  a hand-written 70-byte LUT via cmd 0x32, from Waveshare's
- *              EPD_2IN13_V2 reference. Proven on the Type 1 board.
+ *              EPD_2IN13_V2 reference. Fixed, temperature-independent, and
+ *              roughly 2.5x quicker.
  *
- * This was gated on panel resolution when the A41 was first driven, which
- * happened to work but was the wrong reading. In the retail firmware the
- * 104x212 and 122x250 panel descriptors register the *same* vtable - the
- * constructor at 0x07FC3BF6, whose init is 0x07FC399E - so that one sequence
- * drives both sizes. What it does not cover is variant B, which is the board
- * we have only ever driven with the Waveshare LUT.
+ * WHICH ONE A PANEL WILL ACCEPT IS NOT PREDICTABLE FROM ANYTHING VISIBLE.
+ * It was gated on panel resolution once, then on board variant; both looked
+ * right against every tag available at the time and both were falsified by the
+ * next tag. Two A41 panels on identical variant-B boards disagree: one drives
+ * on either waveform, the other only on OTP, and on the Waveshare table its
+ * matrix stays completely inert while the border still flickers. The lot code
+ * on the FPC is the only thing that has tracked it so far.
  *
- * So: variant A takes the sequence its own firmware ships with, at whatever
- * geometry; variant B keeps the one proven on it. Set EPD_INIT_FROM_OTP
- * explicitly to override.
+ * So this is not derived here any more. config/tag_types.h sets it per tag
+ * type, defaulting to whatever drives every unit of that type we have actually
+ * tested, and tools/build.sh --fast overrides it per build. The fallback below
+ * exists only for builds that never see that header - the host tests.
+ *
+ * See hema-local/docs/TAG_VARIANTS.md and hema-local/re/type4/README.md.
  * ---------------------------------------------------------------------- */
 #if !defined(EPD_INIT_FROM_OTP)
     #if defined(EPD_BOARD_VARIANT_A)
@@ -134,9 +141,11 @@
  *
  * Set to 0 to go back to 0xB1 followed by rewriting the LUT, which is what the
  * vendor's driver does and is equally proven (31 polls, 27 C on the same tag).
- * Verified on one panel; the bit semantics belong to the controller rather than
- * the panel, so it should generalise, but that is reasoning and not a
- * measurement. */
+ *
+ * Since confirmed on a second panel type and a second board variant - Type 1
+ * (variant B, A53) and Type 3 (variant A, A41) both report a sane temperature
+ * on it with their refresh unchanged - so the bit semantics do belong to the
+ * controller rather than to any one panel, as expected. */
 #if !defined(EPD_TEMP_LOAD_NOLUT)
     #define EPD_TEMP_LOAD_NOLUT 1
 #endif
