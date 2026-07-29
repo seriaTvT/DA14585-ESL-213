@@ -133,7 +133,15 @@ function render() {
   const script = $('editor').value;
   panel.setRotation(0);
   panel.clear(1);
-  const { warnings, every } = runScript(panel, script, tagSecondsNow());
+  /* The preview's own temperature, not the tag's: nothing here can read the
+   * panel's sensor, and the tag substitutes its own {T} when it renders. This
+   * exists so a face using {T} can be laid out and its width judged - a
+   * two-digit reading and a negative one are different widths, which is
+   * exactly the kind of thing a preview is for. Blank the field to see what a
+   * build with no temperature reading shows, which is the literal "{T}". */
+  const tempRaw = $('previewTemp').value;
+  const previewTemp = tempRaw === '' ? undefined : parseInt(tempRaw, 10);
+  const { warnings, every } = runScript(panel, script, tagSecondsNow(), previewTemp);
   show(panel);
   showNotes(script, warnings, every);
 }
@@ -472,6 +480,9 @@ $('revert').addEventListener('click', () => {
 });
 
 $('editor').addEventListener('input', render);
+/* Same re-render path as the editor: changing what {T} stands for changes the
+ * drawing, and a face using it should reflow as you type a different reading. */
+$('previewTemp').addEventListener('input', render);
 window.addEventListener('resize', render);
 
 $('tabTemplate').addEventListener('click', () => setMode('template'));

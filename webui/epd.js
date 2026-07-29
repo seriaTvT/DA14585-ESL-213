@@ -393,12 +393,19 @@ export function varNum(name, tm) {
     case 'G': return tm.wyear;
     case 'h': return (tm.hour % 12) || 12;   /* midnight and noon are 12 */
     case 'u': return tm.u;
+    /* Panel temperature, whole degrees Celsius. undefined unless a caller
+     * supplied one, so {T} renders literally in a preview that has no reading
+     * to show - which is exactly what the firmware does when nothing has
+     * called epd_cmd_set_temp(). The two have to agree or the byte-identity
+     * test would be comparing a number against the literal text. */
+    case 'T': return tm.temp;
     default:  return undefined;
   }
 }
 
-export function expandVars(input, secs) {
+export function expandVars(input, secs, temp) {
   const tm = tagTime(secs);
+  tm.temp = temp;
   let out = '';
   let i = 0;
 
@@ -414,7 +421,15 @@ export function expandVars(input, secs) {
     const n = varNum(name, tm);
 
     if (n !== undefined) {
-      out += String(n).padStart(width, zero ? '0' : ' ');
+      /* Zero padding puts the sign first, as printf("%03d", -5) gives "-05"
+       * and not "0-5" - String(-5).padStart(3,'0') would give the latter.
+       * Matches append_int() in epd_cmdparser.c; the byte-identity test covers
+       * a negative, which only became reachable when {T} arrived. */
+      if (zero && n < 0) {
+        out += '-' + String(-n).padStart(width > 0 ? width - 1 : 0, '0');
+      } else {
+        out += String(n).padStart(width, zero ? '0' : ' ');
+      }
     } else if (name === 'W') {
       out += WDAY_NAME[tm.wday % 7];
     } else if (name === 'M') {
@@ -725,7 +740,7 @@ export const EVERY_MAX = 1440;
  * Returns { warnings: [{line, text, msg}] } - authoring aid only; the firmware
  * itself ignores everything it doesn't recognise.
  */
-export function runScript(panel, script, secs) {
+export function runScript(panel, script, secs, temp) {
   const warnings = [];
   /* Default to a repaint a minute, and reset per run, so the interval is a
    * property of this script and nothing carried over - matching epd_cmd_run(),
@@ -741,6 +756,10 @@ export function runScript(panel, script, secs) {
    * per reference would let a script that straddles a second boundary render
    * {S} inconsistently between its own lines. */
   const tm = tagTime(secs);
+  /* Carried on tm rather than passed alongside it, so every consumer that
+   * already takes tm - varNum(), the expression evaluator, expandVars() -
+   * sees it without a second parameter threaded through each one. */
+  tm.temp = temp;
 
   lines.forEach((raw, n) => {
     /* Leading whitespace is skipped by the firmware too (skip_ws), so an
@@ -799,7 +818,7 @@ export function runScript(panel, script, secs) {
         const [x, y] = a.ints(2);
         const str = a.str();
         const scale = a.named('scale', 1);
-        const shown = expandVars(str, secs);
+        const shown = expandVars(str, secs, temp);
 
         /* align= moves the anchor: x is the left edge at 0, the centre at 1,
          * the right edge at 2. Measured after expansion, because the width of

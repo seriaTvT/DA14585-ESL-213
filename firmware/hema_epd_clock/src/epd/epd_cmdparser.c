@@ -45,6 +45,48 @@
  * ------------------------------------------------------------------------- */
 
 static void append_uint(char *out, uint16_t out_size, uint16_t *n,
+                        uint32_t val, uint8_t width, bool zero_pad);
+
+/* Signed wrapper. Every variable was non-negative until {T} arrived, so the
+ * unsigned version below was correct by construction and the cast at the call
+ * site was invisible - a negative would have rendered as 4294967291 rather
+ * than -5. A panel below freezing is a real state (the OTP waveform table runs
+ * to -20 C), so it needs the sign.
+ *
+ * Zero padding puts the sign first, as printf("%03d", -5) does: "-05", not
+ * "0-5". The width counts the sign, so {T:03d} is three characters either way.
+ * webui/epd.js does the same; the byte-identity test covers a negative. */
+static void append_int(char *out, uint16_t out_size, uint16_t *n,
+                       int32_t val, uint8_t width, bool zero_pad)
+{
+    uint32_t mag;
+
+    if (val >= 0) {
+        append_uint(out, out_size, n, (uint32_t)val, width, zero_pad);
+        return;
+    }
+
+    /* Negated as unsigned so INT32_MIN does not overflow on the way. */
+    mag = (uint32_t)0 - (uint32_t)val;
+
+    if (zero_pad) {
+        if (*n < out_size - 1) out[(*n)++] = '-';
+        append_uint(out, out_size, n, mag, width ? width - 1 : 0, true);
+    } else {
+        char tmp[12];
+        uint8_t len = 0;
+        uint32_t v = mag;
+
+        do { tmp[len++] = (char)('0' + (v % 10)); v /= 10; }
+        while (v && len < sizeof(tmp));
+        tmp[len++] = '-';
+
+        while (len < width && len < sizeof(tmp)) tmp[len++] = ' ';
+        while (len-- > 0 && *n < out_size - 1) out[(*n)++] = tmp[len];
+    }
+}
+
+static void append_uint(char *out, uint16_t out_size, uint16_t *n,
                         uint32_t val, uint8_t width, bool zero_pad)
 {
     char tmp[12];
@@ -191,7 +233,7 @@ static void expand_vars(const char *in, char *out, uint16_t out_size)
         int32_t num = 0;
 
         if (nlen && var_num(name, &num)) {
-            append_uint(out, out_size, &n, (uint32_t)num, width, zero_pad);
+            append_int(out, out_size, &n, num, width, zero_pad);
         } else if (name[0]=='W' && !name[1]) {
             append_str(out, out_size, &n, WDAY_NAME[s_tm.wday % 7]);
         } else if (name[0]=='M' && !name[1]) {
