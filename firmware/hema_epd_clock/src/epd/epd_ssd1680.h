@@ -126,6 +126,28 @@
  * the life of the boot. */
 #define EPD_RESAMPLE_PER_REFRESH  (EPD_INIT_FROM_OTP || EPD_TEMP_READ)
 
+/* Experiment: are cmd 0x22's "load temperature" and "load LUT" separable?
+ *
+ * We send 0xB1 because that is what the vendor sends, and it does both - which
+ * is why a Waveshare build has to write its LUT back afterwards. If bit 4 (load
+ * LUT) really is independent of bit 5 (load temperature), then 0xA1 would
+ * sample the sensor and leave the waveform alone, and that rewrite could go.
+ *
+ * Set this to 1 to send 0xA1 and skip the restore. Then measure: the answer is
+ * the refresh duration, because the two waveforms are far apart. On the panel
+ * that accepts both, Waveshare is ~60 frames (about 24 polls of s_poll_count)
+ * and OTP is 3003 ms (60 polls). So:
+ *
+ *   ~24 polls, epd_temp_c sane   the bits split - drop the rewrite
+ *   ~60 polls                    0xA1 loaded the OTP waveform anyway
+ *   epd_temp_c stale or absurd   bit 5 alone does not load the temperature
+ *
+ * Run it on a panel that Waveshare actually drives, or "waveform preserved"
+ * and "panel inert" are indistinguishable. */
+#if !defined(EPD_TEMP_LOAD_NOLUT)
+    #define EPD_TEMP_LOAD_NOLUT 0
+#endif
+
 /* Map the panel's OTP waveform against temperature, by lying to the
  * controller about how warm it is.
  *

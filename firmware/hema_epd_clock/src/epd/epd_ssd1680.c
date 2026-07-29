@@ -463,7 +463,11 @@ void epd_resample_temperature(void)
     epd_write_data(0x80);   /* the controller's internal sensor */
 
     epd_write_cmd(0x22);
+#if EPD_TEMP_LOAD_NOLUT
+    epd_write_data(0xA1);   /* load temperature, and NOT the LUT - untested */
+#else
     epd_write_data(0xB1);
+#endif
     epd_write_cmd(0x20);    /* Master Activation */
     epd_wait_busy();
 
@@ -471,7 +475,7 @@ void epd_resample_temperature(void)
     (void)epd_read_temperature();
 #endif
 
-#if !EPD_INIT_FROM_OTP
+#if !EPD_INIT_FROM_OTP && !EPD_TEMP_LOAD_NOLUT
     /* The load above also pulled the OTP waveform in over the hand-written
      * one, because 0xB1 asks for both. Put ours back.
      *
