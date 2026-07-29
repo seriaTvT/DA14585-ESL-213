@@ -97,25 +97,19 @@
  * between those a healthy sensor and a stuck one look identical from the
  * outside. Read the number; do not infer it from how long a refresh took.
  *
- * Works on BOTH waveform paths, but defaults on only for OTP.
+ * On by default everywhere. It was opt-in on the Waveshare path while
+ * sampling meant cmd 0x22 = 0xB1, which drags the OTP waveform in with the
+ * temperature and made every refresh rewrite the hand-written LUT to undo it.
+ * 0xA1 does not touch the waveform at all (see EPD_TEMP_LOAD_NOLUT), so that
+ * reason is gone and the only remaining cost is ~250 bytes and one small SPI
+ * transaction per refresh.
  *
- * Sampling on the OTP path means cmd 0x22 = 0xB1, which loads the temperature
- * and the waveform that matches it - exactly what that path wants anyway. On
- * the Waveshare path it means 0xA1, which loads only the temperature and
- * leaves the hand-written LUT alone (see EPD_TEMP_LOAD_NOLUT). So it is close
- * to free on either.
- *
- * The default differs because the VALUE differs, not the cost. An OTP build
- * needs the reading to keep its waveform matched to the temperature, so it
- * pays for itself. A Waveshare build gains only the number, since that LUT is
- * fixed and temperature-independent - worth having for {T}, not worth
- * spending ~250 bytes on by default.
- *
- * Turn it on for a fast tag that should display {T}:
- *     tools/build.sh --type 4 --fast --temp
+ * Leaving it off would mean {T} renders as the literal "{T}" on that build -
+ * correct, and a confusing thing to meet on a tag you expected to show a
+ * temperature. Set EPD_TEMP_READ to 0 explicitly to get the bytes back.
  */
 #if !defined(EPD_TEMP_READ)
-    #define EPD_TEMP_READ EPD_INIT_FROM_OTP
+    #define EPD_TEMP_READ 1
 #endif
 
 /* Whether a refresh re-samples at all. Two independent reasons: an OTP build

@@ -7,8 +7,6 @@
 #                                     faster, and dead on some panels
 #   tools/build.sh --all           -> every type, plus a -fast image for each
 #                                     type that defaults to the OTP waveform
-#   tools/build.sh --type 4 --fast --temp
-#                                   -> fast waveform that can still show {T}
 #   tools/build.sh --type 3 --clean
 #
 # A tag type used to be two macros - the board variant and the panel size -
@@ -51,7 +49,6 @@ known_types() {
 types=
 force_clean=0
 fast=0
-temp=0
 also_fast=0
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -59,7 +56,6 @@ while [ $# -gt 0 ]; do
         --type=*)  types="${types}${types:+ }${1#*=}"; shift ;;
         --all)     types="$(known_types | tr '\n' ' ')"; also_fast=1; shift ;;
         --fast)    fast=1; shift ;;
-        --temp)    temp=1; shift ;;
         --clean)   force_clean=1; shift ;;
         -h|--help) usage; exit 2 ;;
         *)         echo "build.sh: unknown argument $1" >&2; usage; exit 2 ;;
@@ -130,20 +126,9 @@ verify_stamp() {
 }
 
 build_one() {
-    local t=$1 want_fast=$2 defs suffix tsuffix label last=
+    local t=$1 want_fast=$2 defs suffix label last=
     defs="-DHEMA_TAG_TYPE=$t"
     suffix=
-    tsuffix=
-    if [ "$temp" = 1 ]; then
-        # The reading works on either waveform; it is only the default that
-        # differs, because a Waveshare build gains nothing from it but the
-        # number. Asking for it explicitly is how a fast tag gets {T}.
-        defs="$defs -DEPD_TEMP_READ=1"
-        # Part of the name too, so the stamp below forces a clean when the flag
-        # changes and the two never overwrite each other on disk. make cannot
-        # see a -D change on its own; that is the whole reason .tag_type exists.
-        tsuffix="-temp"
-    fi
     if [ "$want_fast" = 1 ]; then
         # Force the Waveshare table over whatever tag_types.h picked for this
         # type. Faster, and on some panels it does not drive the matrix at all
@@ -152,7 +137,6 @@ build_one() {
         defs="$defs -DEPD_INIT_FROM_OTP=0"
         suffix="-fast"
     fi
-    suffix="$suffix$tsuffix"
     label="$t$suffix"
     [ -r "$BUILD/.tag_type" ] && last=$(cat "$BUILD/.tag_type")
 
