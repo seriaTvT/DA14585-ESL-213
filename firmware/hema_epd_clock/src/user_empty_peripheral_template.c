@@ -56,7 +56,17 @@ static timer_hnd s_flush_timer = EASY_TIMER_INVALID_TIMER;
  * queued rather than dropped - dropping it would lose whichever repaint came
  * second, which for the minute tick means a visibly stopped clock. */
 #define EPD_POLL_DELAY      5      /* 10 ms units -> 50 ms between BUSY polls */
-#define EPD_REFRESH_TIMEOUT 100    /* polls -> 5 s, ~2.5x a real refresh      */
+
+/* Polls before giving up. This was 100 (5 s), sized against the high-res
+ * panel's ~2 s refresh - but the low-res panel measured 67 polls (~3.4 s) on a
+ * warm bench, leaving only 1.5x margin, and it loads a temperature-compensated
+ * waveform from OTP so a cold tag legitimately refreshes slower still. A tag on
+ * a chilled shelf would have tripped this while working perfectly.
+ *
+ * The only cost of a longer timeout is waiting longer to give up on a panel
+ * that is genuinely stuck, which is rare and not time-critical; the cost of one
+ * that is too short is a working panel declared dead. */
+#define EPD_REFRESH_TIMEOUT 200    /* polls -> 10 s                           */
 
 /* What to repaint once the in-flight refresh finishes. The distinction matters
  * because the two sources disagree about who owns the framebuffer: a script
