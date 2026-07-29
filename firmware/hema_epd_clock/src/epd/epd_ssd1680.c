@@ -66,6 +66,9 @@ const char epd_panel_tag[] = EPD_PANEL_TAG;
 __attribute__((used))
 const char hema_tag_type_tag[] = HEMA_TAG_TYPE_TAG;
 
+__attribute__((used))
+const char hema_waveform_tag[] = HEMA_WAVEFORM_TAG;
+
 /* Pixel polarity, CONFIRMED ON HARDWARE (2026-07-25).
  *
  * Our framebuffer uses 1 = white / 0 = black (matching the vendor's drawing

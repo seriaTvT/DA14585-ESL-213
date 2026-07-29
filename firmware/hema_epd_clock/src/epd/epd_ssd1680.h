@@ -328,6 +328,17 @@
 #define HEMA_TAG_TYPE_TAG       "HEMA-TAG-TYPE-0"
 #endif
 
+/* Likewise the waveform. config/tag_types.h normally defines this from
+ * EPD_INIT_FROM_OTP; the fallback covers a build that never saw that header
+ * and derives it from whatever the resolution above settled on. */
+#if !defined(HEMA_WAVEFORM_TAG)
+    #if EPD_INIT_FROM_OTP
+        #define HEMA_WAVEFORM_TAG  "HEMA-WAVEFORM-OTP"
+    #else
+        #define HEMA_WAVEFORM_TAG  "HEMA-WAVEFORM-WAVESHARE"
+    #endif
+#endif
+
 /* ------------------------------------------------------------------------
  * API
  * ---------------------------------------------------------------------- */

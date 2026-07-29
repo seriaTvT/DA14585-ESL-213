@@ -3,7 +3,10 @@
 # build.sh - build the firmware for one tag type, or for every type at once.
 #
 #   tools/build.sh --type 3        -> out/hema_epd_clock-type3.bin
-#   tools/build.sh --all           -> one image per known type, into out/
+#   tools/build.sh --type 3 --fast -> the Waveshare waveform instead: ~2.5x
+#                                     faster, and dead on some panels
+#   tools/build.sh --all           -> every type, plus a -fast image for each
+#                                     type that defaults to the OTP waveform
 #   tools/build.sh --type 3 --clean
 #
 # A tag type used to be two macros - the board variant and the panel size -
@@ -45,11 +48,14 @@ known_types() {
 
 types=
 force_clean=0
+fast=0
+also_fast=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --type)    types="${types}${types:+ }${2:-}"; shift 2 ;;
         --type=*)  types="${types}${types:+ }${1#*=}"; shift ;;
-        --all)     types="$(known_types | tr '\n' ' ')"; shift ;;
+        --all)     types="$(known_types | tr '\n' ' ')"; also_fast=1; shift ;;
+        --fast)    fast=1; shift ;;
         --clean)   force_clean=1; shift ;;
         -h|--help) usage; exit 2 ;;
         *)         echo "build.sh: unknown argument $1" >&2; usage; exit 2 ;;
@@ -120,14 +126,25 @@ verify_stamp() {
 }
 
 build_one() {
-    local t=$1 last=
+    local t=$1 want_fast=$2 defs suffix label last=
+    defs="-DHEMA_TAG_TYPE=$t"
+    suffix=
+    if [ "$want_fast" = 1 ]; then
+        # Force the Waveshare table over whatever tag_types.h picked for this
+        # type. Faster, and on some panels it does not drive the matrix at all
+        # - see the table in tag_types.h. Named so the two never get mixed up
+        # on disk, because the failure is invisible until you look at a screen.
+        defs="$defs -DEPD_INIT_FROM_OTP=0"
+        suffix="-fast"
+    fi
+    label="$t$suffix"
     [ -r "$BUILD/.tag_type" ] && last=$(cat "$BUILD/.tag_type")
 
     # The type reaches every file through user_config.h, which is force-
     # included into every translation unit, so a switch rebuilds everything
     # anyway - and make cannot see a define change on its own. Clean rather
     # than trust it.
-    if [ "$force_clean" = 1 ] || [ "$last" != "$t" ]; then
+    if [ "$force_clean" = 1 ] || [ "$last" != "$label" ]; then
         rm -f "$BUILD/.tag_type"
         # Both streams: e2 studio's clean runs xargs -t, which echoes the whole
         # object list to stderr. Its recipe lines are all `-` prefixed, so it
@@ -136,27 +153,45 @@ build_one() {
     fi
 
     echo
-    echo "=== type $t ==="
-    make -C "$BUILD" -j4 TAG_DEFS="-DHEMA_TAG_TYPE=$t" all | tail -3
-    echo "$t" > "$BUILD/.tag_type"
+    echo "=== type $label ==="
+    make -C "$BUILD" -j4 TAG_DEFS="$defs" all | tail -3
+    echo "$label" > "$BUILD/.tag_type"
 
     verify_stamp "$BUILD/hema_epd_clock.bin" "$t"
 
     mkdir -p "$OUT"
-    cp "$BUILD/hema_epd_clock.bin" "$OUT/hema_epd_clock-type$t.bin"
-    cp "$BUILD/hema_epd_clock.elf" "$OUT/hema_epd_clock-type$t.elf"
+    cp "$BUILD/hema_epd_clock.bin" "$OUT/hema_epd_clock-type$t$suffix.bin"
+    cp "$BUILD/hema_epd_clock.elf" "$OUT/hema_epd_clock-type$t$suffix.elf"
 
     # Echo back what the binary itself says, not what we asked for.
-    printf '  %s  %s  %s  %s\n' \
+    printf '  %s  %s  %s  %s\n      -> out/hema_epd_clock-type%s%s.bin\n' \
         "$(strings -a "$BUILD/hema_epd_clock.bin" | grep -om1 'HEMA-TAG-TYPE-[0-9]\+')" \
         "$(strings -a "$BUILD/hema_epd_clock.bin" | grep -om1 'HEMA-BOARD-VARIANT-[AB]')" \
         "$(strings -a "$BUILD/hema_epd_clock.bin" | grep -om1 'HEMA-PANEL-[0-9x]\+')" \
-        "-> out/hema_epd_clock-type$t.bin"
+        "$(strings -a "$BUILD/hema_epd_clock.bin" | grep -om1 'HEMA-WAVEFORM-[A-Z]\+')" \
+        "$t" "$suffix"
+}
+
+# Does this type default to OTP? Only then is a separate --fast image a
+# different binary worth building - a type already on Waveshare would just be
+# the same image under a second name.
+type_defaults_to_otp() {
+    grep -A4 "HEMA_TAG_TYPE == $1\$" "$TABLE" \
+        | grep -qE 'HEMA_TAG_OTP_DEFAULT[[:space:]]+1'
 }
 
 "$HERE/tools/sync.sh" --local
 ensure_tag_defs
-for t in $types; do build_one "$t"; done
+for t in $types; do
+    build_one "$t" "$fast"
+    # --all also produces the fast alternative for any type whose default is
+    # the slower OTP waveform, so the faster image is on hand to try per tag
+    # without a rebuild. It is not the default: it does not drive every panel,
+    # and when it does not, the matrix stays dead with only the border moving.
+    if [ "$also_fast" = 1 ] && [ "$fast" != 1 ] && type_defaults_to_otp "$t"; then
+        build_one "$t" 1
+    fi
+done
 
 cat <<EOF
 

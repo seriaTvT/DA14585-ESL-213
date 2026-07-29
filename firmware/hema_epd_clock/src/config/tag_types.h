@@ -60,16 +60,58 @@
  */
 #if   HEMA_TAG_TYPE == 1
     #define EPD_BOARD_VARIANT_B
+    #define HEMA_TAG_OTP_DEFAULT 0
 #elif HEMA_TAG_TYPE == 2
     #define EPD_BOARD_VARIANT_A
+    #define HEMA_TAG_OTP_DEFAULT 1
 #elif HEMA_TAG_TYPE == 3
     #define EPD_BOARD_VARIANT_A
     #define EPD_PANEL_LOW_RES
+    #define HEMA_TAG_OTP_DEFAULT 1
 #elif HEMA_TAG_TYPE == 4
     #define EPD_BOARD_VARIANT_B
     #define EPD_PANEL_LOW_RES
+    #define HEMA_TAG_OTP_DEFAULT 1
 #else
     #error "HEMA_TAG_TYPE must be 1, 2, 3 or 4 - see hema-local/docs/TAG_VARIANTS.md"
+#endif
+
+/* Which waveform the panel gets, and why the safe one is the default.
+ *
+ * Two exist. The Waveshare table we carry is about 2.5x faster; the OTP one is
+ * the panel's own, loaded by the controller from its OTP. Neither drives
+ * everything:
+ *
+ *   Type 1, A53         Waveshare works.  OTP untried.
+ *   Type 3, A41         Waveshare hangs.  OTP works.
+ *   Type 4, A41 N192QB4 Waveshare works.  OTP works, 3003 ms at >=30 C.
+ *   Type 4, A41 N194NM1 Waveshare INERT.  OTP works, 3642 ms at >=30 C.
+ *
+ * Note the last two are both Type 4. **The type number does not identify the
+ * panel lot**, so no per-type default can be right for both of those tags -
+ * and the one that guesses wrong fails silently, with the matrix dead and only
+ * the border moving, which reads as a broken screen rather than a wrong build.
+ * That has already cost an evening on the N194NM1 tag.
+ *
+ * So the default is the waveform that drives every unit of that type we have
+ * tested, and speed is opt-in per tag once you know the panel accepts it:
+ * `tools/build.sh --type 4 --fast`. Being slower is recoverable by rebuilding;
+ * being invisibly dead is what costs the time.
+ *
+ * A53 keeps Waveshare because OTP has never been tried on one - it is the
+ * proven option there, not the fast one. Trying OTP on a Type 1 would close
+ * that gap and is cheap.
+ */
+#if !defined(EPD_INIT_FROM_OTP)
+    #define EPD_INIT_FROM_OTP  HEMA_TAG_OTP_DEFAULT
+#endif
+
+/* Stamped into the image beside the type, so the flasher can say which
+ * waveform is about to go on and a slow tag is never a mystery. */
+#if EPD_INIT_FROM_OTP
+    #define HEMA_WAVEFORM_TAG  "HEMA-WAVEFORM-OTP"
+#else
+    #define HEMA_WAVEFORM_TAG  "HEMA-WAVEFORM-WAVESHARE"
 #endif
 
 /* Stamped into the image so the flasher can check the tag it was told about

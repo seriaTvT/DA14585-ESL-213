@@ -148,6 +148,7 @@ stamp() { strings -a "$FW" | grep -om1 "$1" || true; }
 built_type=$(stamp 'HEMA-TAG-TYPE-[0-9]\+');      built_type=${built_type##*-}
 built_var=$(stamp 'HEMA-BOARD-VARIANT-[AB]');     built_var=${built_var##*-}
 built_panel=$(stamp 'HEMA-PANEL-[0-9x]\+');       built_panel=${built_panel#HEMA-PANEL-}
+built_wave=$(stamp 'HEMA-WAVEFORM-[A-Z]\+');      built_wave=${built_wave#HEMA-WAVEFORM-}
 
 # Type 0 is what an image built outside the normal path is stamped with - see
 # HEMA_TAG_TYPE_TAG in epd_ssd1680.h. It is not a tag, so treat it as unstamped
@@ -185,8 +186,19 @@ if [ -n "$TYPE" ]; then
         echo "          is variant $built_var. Nothing was written." >&2
         exit 1
     fi
-    [ -n "$built_type" ] && echo "type $TYPE confirmed against the image:" \
-                                 "variant $built_var, panel $built_panel."
+    if [ -n "$built_type" ]; then
+        echo "type $TYPE confirmed against the image:" \
+             "variant $built_var, panel $built_panel${built_wave:+, waveform $built_wave}."
+        # Worth saying out loud rather than leaving to the filename. The
+        # Waveshare table is the fast one and does not drive every panel; when
+        # it does not, the matrix stays dead and only the border moves, which
+        # looks like a broken screen rather than a wrong image.
+        if [ "$built_wave" = WAVESHARE ]; then
+            echo "  note: the fast waveform. If the panel goes dead but its"
+            echo "        border still flickers, this is why - reflash the"
+            echo "        plain type $TYPE image."
+        fi
+    fi
     VARIANT=${built_var:-$VARIANT}
 elif [ -z "$built_var" ]; then
     if [ "$UNVERIFIED" != 1 ]; then
