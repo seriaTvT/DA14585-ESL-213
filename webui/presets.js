@@ -217,9 +217,9 @@ const HIGH = {
     'CIRCLE(32,98,12,color=0,fill=1)\n' +
     'RECT(26,26,38,92,color=0,width=2,fill=0)\n' +
     'RECT(29,55,35,92,color=0,fill=1)\n' +
-    'LINE(44,40,56,40,0,2)\n' +
-    'LINE(44,58,56,58,0,2)\n' +
-    'LINE(44,76,56,76,0,2)\n' +
+    'LINE(44,40,56,40,color=0,width=2)\n' +
+    'LINE(44,58,56,58,color=0,width=2)\n' +
+    'LINE(44,76,56,76,color=0,width=2)\n' +
     "TEXT(165,22,'{T}C',scale=4,align=1)\n" +
     "TEXT(165,62,'{H:02d}:{N:02d}',scale=3,align=1)\n" +
     "TEXT(165,95,'{y}-{m:02d}-{d:02d}',scale=2,align=1)\n",
@@ -353,8 +353,8 @@ const LOW = {
     'CIRCLE(26,84,10,color=0,fill=1)\n' +
     'RECT(21,22,31,78,color=0,width=2,fill=0)\n' +
     'RECT(23,48,29,78,color=0,fill=1)\n' +
-    'LINE(36,34,46,34,0,2)\n' +
-    'LINE(36,50,46,50,0,2)\n' +
+    'LINE(36,34,46,34,color=0,width=2)\n' +
+    'LINE(36,50,46,50,color=0,width=2)\n' +
     "TEXT(135,18,'{T}C',scale=3,align=1)\n" +
     "TEXT(135,48,'{H:02d}:{N:02d}',scale=3,align=1)\n" +
     "TEXT(135,80,'{y}-{m:02d}-{d:02d}',scale=2,align=1)\n",
