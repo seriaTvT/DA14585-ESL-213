@@ -38,11 +38,13 @@
 #   LOCAL_PROJ  the same thing on this machine, for --local
 set -euo pipefail
 
+HERE=$(cd "$(dirname "$0")/.." && pwd)
+WORKSPACE=$(cd "$HERE/.." && pwd)
+
 VM=${VM:-vm}
 VM_PROJ=${VM_PROJ:-/home/nina/Downloads/SDK_6.0.22.1401/DA145xx_SDK/6.0.22.1401/projects/target_apps/template/hema_epd_clock}
-LOCAL_PROJ=${LOCAL_PROJ:-/home/nina/code/hema-local/toolchain/SDK_6.0.22.1401/DA145xx_SDK/6.0.22.1401/projects/target_apps/template/hema_epd_clock}
+LOCAL_PROJ=${LOCAL_PROJ:-$WORKSPACE/hema-local/toolchain/SDK_6.0.22.1401/DA145xx_SDK/6.0.22.1401/projects/target_apps/template/hema_epd_clock}
 
-HERE=$(cd "$(dirname "$0")/.." && pwd)
 SRC_PROJ="$HERE/firmware/hema_epd_clock"
 
 mode=sync

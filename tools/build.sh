@@ -33,7 +33,8 @@
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
-LOCAL_PROJ=${LOCAL_PROJ:-/home/nina/code/hema-local/toolchain/SDK_6.0.22.1401/DA145xx_SDK/6.0.22.1401/projects/target_apps/template/hema_epd_clock}
+WORKSPACE=$(cd "$HERE/.." && pwd)
+LOCAL_PROJ=${LOCAL_PROJ:-$WORKSPACE/hema-local/toolchain/SDK_6.0.22.1401/DA145xx_SDK/6.0.22.1401/projects/target_apps/template/hema_epd_clock}
 OUT=${OUT:-$HERE/out}
 BUILD=$LOCAL_PROJ/e2studio/DA14585
 TABLE=$HERE/firmware/hema_epd_clock/src/config/tag_types.h
