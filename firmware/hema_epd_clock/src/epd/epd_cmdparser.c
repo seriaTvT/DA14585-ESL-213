@@ -1151,6 +1151,11 @@ void epd_cmd_load_script(const char *buf, uint16_t len)
     s_dirty = false;        /* restored from flash - already persisted */
 }
 
+bool epd_cmd_line_pending(void)
+{
+    return s_line_len != 0u;
+}
+
 bool epd_cmd_take_dirty(void)
 {
     bool d = s_dirty;

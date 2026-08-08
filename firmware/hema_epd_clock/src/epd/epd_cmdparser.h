@@ -114,6 +114,16 @@ void epd_cmd_load_script(const char *buf, uint16_t len);
  *  on it will not write the same template twice. */
 bool epd_cmd_take_dirty(void);
 
+/** True if bytes have arrived since the last newline, i.e. a line is half in.
+ *
+ *  A caller that decides "the batch looks finished" from a gap in the writes must
+ *  consult this, because a gap and a dangling line together mean the opposite: the
+ *  gap fell inside a command. epd_cmd_run() has to commit the partial line before
+ *  it can render - a client's final line may genuinely arrive without a newline -
+ *  and the result is then persisted, so a half-written command becomes a permanent
+ *  broken line in the stored face. Wait longer instead. */
+bool epd_cmd_line_pending(void);
+
 /* ---------------------------------------------------------------------------
  * Reporting what the last render made of the script
  *

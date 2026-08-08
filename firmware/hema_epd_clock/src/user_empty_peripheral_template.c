@@ -36,6 +36,23 @@
  * DSL has no such command to key off. */
 #define EPD_FLUSH_DELAY   40   /* app_easy_timer units are 10 ms -> 400 ms */
 
+/* ...and this much more, once, if a line is only half received when the flush
+ * fires. A gap with a dangling line is not the end of the batch - it is a gap
+ * *inside a command*, and rendering then is not merely early: epd_cmd_run()
+ * commits the partial line, so the broken command is what gets persisted, and
+ * the good face on flash is gone.
+ *
+ * Seen on hardware as a calendar stored with its grid incomplete, its numbers
+ * missing and its positions misaligned - a partial script, faithfully saved and
+ * faithfully restored on every boot afterwards. The same defect was measured
+ * directly on the nRF52811 tag, where a 144-byte push came back stored as
+ * "TEXT(140,80,'GHOST TEST A',color" and "=0)".
+ *
+ * Granted once and then given up on, rather than waited for indefinitely: a
+ * client that sends half a command and disconnects must still get its face
+ * drawn, since a shelf label with no host in range has to display something. */
+#define EPD_FLUSH_PARTIAL 200  /* -> 2000 ms */
+
 static timer_hnd s_flush_timer = EASY_TIMER_INVALID_TIMER;
 
 /* --- asynchronous refresh --------------------------------------------------
@@ -194,9 +211,20 @@ static void epd_poll_cb(void)
     }
 }
 
+/* Whether this batch has already been granted the extra grace above, so it gets
+ * one and not one per fragment. */
+static bool s_flush_waited;
+
 static void epd_flush_cb(void)
 {
     s_flush_timer = EASY_TIMER_INVALID_TIMER;
+
+    if (epd_cmd_line_pending() && !s_flush_waited) {
+        s_flush_waited = true;
+        s_flush_timer = app_easy_timer(EPD_FLUSH_PARTIAL, epd_flush_cb);
+        return;
+    }
+    s_flush_waited = false;
     epd_render_now();
 }
 
@@ -245,6 +273,9 @@ static void epd_schedule_flush(void)
     if (s_flush_timer != EASY_TIMER_INVALID_TIMER) {
         app_easy_timer_cancel(s_flush_timer);
     }
+    /* Fresh grace for each new gap: more bytes arrived, so this is a different
+     * pause from the one that may already have been forgiven. */
+    s_flush_waited = false;
     s_flush_timer = app_easy_timer(EPD_FLUSH_DELAY, epd_flush_cb);
 }
 
