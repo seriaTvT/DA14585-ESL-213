@@ -114,6 +114,20 @@ static bool         s_image_mode;
 
 static void epd_poll_cb(void);
 
+/* Write the script to flash if it has changed since the last time.
+ *
+ * Called after rendering rather than before: a template that wedges the parser
+ * should not be the one restored on the next boot. Safe to borrow the SPI bus
+ * from either caller - the panel is either finished or was never started, and
+ * epd_store_save() hands the bus back via epd_spi_claim(). It does block for the
+ * flash erase and program, tens of milliseconds against a refresh's ~2 s. */
+static void epd_persist_if_dirty(void)
+{
+    if (epd_cmd_take_dirty()) {
+        epd_store_save(epd_cmd_script(), epd_cmd_script_len());
+    }
+}
+
 /* Start a refresh of whatever is in the framebuffer, or queue one if the panel
  * is still busy with the last. */
 static void epd_begin_refresh(epd_queued_t what)
@@ -146,7 +160,23 @@ static void epd_begin_refresh(epd_queued_t what)
         epd_cmd_run();
     }
 
-    epd_display_start(epd_framebuffer);
+    if (epd_display_start(epd_framebuffer) == EPD_PAINT_NONE) {
+        /* Nothing was sent, because the frame already matches the glass. BUSY
+         * will never rise, so arming the poll timer would burn the whole
+         * EPD_REFRESH_TIMEOUT before concluding the panel had died.
+         *
+         * The housekeeping a finished refresh normally does still has to happen,
+         * though: a client can push a script that renders to the same pixels -
+         * a reworded comment, different whitespace, a face rebuilt from the same
+         * parts - and that script must still reach flash. Skipping the refresh
+         * is not a reason to skip persisting it.
+         *
+         * Nothing to drain from s_queued here: it is only ever set while
+         * s_refreshing is true, and reaching this line means it was false. */
+        epd_persist_if_dirty();
+        return;
+    }
+
     s_refreshing = true;
     s_poll_count = 0;
     s_poll_timer = app_easy_timer(EPD_POLL_DELAY, epd_poll_cb);
@@ -195,14 +225,7 @@ static void epd_poll_cb(void)
     }
     s_refreshing = false;
 
-    /* Persist after rendering, not before: a template that wedges the parser
-     * should not be the one we restore on the next boot. Safe to borrow the
-     * SPI bus here - the panel is done with it, and epd_store_save() hands it
-     * back via epd_spi_claim(). This does block for the flash erase/program,
-     * but that is tens of milliseconds against the refresh's ~2 s. */
-    if (epd_cmd_take_dirty()) {
-        epd_store_save(epd_cmd_script(), epd_cmd_script_len());
-    }
+    epd_persist_if_dirty();
 
     if (s_queued != EPD_Q_NONE) {
         epd_queued_t next = s_queued;

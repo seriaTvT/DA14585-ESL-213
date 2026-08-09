@@ -44,8 +44,10 @@
 #include "gpio.h"
 #include "systick.h"    // systick_wait() blocking delay
 #include "arch_wdg.h"   // wdg_reload() to survive the long refresh wait
-#if EPD_TEMP_SWEEP
-#include "epd_gfx.h"    // epd_framebuffer[], the surface the sweep repaints
+#if EPD_TEMP_SWEEP || EPD_PARTIAL
+// epd_framebuffer[], the surface the sweep repaints; and epd_gfx_dirty_rows(),
+// which decides how much of the panel a partial refresh has to touch.
+#include "epd_gfx.h"
 #endif
 
 /* Stamp the board variant into the image so tools/flash.sh can check it
@@ -775,6 +777,12 @@ void epd_panel_read_id(void)
 
 void epd_init(bool full_lut)
 {
+#if EPD_PARTIAL
+    /* Both paths below issue SWRESET, which clears the controller's RAM. So
+     * whatever the shadow claims the panel is holding stops being true here, and
+     * the next refresh has to be a full one to establish a base again. */
+    epd_display_forget();
+#endif
 #if EPD_INIT_FROM_OTP
     /* Transcribed from a variant-A tag's own retail firmware - the panel-init
      * routine at 0x07FC3960/0x07FC399E in re/type3/t3_bank1_running.bin.
@@ -954,49 +962,200 @@ bool epd_display_busy(void)
     return GPIO_GetPinStatus(EPD_BUSY_PORT, EPD_BUSY_PIN) ? true : false;
 }
 
-void epd_display_start(const uint8_t *framebuffer)
+/* Display Update Control 2 payloads.
+ *
+ * 0xC7 for a full refresh is measured - it is what every working tag has used
+ * since bring-up. Neither partial value is:
+ *
+ *   OTP path       0xC7 with bit 3 set. That bit selects Display Mode 2, which
+ *                  is the panel's own partial waveform, loaded from the same
+ *                  OTP as the full one. Read off the datasheet's bit layout and
+ *                  consistent with what Type 5's controller does with 0xF7 and
+ *                  0xC7, but never sent to one of these panels.
+ *   Waveshare path 0x0C, which is what Waveshare's own partial display call
+ *                  sends on the 2.13" V2. A reference value for a panel that is
+ *                  not quite this one.
+ *
+ * Both are the first thing to suspect if a partial refresh does nothing, or
+ * clears the whole panel when it should have touched a few rows. */
+#define EPD_UPD_FULL     0xC7u
+#if EPD_INIT_FROM_OTP
+#define EPD_UPD_PARTIAL  0xCFu
+#else
+#define EPD_UPD_PARTIAL  0x0Cu
+#endif
+
+#if EPD_PARTIAL
+
+/* What the panel is believed to be showing, and how much has been done to it
+ * since the last clean sweep. A belief, not a fact - see epd_display_forget(). */
+static uint8_t   s_shadow[EPD_BUF_SIZE];
+static bool      s_shadow_valid;
+volatile uint8_t epd_partial_run;
+volatile uint8_t epd_last_paint;
+
+void epd_display_forget(void)
+{
+    s_shadow_valid = false;
+}
+
+/* Install the waveform this refresh wants.
+ *
+ * The uncertain half of partial refresh, kept in one place for that reason. */
+static void epd_select_waveform(bool partial)
+{
+#if EPD_INIT_FROM_OTP
+    /* Nothing to send. The waveform lives in the panel's OTP and which of the
+     * two gets used is chosen by the Display Mode bit of 0x22, below. This is
+     * the whole reason the OTP path is the one to trust: the panel supplies a
+     * partial waveform calibrated for its own lot, and we never have to know
+     * what it looks like. */
+    (void)partial;
+#else
+    /* Two hand-written tables, installed the same way. epd_load_waveshare_lut()
+     * hardcodes VCOM 0x55, which is the full-refresh value; Waveshare's partial
+     * sequence uses 0x26, so it is applied afterwards rather than by threading a
+     * second parameter through a function every other caller wants unchanged.
+     *
+     * UNVERIFIED, and the partial table is thin - a single 10-frame group where
+     * the full one has 60. A lot that takes the full table should take this one
+     * (same controller, same LUT format) but 10 frames is very little drive, and
+     * shape-compatible is not the same as working. */
+    epd_load_waveshare_lut(partial ? epd_lut_partial : epd_lut_full);
+    if (partial) {
+        epd_write_cmd(0x2C);        /* Write VCOM Register, partial value */
+        epd_write_data(0x26);
+    }
+#endif
+}
+
+#endif  /* EPD_PARTIAL */
+
+/* Point the RAM window and its address counters at a band of rows, then stream
+ * those rows into `ram_cmd`.
+ *
+ * The window is set on every write rather than inherited from epd_init(). It has
+ * to be: a partial refresh narrows the Y window, and a later full refresh that
+ * assumed epd_init()'s bounds would then repaint only the old band and leave the
+ * rest of the panel stale - a bug that would appear one refresh after the one
+ * that caused it.
+ *
+ * X is always the full width. Restricting it would save a few bytes of SPI and
+ * nothing else, because refresh time is set by how many gate lines are driven.
+ */
+static void epd_write_rows(const uint8_t *fb, uint16_t first, uint16_t last,
+                           uint8_t ram_cmd)
 {
     uint32_t i;
+    uint32_t from = (uint32_t)first * EPD_WIDTH_BYTES;
+    uint32_t to   = ((uint32_t)last + 1u) * EPD_WIDTH_BYTES;
 
-    /* Start at the window origin (0,0). Y counts UP - see the Data Entry Mode
-     * note in epd_init(); starting at H-1 would mirror the image vertically. */
-    epd_write_cmd(0x4E); /* Set RAM X address counter */
+    epd_write_cmd(0x44);    /* RAM X window */
     epd_write_data(0x00);
-    epd_write_cmd(0x4F); /* Set RAM Y address counter */
-    epd_write_data(0x00);
-    epd_write_data(0x00);
+    epd_write_data((EPD_WIDTH_BYTES - 1) & 0xFF);
 
-    /* Write RAM (B/W). Our framebuffer uses 1 = white (matching the vendor's
-     * DSL where color 1 = white, and the vendor image encoder), but the panel
-     * RAM is the opposite polarity — Waveshare's own EPD_2IN13_V2_Display
-     * sends ~Image for exactly this reason. So invert on the way out. If the
-     * very first test pattern comes out as white-on-black (inverted), flip
-     * EPD_INVERT_OUTPUT to 0 and reflash. */
-    epd_write_cmd(0x24);
+    epd_write_cmd(0x45);    /* RAM Y window - the band */
+    epd_write_data(first & 0xFF);
+    epd_write_data((first >> 8) & 0xFF);
+    epd_write_data(last & 0xFF);
+    epd_write_data((last >> 8) & 0xFF);
+
+    /* Counters to the top of the band. Y counts UP - see the Data Entry Mode
+     * note in epd_init(); starting at the far end would mirror the image. */
+    epd_write_cmd(0x4E);
+    epd_write_data(0x00);
+    epd_write_cmd(0x4F);
+    epd_write_data(first & 0xFF);
+    epd_write_data((first >> 8) & 0xFF);
+
+    /* Our framebuffer uses 1 = white (matching the vendor's DSL where color 1 =
+     * white, and the vendor image encoder), but the panel RAM is the opposite
+     * polarity - Waveshare's own EPD_2IN13_V2_Display sends ~Image for exactly
+     * this reason. So invert on the way out. If the very first test pattern
+     * comes out as white-on-black, flip EPD_INVERT_OUTPUT to 0 and reflash. */
+    epd_write_cmd(ram_cmd);
     GPIO_SetActive(EPD_DC_PORT, EPD_DC_PIN);   /* DC high = data */
     epd_cs_low();
-    for (i = 0; i < EPD_BUF_SIZE; i++) {
-        uint8_t b = framebuffer[i];
+    for (i = from; i < to; i++) {
+        uint8_t b = fb[i];
 #if EPD_INVERT_OUTPUT
         b = (uint8_t)~b;
 #endif
         epd_tx(&b, 1);
     }
     epd_cs_high();
+}
 
-    epd_write_cmd(0x22); /* Display Update Control 2: full refresh sequence */
-    epd_write_data(0xC7);
+epd_paint_t epd_display_start(const uint8_t *framebuffer)
+{
+    epd_paint_t did = EPD_PAINT_FULL;
+    uint16_t first  = 0;
+    uint16_t last   = EPD_HEIGHT - 1;
+
+#if EPD_PARTIAL
+    if (s_shadow_valid) {
+        if (!epd_gfx_dirty_rows(s_shadow, framebuffer, &first, &last)) {
+            /* Identical to the glass. Sending it would cost a refresh and a
+             * visible flash to produce the picture already there. */
+            epd_last_paint = (uint8_t)EPD_PAINT_NONE;
+            return EPD_PAINT_NONE;
+        }
+
+        if (epd_partial_run < EPD_PARTIAL_RUN_MAX &&
+            (uint16_t)(last - first + 1u) <= EPD_PARTIAL_MAX_ROWS) {
+            did = EPD_PAINT_PARTIAL;
+        } else {
+            first = 0;
+            last  = EPD_HEIGHT - 1;
+        }
+    }
+
+    epd_select_waveform(did == EPD_PAINT_PARTIAL);
+#endif
+
+    epd_write_rows(framebuffer, first, last, 0x24);
+
+#if EPD_PARTIAL
+    /* A full refresh also seeds RAM bank 0x26 with the same frame, because that
+     * is the bank the controller compares against when it does a partial - the
+     * "base image" step in Waveshare's flow. Cheap (~4 ms of SPI) and harmless
+     * on a mono panel, which has no red pigment for bank 2 to drive, so it is
+     * done unconditionally rather than only on the path known to need it. */
+    if (did == EPD_PAINT_FULL) {
+        epd_write_rows(framebuffer, first, last, 0x26);
+    }
+#endif
+
+    epd_write_cmd(0x22); /* Display Update Control 2 */
+    epd_write_data(did == EPD_PAINT_PARTIAL ? EPD_UPD_PARTIAL : EPD_UPD_FULL);
     epd_write_cmd(0x20); /* Master Activation */
+
+#if EPD_PARTIAL
+    /* Recorded now rather than when the refresh finishes: the frame has been
+     * handed to the controller and will be shown, and nothing between here and
+     * BUSY dropping can change what it holds. */
+    memcpy(s_shadow, framebuffer, EPD_BUF_SIZE);
+    s_shadow_valid = true;
+    epd_partial_run = (did == EPD_PAINT_PARTIAL)
+                    ? (uint8_t)(epd_partial_run + 1u) : 0u;
+    epd_last_paint = (uint8_t)did;
+#endif
 
     /* Deliberately no epd_wait_busy() here. The panel drives BUSY high and
      * refreshes on its own for ~2 s; the caller polls epd_display_busy() from
      * a timer so the BLE stack keeps getting scheduled meanwhile. Everything
      * above is just SPI - about 4 ms for the 4000-byte RAM write at 8 MHz -
      * so returning now costs the link nothing. */
+    return did;
 }
 
 void epd_sleep(void)
 {
+#if EPD_PARTIAL
+    /* Deep sleep drops the controller's RAM, and 0x10 is only left by a hardware
+     * reset, which clears it too. Either way the base image is gone. */
+    epd_display_forget();
+#endif
     epd_write_cmd(0x22); /* POWER OFF */
     epd_write_data(0xC3);
     epd_write_cmd(0x20);

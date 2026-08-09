@@ -25,6 +25,9 @@
 #                    shape for this controller". Needs the Waveshare path.
 #   --panel-id       read cmd 0x2F/0x2E/0x2D into epd_panel_id_* over SWD, to
 #                    see whether the controller can say which lot it is.
+#   --partial        repaint only changed rows with the partial waveform. Costs
+#                    EPD_BUF_SIZE of RAM and has two unmeasured values in it;
+#                    see EPD_PARTIAL in src/epd/epd_ssd1680.h before trusting it.
 #
 # A tag type used to be two macros - the board variant and the panel size -
 # edited by hand in src/config/user_config.h, and kept consistent with the
@@ -70,6 +73,7 @@ wf=
 also_alt=0
 sweep=0
 panel_id=0
+partial=0
 lut_gain=1
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -85,6 +89,7 @@ while [ $# -gt 0 ]; do
         --clean)   force_clean=1; shift ;;
         --sweep)   sweep=1; shift ;;
         --panel-id) panel_id=1; shift ;;
+        --partial) partial=1; shift ;;
         --lut-gain)   lut_gain=${2:-}; shift 2 ;;
         --lut-gain=*) lut_gain=${1#*=}; shift ;;
         -h|--help) usage; exit 2 ;;
@@ -196,6 +201,10 @@ build_one() {
     if [ "$panel_id" = 1 ]; then
         defs="$defs -DEPD_PANEL_ID=1"
         suffix="$suffix-id"
+    fi
+    if [ "$partial" = 1 ]; then
+        defs="$defs -DEPD_PARTIAL=1"
+        suffix="$suffix-partial"
     fi
     if [ "$lut_gain" != 1 ]; then
         # The gain scales the hand-written table, which only exists on the

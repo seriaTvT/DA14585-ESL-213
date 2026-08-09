@@ -247,6 +247,49 @@
     #define EPD_PANEL_ID 0
 #endif
 
+/* ---- partial refresh --------------------------------------------------------
+ * Repaint only the rows that changed, with the partial waveform, instead of
+ * driving every gate line through the full one.
+ *
+ * OFF BY DEFAULT and it should stay off until it has been seen on glass. Two
+ * pieces of it are read from references rather than measured on this silicon -
+ * the 0x22 activation value on each path, and whether this controller wants the
+ * previous frame in RAM bank 0x26 - and a partial refresh that half works looks
+ * like a working one until the ghosting builds up.
+ *
+ * What it costs when on: EPD_BUF_SIZE of RAM for the shadow (2756 bytes on A41,
+ * 4000 on A53) plus about 40 bytes of state.
+ *
+ * The shadow is what the panel is believed to be showing. It is only a belief,
+ * so anything that could make it wrong invalidates it and forces a full refresh:
+ * boot, epd_init() (its SWRESET clears the controller's RAM), and epd_sleep().
+ */
+#if !defined(EPD_PARTIAL)
+    #define EPD_PARTIAL 0
+#endif
+
+/* Force a full refresh after this many consecutive partials.
+ *
+ * Partial waveforms do not fully clear the previous image - that is what makes
+ * them fast - so residue accumulates and has to be swept out periodically. The
+ * number is a starting guess, not a measurement: panel makers commonly suggest
+ * single digits, and the cost of being wrong in the safe direction is one slow
+ * refresh in eight. Raise it once ghosting has actually been looked at over a
+ * long run. */
+#if !defined(EPD_PARTIAL_RUN_MAX)
+    #define EPD_PARTIAL_RUN_MAX 8
+#endif
+
+/* Above this many dirty rows, refresh fully instead.
+ *
+ * Not for speed - a partial is cheaper at any size - but for looks: a change
+ * covering most of the panel is a new image rather than an update, and a partial
+ * waveform would leave the old one faintly underneath it. Three quarters is a
+ * guess in the "prefer quality" direction. */
+#if !defined(EPD_PARTIAL_MAX_ROWS)
+    #define EPD_PARTIAL_MAX_ROWS ((EPD_HEIGHT * 3) / 4)
+#endif
+
 /* ------------------------------------------------------------------------
  * BOARD VARIANT — set exactly one.
  *
@@ -621,8 +664,33 @@ void epd_panel_read_id(void);
  *  supervision timeout, so blocking through one drops any open connection: a
  *  client could never stay connected for more than a minute (the clock's own
  *  minute tick refreshes), which breaks SUOTA and any multi-second transfer.
- *  Yielding between polls keeps the stack scheduled and the link alive. */
-void epd_display_start(const uint8_t *framebuffer);
+ *  Yielding between polls keeps the stack scheduled and the link alive.
+ *
+ *  With EPD_PARTIAL on it may instead repaint only the changed rows, or send
+ *  nothing at all - hence the return value, which the caller MUST act on.
+ *  EPD_PAINT_NONE means no refresh was triggered, so BUSY will never rise and a
+ *  caller that armed its poll timer anyway would sit through the whole timeout
+ *  before deciding the panel had failed. */
+typedef enum {
+    EPD_PAINT_NONE = 0,   /* frame identical to the glass; nothing was sent */
+    EPD_PAINT_PARTIAL,    /* changed rows only, partial waveform */
+    EPD_PAINT_FULL,       /* every row, full waveform */
+} epd_paint_t;
+
+epd_paint_t epd_display_start(const uint8_t *framebuffer);
+
+#if EPD_PARTIAL
+/** Forget what the panel is believed to hold, forcing the next refresh to be a
+ *  full one. Called for you by epd_init() and epd_sleep(); exposed because a
+ *  caller that has reason to doubt the glass should be able to say so. */
+void epd_display_forget(void);
+
+/** Partials since the last full refresh, and what the last paint did. For SWD
+ *  and for the render report - a tag that has quietly stopped doing partials is
+ *  worth being able to see. */
+extern volatile uint8_t epd_partial_run;
+extern volatile uint8_t epd_last_paint;   /* epd_paint_t */
+#endif
 
 /** True while the panel is still refreshing. Poll from a timer, not a loop. */
 bool epd_display_busy(void);
