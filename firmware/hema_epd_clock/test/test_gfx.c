@@ -167,6 +167,75 @@ int main(void)
     epd_gfx_invert(-40, -40, -1, -1);
     eq(ink(), 0, "invert entirely before the origin draws nothing");
 
+    /* ---- epd_gfx_dirty_rows ------------------------------------------------
+     * The band a partial refresh is driven from, so a wrong answer either
+     * leaves stale pixels on the glass (band too small) or throws away the
+     * saving (too large). Row indices are physical - panel gate lines - which
+     * the rotation case at the end is what actually pins. */
+    {
+        static uint8_t a[EPD_BUF_SIZE], b[EPD_BUF_SIZE];
+        uint16_t first, last;
+
+        memset(a, 0xFF, sizeof a);
+        memset(b, 0xFF, sizeof b);
+
+        first = last = 0xEEEE;
+        eq(epd_gfx_dirty_rows(a, b, &first, &last), 0,
+           "identical buffers report nothing dirty");
+        eq(first == 0xEEEE && last == 0xEEEE, 1,
+           "and leave the outputs untouched");
+
+        /* A single changed byte in the middle. */
+        b[40 * EPD_WIDTH_BYTES + 2] ^= 0x08;
+        eq(epd_gfx_dirty_rows(a, b, &first, &last), 1, "one changed byte is dirty");
+        eq(first, 40, "  band starts at that row");
+        eq(last, 40, "  and ends there");
+
+        /* Row 0 alone. lo starts past the end and hi starts at 0, so a band of
+         * exactly row 0 is the case where a sloppy emptiness test reports
+         * "identical" - which would silently skip the refresh. */
+        memset(b, 0xFF, sizeof b);
+        b[0] ^= 0x01;
+        eq(epd_gfx_dirty_rows(a, b, &first, &last), 1, "row 0 alone is dirty");
+        eq(first == 0 && last == 0, 1, "  and reports row 0, not nothing");
+
+        /* The last row, the other boundary. */
+        memset(b, 0xFF, sizeof b);
+        b[EPD_BUF_SIZE - 1] ^= 0x80;
+        eq(epd_gfx_dirty_rows(a, b, &first, &last), 1, "the last row is dirty");
+        eq(first == EPD_HEIGHT - 1 && last == EPD_HEIGHT - 1, 1,
+           "  and is not read past the end");
+
+        /* Two distant rows: one band spanning both, not two bands. A clock face
+         * with a changed digit and a changed date is exactly this. */
+        memset(b, 0xFF, sizeof b);
+        b[10 * EPD_WIDTH_BYTES] ^= 0x01;
+        b[90 * EPD_WIDTH_BYTES] ^= 0x01;
+        eq(epd_gfx_dirty_rows(a, b, &first, &last), 1, "two distant rows");
+        eq(first, 10, "  band covers the union, from the first");
+        eq(last, 90, "  to the last");
+
+        /* Everything. */
+        memset(b, 0x00, sizeof b);
+        eq(epd_gfx_dirty_rows(a, b, &first, &last), 1, "a full-frame change");
+        eq(first == 0 && last == EPD_HEIGHT - 1, 1, "  spans every row");
+
+        /* Rotation independence. Under an odd rotation the logical X axis runs
+         * down the panel, so a short horizontal line in face coordinates must
+         * come back as a band of MANY physical rows. If this returned rotated
+         * coordinates the band would be one row and the refresh would show a
+         * sliver of the line. */
+        epd_gfx_set_rotation(1);
+        epd_gfx_clear(1);
+        memcpy(a, epd_framebuffer, sizeof a);
+        epd_gfx_line(20, 5, 60, 5, 0, 1);         /* 41 px across, logical */
+        memcpy(b, epd_framebuffer, sizeof b);
+        eq(epd_gfx_dirty_rows(a, b, &first, &last), 1, "rotated line is dirty");
+        eq(last - first >= 40, 1,
+           "  a rotated horizontal line spans many physical rows");
+        epd_gfx_set_rotation(0);
+    }
+
     if (failures) {
         printf("  %d failure(s)\n", failures);
         return 1;

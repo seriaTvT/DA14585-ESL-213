@@ -34,6 +34,30 @@ uint8_t epd_gfx_get_rotation(void);
 int16_t epd_gfx_width(void);
 int16_t epd_gfx_height(void);
 
+/* ---- what changed, for a partial refresh ------------------------------------
+ * Compare two framebuffers and report the band of rows that differ: `*first`
+ * and `*last` inclusive. Returns false if they are identical, in which case
+ * neither output is written and there is nothing to send to the panel at all.
+ *
+ * A band of rows rather than a rectangle, and that is not laziness. Refresh time
+ * on these panels is set by how many GATE lines are driven, not source lines:
+ * the whole framebuffer is only ~4 ms of SPI at 8 MHz, so narrowing the X window
+ * saves nothing measurable while narrowing Y is the entire win.
+ *
+ * A diff rather than tracking what the primitives touched, because the DSL
+ * re-renders the whole frame from scratch on every repaint - CLEAR then draw -
+ * so there is no incremental history to track. Diffing against what is on the
+ * glass also cannot drift out of step with reality the way a dirty flag can.
+ *
+ * **Rows here are PHYSICAL rows, i.e. panel gate lines** - the one place in this
+ * header that means EPD_HEIGHT rather than epd_gfx_height(). Rotation is applied
+ * when pixels are written, so by the time a byte is in the framebuffer its row
+ * index is already the panel's own Y and a band needs no transforming. Whatever
+ * ROTATE() a face asked for, this returns a window the driver can use directly.
+ */
+bool epd_gfx_dirty_rows(const uint8_t *a, const uint8_t *b,
+                        uint16_t *first, uint16_t *last);
+
 /* color: 0 = black, 1 = white (matches the vendor DSL's own convention,
  * see function_doc_official.txt) */
 void epd_gfx_clear(uint8_t color);

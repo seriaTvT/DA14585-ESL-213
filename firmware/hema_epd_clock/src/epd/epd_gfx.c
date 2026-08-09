@@ -30,6 +30,38 @@ int16_t epd_gfx_height(void)
     return (s_rotation & 1) ? EPD_WIDTH : EPD_HEIGHT;
 }
 
+bool epd_gfx_dirty_rows(const uint8_t *a, const uint8_t *b,
+                        uint16_t *first, uint16_t *last)
+{
+    /* EPD_HEIGHT and EPD_WIDTH_BYTES on purpose, not the rotated accessors -
+     * see the header. A framebuffer row is a panel gate line whatever rotation
+     * a face asked for. */
+    uint16_t lo = EPD_HEIGHT;   /* past the end = nothing found yet */
+    uint16_t hi = 0;
+    uint16_t row;
+
+    for (row = 0; row < EPD_HEIGHT; row++) {
+        size_t off = (size_t)row * EPD_WIDTH_BYTES;
+
+        if (memcmp(a + off, b + off, EPD_WIDTH_BYTES) != 0) {
+            if (lo > row) {
+                lo = row;
+            }
+            hi = row;
+        }
+    }
+
+    /* Only reachable with lo still past the end, so this is "identical" and not
+     * an empty band that a caller might otherwise refresh. */
+    if (lo > hi) {
+        return false;
+    }
+
+    *first = lo;
+    *last = hi;
+    return true;
+}
+
 /* Rotated coordinate -> byte index and bit mask. False if it falls outside the
  * visible area, in which case the outputs are untouched.
  *
