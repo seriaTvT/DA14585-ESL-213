@@ -985,18 +985,31 @@ bool epd_display_busy(void)
  * So the partial values are self-contained, powering up and down exactly as the
  * full one does:
  *
- *   Waveshare  0xC7, identical to full. On this path the waveform is chosen by
- *              WHICH LUT was written with 0x32 - see epd_select_waveform() - so
- *              the activation value has no waveform choice to make. Not setting
- *              bit 3 is deliberate: mode 2 would select an OTP waveform over the
- *              table we just wrote by hand.
- *   OTP        0xCF, i.e. 0xC7 plus Display Mode 2. Here there is no LUT to
- *              write, so that bit is the only thing that selects the panel's own
- *              partial waveform. Still a datasheet reading and not yet seen to
- *              work, but it does at least power the panel correctly. */
+ * The two paths need OPPOSITE treatment of bit 4, the load-LUT bit, and getting
+ * that backwards is what made the OTP partial silently run a full waveform.
+ *
+ *   Waveshare  0xC7, identical to full. Bit 4 clear, i.e. "display with whatever
+ *              LUT is resident" - and epd_select_waveform() has just written the
+ *              partial table by hand with 0x32, so resident is exactly what we
+ *              want. Bit 3 stays clear too: mode 2 would pick an OTP waveform
+ *              over the table we just wrote.
+ *   OTP        0xFF, i.e. 0xF7 plus Display Mode 2. Bit 4 SET, because here there
+ *              is no hand-written table and the OTP waveform has to be loaded -
+ *              and the mode bit is what chooses which of the panel's two
+ *              waveforms gets loaded. A mode bit on a command that loads nothing
+ *              selects nothing.
+ *
+ * That last sentence was learned twice. 0xCF (0xC7 plus the mode bit) was tried
+ * first and produced a full refresh every time: bit 4 clear meant no LUT was
+ * loaded, so the panel displayed with whatever was resident - which
+ * epd_resample_temperature() had loaded moments earlier as 0xB1, the mode-1 full
+ * waveform. Measured on the SLH1904 tag as epd_last_paint 1 with s_poll_count 73,
+ * that panel's exact full-refresh figure. The Type 5 notes already recorded that
+ * 0xF7 loads the OTP LUT while 0xC7 displays without reloading it; the partial
+ * value was built on the wrong one of those. */
 #define EPD_UPD_FULL     0xC7u
 #if EPD_INIT_FROM_OTP
-#define EPD_UPD_PARTIAL  0xCFu
+#define EPD_UPD_PARTIAL  0xFFu
 #else
 #define EPD_UPD_PARTIAL  0xC7u
 #endif

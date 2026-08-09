@@ -61,7 +61,8 @@ rather than a picture.
   as `{T}`.
 
 The web UI previews a face pixel-for-pixel before you push it, dithers and
-uploads arbitrary images, and sets the clock.
+uploads arbitrary images, and sets the clock — to this machine's time, or to any
+date you type.
 
 ---
 
@@ -607,8 +608,9 @@ compiling into the image. Both have happened; the verify is the point.
   except, so far, the lot code on the FPC. It was gated on panel resolution once
   and on board variant once; both looked right against every tag available at
   the time and both were falsified by the next tag.
-- **The clock does not survive a power cut.** There is no RTC. Hosts re-sync on
-  connect; the picture is what persists, not the time.
+- **The clock does not survive a power cut.** There is no RTC. A tag boots at
+  `00:00` on 2000-01-01 and stays there until a host sends `TIME()`; the picture
+  is what persists, not the time.
 - **No SUOTA.** Updating the firmware means SWD, every time.
 - **The vendor's runtime board-variant selection is unlocated.** One retail image
   serves all four tags — Type 4's flash carries Type 3's firmware byte for byte —
