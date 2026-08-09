@@ -2,12 +2,18 @@
 #
 # build.sh - build the firmware for one tag type, or for every type at once.
 #
-#   tools/build.sh --type 3        -> out/hema_epd_clock-type3.bin
-#   tools/build.sh --type 3 --fast -> the Waveshare waveform instead: ~2.5x
-#                                     faster, and dead on some panels
-#   tools/build.sh --all           -> every type, plus a -fast image for each
-#                                     type that defaults to the OTP waveform
+#   tools/build.sh --type 3        -> out/hema_epd_clock-type3.bin, on the
+#                                     Waveshare waveform: ~2.5x faster, and
+#                                     inert on some panel lots
+#   tools/build.sh --type 3 --otp  -> the panel's own OTP waveform instead:
+#                                     slower, and drives every lot we have
+#   tools/build.sh --all           -> every type, plus the other waveform for
+#                                     each, so the fallback is already on disk
 #   tools/build.sh --type 3 --clean
+#
+# Flash the default, look at the glass, and reach for --otp if the matrix did
+# not move. See HEMA_TAG_OTP_DEFAULT in src/config/tag_types.h for why that is
+# the way round it is.
 #
 # Bench builds, for working out why a panel behaves as it does. Each gets its
 # own name on disk, for the same reason --fast does.
@@ -60,8 +66,8 @@ known_types() {
 
 types=
 force_clean=0
-fast=0
-also_fast=0
+wf=
+also_alt=0
 sweep=0
 panel_id=0
 lut_gain=1
@@ -69,8 +75,13 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --type)    types="${types}${types:+ }${2:-}"; shift 2 ;;
         --type=*)  types="${types}${types:+ }${1#*=}"; shift ;;
-        --all)     types="$(known_types | tr '\n' ' ')"; also_fast=1; shift ;;
-        --fast)    fast=1; shift ;;
+        --all)     types="$(known_types | tr '\n' ' ')"; also_alt=1; shift ;;
+        # Both directions stay available and explicit. --fast is not a no-op
+        # just because it is now the default: it pins the waveform in the image
+        # name and in the build, so a command written down today still means the
+        # same thing if a type's default is ever changed again.
+        --fast)    wf=fast; shift ;;
+        --otp)     wf=otp; shift ;;
         --clean)   force_clean=1; shift ;;
         --sweep)   sweep=1; shift ;;
         --panel-id) panel_id=1; shift ;;
@@ -150,16 +161,29 @@ verify_stamp() {
 }
 
 build_one() {
-    local t=$1 want_fast=$2 defs suffix label last=
+    local t=$1 want=$2 defs suffix label last= is_waveshare
     defs="-DHEMA_TAG_TYPE=$t"
     suffix=
-    if [ "$want_fast" = 1 ]; then
-        # Force the Waveshare table over whatever tag_types.h picked for this
-        # type. Faster, and on some panels it does not drive the matrix at all
-        # - see the table in tag_types.h. Named so the two never get mixed up
-        # on disk, because the failure is invisible until you look at a screen.
-        defs="$defs -DEPD_INIT_FROM_OTP=0"
-        suffix="-fast"
+
+    # Pin the waveform, or leave it to the header. Either way the image carries
+    # the choice in its name, because the two are indistinguishable on disk and
+    # the wrong one is a screen that does not move.
+    case "$want" in
+        fast) defs="$defs -DEPD_INIT_FROM_OTP=0"; suffix="-fast" ;;
+        otp)  defs="$defs -DEPD_INIT_FROM_OTP=1"; suffix="-otp"  ;;
+    esac
+
+    # Which waveform this build will actually end up on, for the --lut-gain
+    # check below. Asking the header rather than assuming, so this stays right
+    # if a type's default changes.
+    if [ "$want" = otp ]; then
+        is_waveshare=0
+    elif [ "$want" = fast ]; then
+        is_waveshare=1
+    elif type_defaults_to_otp "$t"; then
+        is_waveshare=0
+    else
+        is_waveshare=1
     fi
 
     # Bench options. Each one changes the suffix as well as the defines: these
@@ -178,10 +202,10 @@ build_one() {
         # Waveshare path - an OTP build compiles it out entirely, so the flag
         # would be accepted and do nothing. That failure costs a flash and a
         # look at a screen to notice, so refuse it here instead.
-        if [ "$want_fast" != 1 ] && type_defaults_to_otp "$t"; then
-            echo "build.sh: --lut-gain scales the Waveshare waveform, and type $t" >&2
-            echo "          defaults to the OTP one, which has no table to scale." >&2
-            echo "          Add --fast to put this build on the Waveshare path." >&2
+        if [ "$is_waveshare" != 1 ]; then
+            echo "build.sh: --lut-gain scales the Waveshare waveform, and this" >&2
+            echo "          build is on the OTP one, which has no table to scale." >&2
+            echo "          Drop --otp to put this build on the Waveshare path." >&2
             exit 2
         fi
         defs="$defs -DEPD_LUT_GAIN=$lut_gain"
@@ -223,9 +247,9 @@ build_one() {
         "$t" "$suffix"
 }
 
-# Does this type default to OTP? Only then is a separate --fast image a
-# different binary worth building - a type already on Waveshare would just be
-# the same image under a second name.
+# Which waveform a type takes when nothing overrides it. Read from the header so
+# there is one source of truth: flipping a default there changes what --all
+# builds, with no matching edit needed here.
 type_defaults_to_otp() {
     grep -A4 "HEMA_TAG_TYPE == $1\$" "$TABLE" \
         | grep -qE 'HEMA_TAG_OTP_DEFAULT[[:space:]]+1'
@@ -234,13 +258,17 @@ type_defaults_to_otp() {
 "$HERE/tools/sync.sh" --local
 ensure_tag_defs
 for t in $types; do
-    build_one "$t" "$fast"
-    # --all also produces the fast alternative for any type whose default is
-    # the slower OTP waveform, so the faster image is on hand to try per tag
-    # without a rebuild. It is not the default: it does not drive every panel,
-    # and when it does not, the matrix stays dead with only the border moving.
-    if [ "$also_fast" = 1 ] && [ "$fast" != 1 ] && type_defaults_to_otp "$t"; then
-        build_one "$t" 1
+    build_one "$t" "$wf"
+    # --all also builds the OTHER waveform for each type, so the fallback is
+    # already on disk when a panel turns out not to take the default. Which one
+    # that is depends on the type's default, hence the lookup rather than a
+    # hardcoded "also build fast".
+    if [ "$also_alt" = 1 ] && [ -z "$wf" ]; then
+        if type_defaults_to_otp "$t"; then
+            build_one "$t" fast
+        else
+            build_one "$t" otp
+        fi
     fi
 done
 

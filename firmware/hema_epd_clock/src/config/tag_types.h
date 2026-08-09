@@ -63,15 +63,15 @@
     #define HEMA_TAG_OTP_DEFAULT 0
 #elif HEMA_TAG_TYPE == 2
     #define EPD_BOARD_VARIANT_A
-    #define HEMA_TAG_OTP_DEFAULT 1
+    #define HEMA_TAG_OTP_DEFAULT 0
 #elif HEMA_TAG_TYPE == 3
     #define EPD_BOARD_VARIANT_A
     #define EPD_PANEL_LOW_RES
-    #define HEMA_TAG_OTP_DEFAULT 1
+    #define HEMA_TAG_OTP_DEFAULT 0
 #elif HEMA_TAG_TYPE == 4
     #define EPD_BOARD_VARIANT_B
     #define EPD_PANEL_LOW_RES
-    #define HEMA_TAG_OTP_DEFAULT 1
+    #define HEMA_TAG_OTP_DEFAULT 0
 #else
     #error "HEMA_TAG_TYPE must be 1, 2, 3 or 4 - see hema-local/docs/TAG_VARIANTS.md"
 #endif
@@ -107,14 +107,31 @@
  * matrix dead and only the border moving, which reads as a broken screen rather
  * than a wrong build. That has already cost an evening on the N194NM1 tag.
  *
- * So the default is the waveform that drives every unit of that type we have
- * tested, and speed is opt-in per tag once you know the panel accepts it:
- * `tools/build.sh --type 4 --fast`. Being slower is recoverable by rebuilding;
- * being invisibly dead is what costs the time.
+ * **Every type defaults to the Waveshare table**, and OTP is the fallback:
+ * `tools/build.sh --type 4 --otp`. That is a deliberate reversal, decided
+ * 2026-08-09, and the reasoning is worth keeping because the opposite default
+ * was argued for here for a month.
  *
- * A53 keeps Waveshare because OTP has never been tried on one - it is the
- * proven option there, not the fast one. Trying OTP on a Type 1 would close
- * that gap and is cheap.
+ * The old default was the waveform that drives every unit of a type we had
+ * tested, on the grounds that being slower is recoverable by rebuilding while
+ * being invisibly dead costs an evening. What changed is that the failure stopped
+ * being invisible:
+ *
+ *   - the inert failure mode is now understood and instantly recognisable - the
+ *     matrix does not move while the border electrode flickers, and
+ *     `s_poll_count` reads ~4 instead of ~31 (hema-local/tools/tagread.py);
+ *   - the four types are told apart by eye, so flashing the default first and
+ *     looking at the glass is a five-second check, not a debugging session;
+ *   - and the speed difference is large - roughly 2.5x on a full refresh, and it
+ *     is the difference between a partial refresh being worth having and not.
+ *
+ * So: flash the default, look at the screen, and reach for `--otp` if the matrix
+ * stayed still. `tools/build.sh --all` builds both for every type so the
+ * fallback is already on disk when you need it.
+ *
+ * Do not read a per-type default as a claim about a panel. Two Type 4s and two
+ * Type 3s each disagree with each other; the default is a starting guess that is
+ * right about half the time on A41 and so far always right on A53.
  */
 #if !defined(EPD_INIT_FROM_OTP)
     #define EPD_INIT_FROM_OTP  HEMA_TAG_OTP_DEFAULT
