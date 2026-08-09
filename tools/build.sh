@@ -7,8 +7,10 @@
 #                                     inert on some panel lots
 #   tools/build.sh --type 3 --otp  -> the panel's own OTP waveform instead:
 #                                     slower, and drives every lot we have
-#   tools/build.sh --all           -> every type, plus the other waveform for
-#                                     each, so the fallback is already on disk
+#   tools/build.sh --all           -> the whole set, all of one vintage: both
+#                                     waveforms, both LUT shapes, and a -partial
+#                                     image for each. Twenty builds, a few minutes.
+#                                     Run it after any driver change.
 #   tools/build.sh --type 3 --clean
 #
 # Flash the default, look at the glass, and reach for --otp if the matrix did
@@ -351,6 +353,20 @@ for t in $types; do
             partial=1
             build_one "$t" ""
             partial=0
+
+            # And both again at ten steps. Two of the five panels in hand run a
+            # ten-step controller, so leaving these out of --all would recreate
+            # exactly the mixed-age out/ this whole arrangement exists to prevent:
+            # the -s10 images would be whatever vintage they were last built at,
+            # under names that give no hint of it.
+            if [ -z "$lut_steps" ]; then
+                lut_steps=10
+                build_one "$t" ""
+                partial=1
+                build_one "$t" ""
+                partial=0
+                lut_steps=
+            fi
         fi
     fi
 done
