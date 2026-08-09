@@ -63,6 +63,34 @@ function dowHeader({ x0, colW, y }) {
     .join('');
 }
 
+/* ---- maintenance screens ---------------------------------------------------
+ * Not faces at all: a solid fill is the panel's own housekeeping. E-paper keeps
+ * a faint ghost of whatever it held for a long time, and the cure is a few full
+ * swings between the extremes; white is also what a tag wants before it goes in
+ * a drawer, since a panel left in storage keeps whatever it was last given.
+ *
+ * The only two entries here that do not care about the geometry, so they are
+ * written once and spread into both panels' lists rather than repeated.
+ *
+ * EVERY(1440) because nothing in them changes. The default of a repaint a
+ * minute would spend the battery redrawing identical pixels, and a full refresh
+ * is the most expensive thing the tag does. It is stored with the face, so the
+ * quiet survives the power cut the screen was probably cleared for.
+ *
+ * ROTATE(270) does nothing to a solid fill and is kept anyway: it costs 11
+ * bytes and makes the preview the same shape as every other preset's. */
+const SOLID = {
+  'White screen':
+    'ROTATE(270)\n' +
+    'CLEAR(1)\n' +
+    'EVERY(1440)\n',
+
+  'Black screen':
+    'ROTATE(270)\n' +
+    'CLEAR(0)\n' +
+    'EVERY(1440)\n',
+};
+
 const HIGH = {
   /* Byte-identical to DEFAULT_FACE[] in epd_cmdparser.c, so "what the tag
    * ships with" is always one click away - and, since a test diffs the two,
@@ -223,6 +251,8 @@ const HIGH = {
     "TEXT(165,22,'{T}C',scale=4,align=1)\n" +
     "TEXT(165,62,'{H:02d}:{N:02d}',scale=3,align=1)\n" +
     "TEXT(165,95,'{y}-{m:02d}-{d:02d}',scale=2,align=1)\n",
+
+  ...SOLID,
 };
 
 /* ---- low-res faces (212 x 104 landscape) -----------------------------------
@@ -358,6 +388,8 @@ const LOW = {
     "TEXT(135,18,'{T}C',scale=3,align=1)\n" +
     "TEXT(135,48,'{H:02d}:{N:02d}',scale=3,align=1)\n" +
     "TEXT(135,80,'{y}-{m:02d}-{d:02d}',scale=2,align=1)\n",
+
+  ...SOLID,
 };
 
 /** Faces by panel key, matching PANELS in epd.js. */

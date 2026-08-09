@@ -1,7 +1,7 @@
 /*
  * app.js - wiring: editor -> preview -> tag.
  */
-import { Panel, runScript, paint, tagSecondsNow, tagTime,
+import { Panel, runScript, paint, tagSecondsNow, tagTime, EPOCH_2000,
          PANELS, activePanel, setActivePanel } from './epd.js';
 import { PRESETS } from './presets.js';
 import { Tag, bluetoothProblem, FLUSH_DELAY_MS } from './ble.js';
@@ -23,11 +23,22 @@ let panel = new Panel();
  * framebuffer - so the tabs are a real mode switch, not just a view. */
 let mode = 'template';
 
-/* Whether we have set the tag's clock this session. The preview always runs at
- * browser time - an unsynced tag sits at 00:00, and previewing a frozen 00:00
- * looks like a broken page rather than an unsynced clock - so the sync state is
- * surfaced in the readout instead. */
-let synced = false;
+/* The clock everything here runs on, held as an offset from the browser's own
+ * rather than as an instant: the tag is handed one number and counts on from
+ * it, so an offset ticks forward exactly the way its clock will. Zero is the
+ * browser's time, which is the case until a custom one is entered.
+ *
+ * The preview never runs at the tag's *actual* time - an unsynced tag sits at
+ * 00:00, and previewing a frozen 00:00 looks like a broken page rather than an
+ * unsynced clock - so what the tag believes is surfaced in the readout instead.
+ */
+let clockSkew = 0;
+
+/* The skew the tag was last given, or null while it has never been set. Not a
+ * boolean any more: with a custom time in play, "synced" also has to mean
+ * synced *to what*, or the readout would vouch for a clock the tag was never
+ * sent. */
+let sentSkew = null;
 
 /* Decoded source image and the panel it currently processes down to. The
  * source is kept so the sliders can re-run the pipeline without re-decoding. */
@@ -119,11 +130,29 @@ function show(p) {
   $('dims').textContent = `${p.width}×${p.height}`;
 }
 
+/** Tag-seconds the preview is drawn at, and what Sync sends - see clockSkew. */
+function previewSeconds() { return tagSecondsNow() + clockSkew; }
+
+/* A tag instant as text. Built from tagTime() rather than from a Date because
+ * the tag has no timezone: putting the same number through the browser's locale
+ * would be a second clock, and the two disagree by hours. */
+function stamp(secs, withDate = false) {
+  const tm = tagTime(secs);
+  const p = (v) => String(v).padStart(2, '0');
+  const hhmmss = `${p(tm.hour)}:${p(tm.min)}:${p(tm.sec)}`;
+  return withDate ? `${tm.year}-${p(tm.month)}-${p(tm.day)} ${hhmmss}` : hhmmss;
+}
+
 function showClock() {
-  const tm = tagTime(tagSecondsNow());
-  const hhmmss = [tm.hour, tm.min, tm.sec]
-    .map((v) => String(v).padStart(2, '0')).join(':');
-  $('tagClock').textContent = synced ? hhmmss : `${hhmmss} (tag not synced)`;
+  /* Three states, and the difference between the last two matters: a custom
+   * time that has not been sent is the one case where this readout and the tag
+   * disagree on purpose. */
+  const note = sentSkew === null ? ' (tag not synced)'
+             : sentSkew !== clockSkew ? ' (not sent to the tag)'
+             : '';
+  /* The date only when a custom time is in play. It is usually the whole point
+   * of setting one, and hiding it behind HH:MM:SS shows the wrong half. */
+  $('tagClock').textContent = stamp(previewSeconds(), clockSkew !== 0) + note;
 }
 
 function render() {
@@ -141,7 +170,7 @@ function render() {
    * build with no temperature reading shows, which is the literal "{T}". */
   const tempRaw = $('previewTemp').value;
   const previewTemp = tempRaw === '' ? undefined : parseInt(tempRaw, 10);
-  const { warnings, every } = runScript(panel, script, tagSecondsNow(), previewTemp);
+  const { warnings, every } = runScript(panel, script, previewSeconds(), previewTemp);
   show(panel);
   showNotes(script, warnings, every);
 }
@@ -277,9 +306,12 @@ function refreshConnState() {
 }
 
 async function syncTime() {
-  await tag.write(`TIME(${tagSecondsNow()})\n`);
-  synced = true;
-  log(`Clock set to ${new Date().toLocaleTimeString()}.`, 'ok');
+  const secs = previewSeconds();
+  await tag.write(`TIME(${secs})\n`);
+  sentSkew = clockSkew;
+  /* Report what was sent rather than what the wall clock says, since with a
+   * custom time in play those are different and only one of them is the tag's. */
+  log(`Clock set to ${stamp(secs, true)}.`, 'ok');
   render();
 }
 
@@ -300,11 +332,11 @@ async function pushTemplate() {
    * neither ends up in the stored face. */
   const wantSync = $('autoSync').checked;
   const batch = 'RESET()\n'
-              + (wantSync ? `TIME(${tagSecondsNow()})\n` : '')
+              + (wantSync ? `TIME(${previewSeconds()})\n` : '')
               + body;
 
   await tag.write(batch);
-  if (wantSync) synced = true;
+  if (wantSync) sentSkew = clockSkew;
 
   log(`Pushed ${bytes} bytes. The panel refreshes ~0.4 s after the last `
     + 'byte, then takes about 2 s.', 'ok');
@@ -552,6 +584,64 @@ window.addEventListener('paste', (e) => {
   }
 });
 
+/* --- clock ---------------------------------------------------------- */
+
+/* TIME() parses a signed 32-bit count of seconds from 2000-01-01 and ignores
+ * anything that is not positive - see handle_line() in epd_cmdparser.c. The
+ * field carries the same pair as min/max, so the browser flags an out-of-range
+ * date too; this is what catches one typed past it anyway. */
+const TIME_MIN = 1;
+const TIME_MAX = 0x7fffffff;
+
+const customTime = $('customTime');
+const clockAt = $('clockAt');
+
+/* datetime-local carries a wall-clock time with no zone attached, which is
+ * exactly what the tag wants: it has no notion of a timezone, so local time is
+ * sent as though it were UTC and read back the same way (see tagSecondsNow()).
+ * Parsing this field as UTC is that same convention running the other way,
+ * which is why neither direction applies an offset. */
+function fieldSeconds() {
+  const v = clockAt.value;
+  if (!v) return null;              /* empty, or mid-edit and not yet a time */
+  const ms = Date.parse(v.length === 16 ? `${v}:00Z` : `${v}Z`);
+  return Number.isNaN(ms) ? null : Math.floor(ms / 1000) - EPOCH_2000;
+}
+
+/** The field's value for a tag instant - fieldSeconds() inverted. */
+function secondsField(secs) {
+  return new Date((secs + EPOCH_2000) * 1000).toISOString().slice(0, 19);
+}
+
+function readClockField() {
+  const secs = fieldSeconds();
+  if (secs === null) return;        /* half-typed: leave the clock as it was */
+  if (secs < TIME_MIN || secs > TIME_MAX) {
+    log(`${stamp(secs, true)} is outside the tag's clock, which counts seconds `
+      + 'from 2000-01-01 in a signed 32-bit field. The tag would ignore it.',
+        'err');
+    return;
+  }
+  clockSkew = secs - tagSecondsNow();
+}
+
+/* Bring the clock into line with the controls. Renders nothing itself, so it
+ * can run at init too: a reload restores the checkbox but not the state behind
+ * it, and once the browser has had its say the markup is no longer the
+ * authority on whether a custom time is in play. */
+function applyCustomTime() {
+  clockAt.disabled = !customTime.checked;
+  if (!customTime.checked) { clockSkew = 0; return; }
+  /* Seeded with the time already on show, so ticking the box changes nothing by
+   * itself: the field is a starting point to edit, not a jump elsewhere. */
+  if (!clockAt.value) clockAt.value = secondsField(previewSeconds());
+  readClockField();
+}
+
+customTime.addEventListener('change', () => { applyCustomTime(); render(); });
+clockAt.addEventListener('input', () => { readClockField(); render(); });
+applyCustomTime();
+
 /* --- connection ----------------------------------------------------- */
 
 $('connect').addEventListener('click', async () => {
@@ -564,10 +654,18 @@ $('connect').addEventListener('click', async () => {
   }
   try {
     await tag.connect();
-    /* Sync on connect: the tag is almost certainly sitting at its cold-boot
-     * 00:00, and a clock showing the wrong time is worse than one that is
-     * obviously blank. */
-    await syncTime();
+    /* Not synced on connect unless asked. Connecting is how you inspect a tag,
+     * and a connection that silently rewrote its clock made two ordinary things
+     * impossible: reading what time a tag actually thinks it is, and leaving a
+     * deliberately-set time - a custom one, or one from another host - alone
+     * across a reconnect. The actions here reconnect on their own, so that
+     * write was not even a once-per-session event. */
+    if ($('syncOnConnect').checked) await syncTime();
+    else if (sentSkew === null) {
+      log('Connected without setting the clock - a tag that has been power '
+        + 'cut reads 00:00 on 2000-01-01 until something does. Press Sync '
+        + 'time, or push a face with "sync clock on push" ticked.', 'dim');
+    }
   } catch (err) {
     /* The user dismissing the chooser is a normal outcome, not a failure. */
     if (err.name === 'NotFoundError') log('Device chooser dismissed.', 'warn');

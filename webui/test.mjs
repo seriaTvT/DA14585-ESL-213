@@ -133,6 +133,11 @@ test('drawing clips instead of wrapping', () => {
   assert.equal(dark, 0, 'out-of-bounds pixels leaked into the framebuffer');
 });
 
+/* Presets that are meant to be one flat colour - see SOLID in presets.js. Named
+ * rather than detected from the script, so adding a face that renders blank by
+ * accident still fails rather than being taken for housekeeping. */
+const SOLID_FACES = new Set(['White screen', 'Black screen']);
+
 test('every preset renders cleanly and fits on the panel', () => {
   for (const [key, faces] of Object.entries(PRESETS)) {
   for (const [face, script] of Object.entries(faces)) {
@@ -158,8 +163,17 @@ test('every preset renders cleanly and fits on the panel', () => {
     for (let y = 0; y < p.height; y++)
       for (let x = 0; x < p.width; x++) if (!p.get(x, y)) ink++;
     const total = p.width * p.height;
-    assert.ok(ink > total * 0.01, `${name}: renders (nearly) blank`);
-    assert.ok(ink < total * 0.99, `${name}: renders (nearly) solid`);
+
+    if (SOLID_FACES.has(face)) {
+      /* The maintenance screens are the exception the check above exists to
+       * catch, so they are held to the opposite rule rather than waved
+       * through: all of one colour or nothing, since a screen meant to wipe a
+       * ghost off the panel that leaves a stray pixel is not doing its job. */
+      assert.ok(ink === 0 || ink === total, `${name}: is not a solid fill`);
+    } else {
+      assert.ok(ink > total * 0.01, `${name}: renders (nearly) blank`);
+      assert.ok(ink < total * 0.99, `${name}: renders (nearly) solid`);
+    }
   }
   }
 });

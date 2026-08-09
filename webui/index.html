@@ -6,6 +6,10 @@
 <title>HEMA EPD Clock</title>
 <style>
   :root {
+    /* Native widgets - the date picker above all - draw themselves from this
+       rather than from the palette below, so without it a dark page gets a
+       white calendar popup. */
+    color-scheme: light dark;
     --bg: #14151a;      --panel: #1c1e26;   --edge: #2c2f3a;
     --ink: #e8e9ee;     --dim: #9aa0b0;     --accent: #6ea8fe;
     --ok: #7ee0a6;      --warn: #f0c674;    --err: #f08a8a;
@@ -99,10 +103,11 @@
   }
   textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
-  select {
+  select, input[type=number], input[type=datetime-local] {
     font: inherit; font-size: 13px; padding: 7px 10px; border-radius: 8px;
     border: 1px solid var(--edge); background: var(--panel); color: var(--ink);
   }
+  input:disabled { opacity: .45; }
 
   .counter { font: 12px var(--mono); color: var(--dim); margin-left: auto; }
   .counter.over { color: var(--err); font-weight: 600; }
@@ -196,8 +201,8 @@
     <div class="row" style="margin-bottom:12px">
       <label for="panel">Panel</label>
       <select id="panel"></select>
-      <label for="previewTemp" title="What {T} renders as in this preview. The tag uses its own sensor; this only affects what you see here.">{T}</label>
-      <input type="number" id="previewTemp" min="-40" max="80" step="1" value="21" style="width:5em">
+      <label for="previewTemp" title="What {T} renders as in this preview. The tag uses its own sensor; this only affects what you see here.">{T} preview</label>
+      <input type="number" id="previewTemp" min="-40" max="80" step="1" value="21" style="width:6em">
     </div>
 
     <div class="screen"><canvas id="canvas"></canvas></div>
@@ -214,12 +219,33 @@
       <label class="check">
         <input type="checkbox" id="autoSync" checked> sync clock on push
       </label>
+      <label class="check" title="Off by default, so connecting never rewrites a clock you have deliberately set.">
+        <input type="checkbox" id="syncOnConnect"> sync clock on connect
+      </label>
+    </div>
+
+    <div class="row">
+      <label class="check">
+        <input type="checkbox" id="customTime"> send a custom time
+      </label>
+      <!-- The bounds are the firmware's, not a preference: TIME() parses a
+           signed 32-bit count of seconds from 2000-01-01 and ignores anything
+           that is not positive. -->
+      <input type="datetime-local" id="clockAt" step="1"
+             min="2000-01-01T00:00:01" max="2068-01-19T03:14:07" disabled>
     </div>
 
     <p class="hint">
       The tag has no RTC, so it starts at <code>00:00</code> after every power
       cut and needs a fresh <code>TIME()</code>. The face itself is kept in
       flash and survives.
+    </p>
+    <p class="hint">
+      Connecting leaves that clock alone — tick <b>sync clock on connect</b> for
+      the old behaviour. <b>Send a custom time</b> hands the tag any date you
+      like instead of this machine's, which is how you see a face on a leap day
+      or at midnight without waiting for one. The preview follows it and keeps
+      ticking from there, exactly as the tag will once it is sent.
     </p>
     <p class="hint">
       The panel takes ~2&nbsp;s to refresh after a push, and the tag stays
