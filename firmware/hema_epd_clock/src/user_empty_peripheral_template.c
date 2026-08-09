@@ -288,6 +288,23 @@ static void epd_flush_cb(void)
         return;
     }
     s_flush_waited = false;
+
+#if EPD_PARTIAL
+    /* A pushed face always paints fully.
+     *
+     * This is the one place that knows a refresh came from a host write rather
+     * than from the minute tick, and the two want different things. A tick is an
+     * update to a picture already on the glass, which is exactly what a partial
+     * is for. A push is a NEW picture, and the author is looking at the tag while
+     * it lands - so it should arrive clean rather than as a partial over whatever
+     * was there, however few rows happen to differ.
+     *
+     * The row count cannot stand in for this. A new face can be a small edit to
+     * the previous one and produce a tiny band, which is precisely when a partial
+     * looks worst: a deliberate change rendered faintly on top of the old one. */
+    epd_display_forget();
+#endif
+
     epd_render_now();
 }
 
@@ -454,6 +471,14 @@ static void handle_img_write(struct custs1_val_write_ind const *msg)
          * client vanishes mid-transfer the right thing is to stay a clock and
          * let the next minute tick repaint over the damage. */
         s_image_mode = true;
+
+#if EPD_PARTIAL
+        /* Fully, for the same reason a pushed script paints fully - and more so
+         * here: an uploaded image shares nothing with what came before, so a
+         * partial would render a whole new picture through a waveform meant for
+         * touching up an existing one. */
+        epd_display_forget();
+#endif
 
         /* Refresh what was just uploaded, not the script - re-running the
          * template would regenerate the framebuffer and discard the image. */

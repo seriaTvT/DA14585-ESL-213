@@ -303,6 +303,22 @@ for t in $types; do
         else
             build_one "$t" otp
         fi
+
+        # And the partial image, for the waveform that can actually do one.
+        #
+        # Here because a mixed-age out/ is genuinely dangerous: on 2026-08-09 two
+        # already-fixed bugs were re-reported from tags flashed with -partial
+        # images built before the fixes, sitting beside freshly built defaults
+        # under names that gave no hint of their age. The images were right about
+        # which tag they were for and silently wrong about everything else.
+        #
+        # So --all means "the whole set, all of one vintage". One command to run
+        # after a driver change, and nothing to remember per variant.
+        if [ "$partial" != 1 ] && ! type_defaults_to_otp "$t"; then
+            partial=1
+            build_one "$t" ""
+            partial=0
+        fi
     fi
 done
 
