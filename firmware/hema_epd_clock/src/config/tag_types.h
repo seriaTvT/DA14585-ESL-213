@@ -82,16 +82,30 @@
  * the panel's own, loaded by the controller from its OTP. Neither drives
  * everything:
  *
- *   Type 1, A53         Waveshare works.  OTP untried.
- *   Type 3, A41         Waveshare hangs.  OTP works.
- *   Type 4, A41 N192QB4 Waveshare works.  OTP works, 3003 ms at >=30 C.
- *   Type 4, A41 N194NM1 Waveshare INERT.  OTP works, 3642 ms at >=30 C.
+ * Keyed by the PANEL's lot code, because that is what the requirement tracks -
+ * the type number does not (see below). Lot codes are on the panel itself; the
+ * full inventory with both silkscreens is hema-local/docs/Screens.txt, and the
+ * analysis is hema-local/docs/PANEL_LOTS.md.
  *
- * Note the last two are both Type 4. **The type number does not identify the
- * panel lot**, so no per-type default can be right for both of those tags -
- * and the one that guesses wrong fails silently, with the matrix dead and only
- * the border moving, which reads as a broken screen rather than a wrong build.
- * That has already cost an evening on the N194NM1 tag.
+ *   lot code         type  Waveshare      OTP
+ *   E213A55N18AH28   1     works          untried
+ *   E213A41N192QB4   4     works          works, 3003 ms at >=30 C
+ *   E213A41N19AS02   3     works          unmeasured
+ *   E213A41N195B82   3     does not [1]   works
+ *   E213A41N194NM1   4     INERT          works, 3642 ms at >=30 C
+ *   E213A55N18CP31   2     - panel damaged, nothing established -
+ *
+ * [1] Recorded as "hangs" rather than the inert matrix the N194NM1 shows, which
+ *     would be a second and different failure mode. The observation was made
+ *     before the two Type 3 panels were told apart, so which of them hung is
+ *     inference from its being the one that does not take the table. Worth
+ *     re-confirming on the panel rather than trusting this line.
+ *
+ * **Two Type 4s disagree, and so do two Type 3s.** The type number identifies
+ * the board, not the panel lot, so no per-type default can be right for every
+ * tag of that type - and the one that guesses wrong fails silently, with the
+ * matrix dead and only the border moving, which reads as a broken screen rather
+ * than a wrong build. That has already cost an evening on the N194NM1 tag.
  *
  * So the default is the waveform that drives every unit of that type we have
  * tested, and speed is opt-in per tag once you know the panel accepts it:
