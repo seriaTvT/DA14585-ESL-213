@@ -50,6 +50,9 @@ rather than a picture.
   power cut.
 - **Repaints on the face's own schedule** — every minute for a clock, once a day
   for a calendar. A full panel refresh is the most expensive thing the tag does.
+- **Refreshes only the rows that changed**, where the panel supports it: no
+  black-white flash on a minute tick, and a fraction of the drive. Opt-in with
+  `--partial`; see [partial refresh](#partial-refresh).
 - **Stores the face in SPI flash**, so the picture survives a power cut, and
   versions it so a face written against an older language falls back to the
   built-in default rather than misdrawing.
@@ -108,15 +111,13 @@ its HINK-E0213A53 or A41 part number printed on
 it](docs/img/boards.jpg)
 
 All four, same scale and orientation: panel flex at the left, DA14585 at the
-right. Note the family resemblance across the panel axis — Type 2 and Type 3 are
-the same board with a different panel fitted, and so are Type 1 and Type 4.
+right. Type 2 and Type 3 are the same board with a different panel fitted, and so
+are Type 1 and Type 4.
 
-At a glance, the two variant-A boards carry an **Alibaba Group** silkscreen and
-bring SWD out on pads labelled `SWDIO`/`SWCLK`, while the two variant-B boards
-have an unlabelled `TP1`–`TP8` row in roughly the same place. That has held for
-every unit handled here, and it is a first glance rather than a verdict — two
-earlier rules that looked just as solid against every tag available at the time
-were falsified by the next tag. Confirm with the wiring.
+At a glance the variant-A boards carry an **Alibaba Group** silkscreen and bring
+SWD out on pads labelled `SWDIO`/`SWCLK`, while the variant-B boards have an
+unlabelled `TP1`–`TP8` row in roughly the same place. A first glance, not a
+verdict — confirm with the wiring.
 
 **2. Tell variant A from variant B by the wiring.** The two pin maps are
 disjoint enough to distinguish by continuity-testing the panel FPC back to the
@@ -138,42 +139,57 @@ the panel's D/C *and* the flash's MISO, which is why the driver has to claim and
 release the bus. On variant A the panel's pins are disjoint from the flash's and
 there is no sharing to arrange.
 
-If your tag still runs its factory firmware, the cheaper route is to read the
-wiring out of that firmware's own runtime pin table: exactly one run of eight
-distinct `(port, pin)` pairs exists in the 96 KiB of SysRAM, and for variant A it
-reads `P2_1 P2_2 P1_0 P0_1 P2_0 P0_7 P1_1 P2_3`. The table is *built at runtime*,
-so searching a flash dump will not find it.
+On a tag still running factory firmware you can instead read the pin map out of
+its runtime table in SysRAM — one run of eight distinct `(port, pin)` pairs, which
+for variant A reads `P2_1 P2_2 P1_0 P0_1 P2_0 P0_7 P1_1 P2_3`. It is built at
+runtime, so a flash dump will not contain it.
 
-**Do not** try to identify the variant by sampling GPIO modes while the stock
-firmware boots. It reads as variant B on a variant-A board, every time: the
-bit-banged pins are outputs only during a transfer, e-paper is bistable so a tag
-need not refresh at boot at all, and the pins that *are* driven early (`P0_7`,
-`P2_1`, `P2_3`) belong to both maps.
+**Do not** identify the variant by sampling GPIO modes at boot. It reads as
+variant B on a variant-A board every time: the bit-banged pins are outputs only
+during a transfer, e-paper is bistable so a tag need not refresh at boot at all,
+and the pins driven early belong to both maps.
 
-### The waveform is a third axis, and it is per tag
+### The waveform is a third axis, and it is per panel lot
 
-Two panel init sequences are carried. The **OTP** sequence is the panel's own,
-loaded by the controller out of its OTP and temperature-compensated; the
-**Waveshare** table is a hand-written LUT from Waveshare's `EPD_2IN13_V2`
-reference, fixed and roughly **2.5× faster**.
+Two panel init sequences are carried. The **Waveshare** table is a hand-written
+LUT from Waveshare's `EPD_2IN13_V2` reference — roughly **2.5× faster**, and the
+only one that can do partial refresh. The **OTP** sequence is the panel's own,
+loaded by the controller out of its OTP and temperature-compensated: slower, but
+it drives every panel we have.
 
-Neither drives everything, and **the type number does not identify the panel
-lot**. Two Type 4 tags — same board, same panel model — disagree: `E213A41N192QB4`
-runs on either waveform, `E213A41N194NM1` only on OTP. When the wrong one is
-chosen the matrix stays completely inert while the border electrode still
-flickers, which reads as a broken screen rather than a wrong build.
+Not every panel accepts the Waveshare table, and **the type number does not
+identify the panel lot**. Two Type 4 tags — same board, same panel model —
+disagree, and so do two Type 3s. When a panel rejects it the matrix stays
+completely inert while the border electrode flickers, which reads as a broken
+screen rather than a wrong build.
 
-So each type defaults to whatever drives *every* unit of that type tested so
-far, and speed is opt-in per tag once you know your panel accepts it:
+So: **every type defaults to Waveshare. Flash it, look at the glass, and rebuild
+with `--otp` if the matrix never moved.**
 
 ```sh
-tools/build.sh --type 4 --fast      # -> out/hema_epd_clock-type4-fast.bin
+tools/build.sh --type 4              # Waveshare, and partial-capable
+tools/build.sh --type 4 --otp        # the panel's own waveform
+tools/build.sh --all                 # both, plus a -partial image, for every type
 ```
 
-Images stamp `HEMA-WAVEFORM-OTP` or `-WAVESHARE`, and `flash.sh` prints which is
-about to go on. If a tag turns out to accept the fast waveform, **write down the
-lot code printed on its FPC** — it is the only thing that has predicted this so
-far.
+Images stamp `HEMA-WAVEFORM-OTP` or `-WAVESHARE` and `flash.sh` prints which is
+about to go on. Write down the lot code on the panel's FPC alongside the result —
+it is the only thing that has ever predicted this.
+
+### Partial refresh
+
+`--partial` repaints only the rows that changed, using the partial waveform. A
+minute tick stops flashing and takes a fraction of the drive; a pushed face or an
+uploaded image always paints fully, and a full refresh is forced every 8 partials
+or every hour to sweep out accumulated residue.
+
+Two constraints:
+
+- **Waveshare lots only.** These panels carry no partial waveform in their OTP —
+  asking the controller to load one takes exactly as long as a full refresh, so
+  there is nothing there. `build.sh` refuses `--otp --partial`.
+- **Ghosting is inherent.** A partial waveform does not fully clear, so faint
+  residue builds between full refreshes. That is the trade, not a defect.
 
 ---
 
@@ -274,25 +290,27 @@ makefiles. `tools/build.sh` drives them headlessly:
 ```sh
 export LOCAL_PROJ="$SDK/projects/target_apps/template/hema_epd_clock"
 
-tools/build.sh --type 3          # -> out/hema_epd_clock-type3.bin
-tools/build.sh --type 3 --fast   # the Waveshare waveform instead
-tools/build.sh --all             # every type, plus a -fast image per OTP type
+tools/build.sh --type 3             # -> out/hema_epd_clock-type3.bin
+tools/build.sh --type 3 --otp      # the panel's own waveform instead
+tools/build.sh --type 3 --partial  # partial refresh, Waveshare lots only
+tools/build.sh --all               # every type, every variant, one vintage
 tools/build.sh --type 3 --clean
 ```
+
+Use `--all` after changing anything in the driver. A mixed-age `out/` is a real
+trap: the images are all correctly named for their tag type and give no hint of
+their age, so a stale one reproduces a bug you already fixed.
 
 The `cp -r` above is a one-time bootstrap: `build.sh` mirrors the repo's sources
 into that tree on every run, so from here on you edit in the repo and never
 touch the copy.
 
-The type is passed to the compiler as `-DHEMA_TAG_TYPE=n` rather than written
-into a source file, so switching types touches nothing git tracks. The script
-patches `$(TAG_DEFS)` into the generated `subdir.mk` files on demand (they are
-not tracked, and a regenerated tree would silently lose it), cleans between
-types because make cannot see a define change, and then **checks the finished
-binary's own type stamp against what you asked for** before it will say it built
-anything. Every way this can go wrong produces a working image for the *wrong*
-tag rather than an error, which is why the check is on the artefact and not on
-the inputs.
+The type is passed to the compiler as `-DHEMA_TAG_TYPE=n`, so switching types
+touches nothing git tracks. `build.sh` patches `$(TAG_DEFS)` into the generated
+`subdir.mk` files on demand, cleans between types, and **checks the finished
+binary's own type stamp against what you asked for** before reporting success —
+every way this can go wrong yields a working image for the *wrong* tag rather than
+an error, so the check has to be on the artefact.
 
 ### 4. Flash
 
@@ -302,24 +320,17 @@ tools/flash.sh --type 3 stock_flash_512k.bin out/hema_epd_clock-type3.bin
 
 Or drop the dump argument and put dumps at `$HEMA_STOCK_DIR/type<n>/stock_flash_512k.bin`.
 
-A secondary bootloader — in OTP on Type 1, an AN-B-001 image at flash offset 0
-on the others — reads a product header at `0x038000` to find two image banks and
-boots the *newest valid* one. So this writes **bank 1** and leaves the stock
-image in bank 2: a bad build falls back to something that works rather than
-bricking the tag. It is also why a raw `.bin` at offset 0 does not boot your
-firmware on this board — offset 0 is not where the bootloader looks for an
-application. `mksuota.py` builds the bank image; `mkbootimg.py` is the *other*
-format (AN-B-001, for when the boot ROM itself does the loading) and is not what
-you want here.
+A secondary bootloader reads a product header at `0x038000` to find two image
+banks and boots the *newest valid* one. This writes **bank 1** and leaves the stock
+image in bank 2, so a bad build falls back to something that works rather than
+bricking the tag. It is also why a raw `.bin` at offset 0 does not boot on this
+board. `mksuota.py` builds the bank image and blanks the template store sector, so
+the tag comes back on the built-in default face; `mkbootimg.py` is the *other*
+format (AN-B-001) and not what you want here.
 
-`mksuota.py` also blanks the template store sector, so the tag comes back on the
-built-in default face rather than on whatever the last owner left in flash.
-
-`flash.sh` cross-checks the type, wiring and panel geometry stamped in the
-binary against what you typed, and refuses on any mismatch. It also treats
-J-Link's own error lines as fatal — `JLinkExe` exits 0 even when it never
-reached the probe, and this script used to report success over a flash that was
-never written.
+`flash.sh` cross-checks the type, wiring and panel geometry stamped in the binary
+against what you typed and refuses on any mismatch. It also treats J-Link's error
+lines as fatal, because `JLinkExe` exits 0 even when it never reached the probe.
 
 Then **power-cycle the tag**. An SWD reset does not re-run the bootloader's bank
 scan on this board, so the old image keeps running until the power actually
@@ -439,24 +450,21 @@ RECT(4,4,4+{d}*8,12,color=0,fill=1)     how far through the month we are
 LINE(60,60,60+{H}*2,60,color=0,width=2) a crude hour hand
 ```
 
-There are no conditionals and no way to bind an intermediate value, so a face
-that needs one re-derives it. The `Month grid` preset places 31 numbers by
-computing the weekday of the 1st in every one of them, and pushes days 29–31 off
-the panel to be clipped when the month is short — `n/({D}+1)` is 0 while the day
-is real and 1 once it is past the end.
+There are no conditionals and no way to bind an intermediate value, so a face that
+needs one re-derives it — the `Month grid` preset computes the weekday of the 1st
+in all 31 of its number placements, and clips days 29–31 off-panel in short months
+with `n/({D}+1)`.
 
 ### What it will and will not tell you
 
 **Nothing throws.** A malformed expression, an unknown variable and division by
-zero all evaluate to 0; an unrecognised line is skipped. A shelf label with no
-host in range has to keep drawing something, so it degrades to a wrong-looking
-face rather than a hung one.
+zero all evaluate to 0; an unrecognised line is skipped. A shelf label with no host
+in range has to keep drawing something.
 
-But forgiveness does not mean silence. Problems are counted as they are skipped
-and reported over the status characteristic — unknown command, unknown option,
-line too long, script full, bad argument — with the line number of the first
-one. An unknown `{variable}` renders as the literal `{name}` on the panel rather
-than vanishing, so a typo is visible from across the room.
+Forgiveness is not silence, though: problems are counted and reported over the
+status characteristic — unknown command, unknown option, line too long, script
+full, bad argument — with the line number of the first. An unknown `{variable}`
+renders as the literal `{name}` rather than vanishing.
 
 Limits: a line is at most **128 bytes**, a whole script at most **3072 bytes**.
 The panel is 122×250 (landscape 250×122) or 104×212 (landscape 212×104)
@@ -521,10 +529,9 @@ out/                    built images, named by type (gitignored)
 Third-party material — the SDK, the vendor's firmware images and web tool, flash
 dumps, and the reverse-engineering record — is deliberately kept **outside** this
 repository. Nothing here is derived from or linked against any of it. A few
-error messages in `tools/` and `src/config/tag_types.h` point at
-`hema-local/docs/TAG_VARIANTS.md`, which is a working document that lives beside
-the repo rather than in it; the [tag table above](#does-this-fit-my-tag) is what
-it says about types.
+error messages in `tools/` and `src/config/tag_types.h` point at working documents
+under `hema-local/docs/` that live beside the repo rather than in it; the
+[tag table above](#does-this-fit-my-tag) is what they say about types.
 
 ---
 
@@ -533,12 +540,14 @@ it says about types.
 ### Tests
 
 ```sh
-make -C firmware/hema_epd_clock/test      # host C tests: time, graphics
+cd firmware/hema_epd_clock/test && make && make render render-low && cd -
 node --test webui/test.mjs                # preview parity, preset fit
 ```
 
 The C tests compile the pure modules natively against stubs — no SDK, no
-toolchain, no tag.
+toolchain, no tag. Build `render` and `render-low` before the JS suite or its
+byte-identity check silently skips: it needs a firmware renderer per geometry to
+diff the preview against.
 
 ### The preview is a port, not an approximation
 
@@ -548,13 +557,11 @@ glyph tables and the same `{}` expansion as `src/epd/epd_gfx.c` and
 there too** — anything that drifts is a bug, and the whole point of the preview
 is that what you see is what the panel will show.
 
-Several pairs are pinned by tests rather than by good intentions: the built-in
-default face against `presets.js` byte for byte, the option tables on both sides,
-and the buffer limits, which are read out of the C source rather than repeated.
-
-The one intentional difference: the firmware silently ignores commands it does
-not implement, while the preview reports them. At authoring time a silent no-op
-is the least helpful thing possible.
+Several pairs are pinned by tests rather than good intentions: the built-in default
+face against `presets.js` byte for byte, the option tables on both sides, and the
+buffer limits, read out of the C source rather than repeated. The one intentional
+difference is that the firmware silently ignores commands it does not implement
+while the preview reports them.
 
 `firmware/hema_epd_clock/test/render` is the tiebreaker. When the panel disagrees
 with the preview there are three candidates — the firmware, the JS port, and
@@ -565,57 +572,39 @@ cd firmware/hema_epd_clock/test && make render
 printf "ROTATE(270)\nCLEAR(1)\nTEXT(4,4,'HI',scale=2)\n" | ./render 838391825 > fb.bin
 ```
 
-### The 16×24 font
+### Two more things that bite
 
-Both copies of the table — `src/epd/epd_gfx.c` and `webui/epd.js` — are generated
-from ASCII art in `tools/font16.py`. Edit the art and re-emit into both
-(`--emit`, `--js`) rather than hand-patching either. The glyphs were drawn by
-hand, so there is no third-party font licence riding along in the image.
+The **16×24 font** exists twice — `src/epd/epd_gfx.c` and `webui/epd.js` — and
+both are generated from ASCII art in `tools/font16.py`. Edit the art and re-emit
+into both (`--emit`, `--js`) rather than hand-patching either.
 
-### Adding a fifth tag
-
-A tag that pairs an existing board with an existing panel is a row in
-`src/config/tag_types.h` and nothing else — `--all` and the flasher's checks pick
-it up from there. State the board variant and how you established it, the panel
-model *from the label*, and which waveform you tested; mark anything inferred as
-inferred.
-
-### Working on the firmware without a tag in front of you
-
-`tools/sync.sh` mirrors the sources into the SDK build tree with `--delete` and
-then verifies by comparing checksums both ways. The build compiles from inside
-the SDK tree, not from this repo, so an edit that was never copied across
-produces a fix that "did not work" and a file deleted here but left there keeps
-compiling into the image. Both have happened; the verify is the point.
+**A fifth tag** that pairs an existing board with an existing panel is a row in
+`src/config/tag_types.h` and nothing else; `--all` and the flasher's checks pick it
+up from there. State how you established the board variant, the panel model from
+the label, and which waveform you tested.
 
 ---
 
 ## Known gaps
 
-- **Type 2 has never been seen to work.** Panel rail steady at 3.3 V, BUSY
-  continuity good, our pin configuration correct on read-back, a properly
-  rendered framebuffer on the tag, and the controller answers on no line. RST
-  continuity from FPC pad 10 to `P1_0` was never measured — check that first on
-  a second unit, because an open reset line produces exactly this picture with a
-  healthy panel behind it.
-- **`epd_panel_present()` returns false on a working panel.** Its criterion is
-  that the pull-up and pull-down reads agree, but only six of the eight status
-  bits are driven low, so a live controller reads `0x21` against the pull-up.
-  The raw bytes are trustworthy (`0xFF` really does mean nothing is driving the
-  line); the boolean is not, and nothing should use it until the criterion
-  changes.
+- **Type 2 has never been seen to work.** Rail, BUSY continuity, pin
+  configuration and framebuffer all check out, and the controller answers on no
+  line. RST continuity from FPC pad 10 to `P1_0` was never measured — check that
+  first on a second unit, since an open reset produces exactly this picture.
 - **Which waveform a panel accepts is not predictable** from anything visible
-  except, so far, the lot code on the FPC. It was gated on panel resolution once
-  and on board variant once; both looked right against every tag available at
-  the time and both were falsified by the next tag.
+  except the lot code on the FPC. It was gated on panel resolution once and on
+  board variant once; both matched every tag available at the time and both were
+  falsified by the next one. The controller cannot be asked either — its identity
+  registers differ by lot on variant B and are absent on variant A.
+- **Partial refresh is unavailable on OTP-only lots**, whose OTP holds no partial
+  waveform to load. Those tags get full refreshes only.
+- **`epd_panel_present()` returns false on a working panel** — on variant A
+  nothing drives the status register, so it reads `0xFF` against `0x00` and the
+  boolean says "absent". The raw bytes are trustworthy; nothing uses the boolean.
 - **The clock does not survive a power cut.** There is no RTC. A tag boots at
-  `00:00` on 2000-01-01 and stays there until a host sends `TIME()`; the picture
-  is what persists, not the time.
+  `00:00` on 2000-01-01 until a host sends `TIME()`; the picture persists, the time
+  does not.
 - **No SUOTA.** Updating the firmware means SWD, every time.
-- **The vendor's runtime board-variant selection is unlocated.** One retail image
-  serves all four tags — Type 4's flash carries Type 3's firmware byte for byte —
-  and the panel half of that selection has been traced to two flash records and a
-  driver vtable. The wiring half has not.
 
 ---
 
