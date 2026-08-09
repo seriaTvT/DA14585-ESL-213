@@ -25,6 +25,9 @@
 #                    shape for this controller". Needs the Waveshare path.
 #   --panel-id       read cmd 0x2F/0x2E/0x2D into epd_panel_id_* over SWD, to
 #                    see whether the controller can say which lot it is.
+#   --lut-probe      measure the controller's LUT layout, by timing an update
+#                    with one marker byte swept across the register. Blocks for
+#                    minutes and never returns; read epd_lut_probe_ms over SWD.
 #   --partial        repaint only changed rows with the partial waveform. Costs
 #                    EPD_BUF_SIZE of RAM and has two unmeasured values in it;
 #                    see EPD_PARTIAL in src/epd/epd_ssd1680.h before trusting it.
@@ -74,6 +77,7 @@ also_alt=0
 sweep=0
 panel_id=0
 partial=0
+lut_probe=0
 lut_gain=1
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -90,6 +94,7 @@ while [ $# -gt 0 ]; do
         --sweep)   sweep=1; shift ;;
         --panel-id) panel_id=1; shift ;;
         --partial) partial=1; shift ;;
+        --lut-probe) lut_probe=1; shift ;;
         --lut-gain)   lut_gain=${2:-}; shift 2 ;;
         --lut-gain=*) lut_gain=${1#*=}; shift ;;
         -h|--help) usage; exit 2 ;;
@@ -201,6 +206,10 @@ build_one() {
     if [ "$panel_id" = 1 ]; then
         defs="$defs -DEPD_PANEL_ID=1"
         suffix="$suffix-id"
+    fi
+    if [ "$lut_probe" = 1 ]; then
+        defs="$defs -DEPD_LUT_PROBE=1"
+        suffix="$suffix-lutprobe"
     fi
     if [ "$partial" = 1 ]; then
         # Measured 2026-08-09 on the SLH1904 tag: these panels hold no partial

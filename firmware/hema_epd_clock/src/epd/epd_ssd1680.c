@@ -664,6 +664,80 @@ void epd_temp_sweep(void)
 
 #endif  /* EPD_TEMP_SWEEP */
 
+#if EPD_LUT_PROBE
+
+/* Big enough to be unmistakable in a phase duration, small enough that a hit
+ * does not take a visible age - 161 of them run back to back. */
+#define LUT_PROBE_MARK 0x10u
+
+volatile uint16_t epd_lut_probe_ms[EPD_LUT_PROBE_LEN + 1u];
+volatile uint16_t epd_lut_probe_done;
+
+/* Write the payload, trigger an update, and time it.
+ *
+ * 0xC7 and not 0xF7: bit 4 clear means "display with the LUT that is resident",
+ * which is the one just written. 0xF7 would reload the OTP table over it and
+ * every offset would return the same number - the measurement would look like a
+ * flat register rather than a broken command.
+ *
+ * No RAM write either. This measures a waveform's duration and nothing else. */
+static void epd_lut_probe_one(uint16_t index, uint16_t offset, bool marked)
+{
+    static uint8_t payload[EPD_LUT_PROBE_LEN];
+    uint16_t i;
+    uint16_t ms = 0;
+
+    for (i = 0; i < EPD_LUT_PROBE_LEN; i++) {
+        payload[i] = 0u;
+    }
+    if (marked) {
+        payload[offset] = LUT_PROBE_MARK;
+    }
+
+    epd_write_cmd(0x32);
+    epd_write_data_buf(payload, EPD_LUT_PROBE_LEN);
+
+    epd_write_cmd(0x22);
+    epd_write_data(0xC7);
+    epd_write_cmd(0x20);
+
+    /* Same blocking millisecond loop the temperature sweep uses, and for the same
+     * reason: this is measuring, and the app's 50 ms poll would quantise away the
+     * differences being looked for. */
+    while (epd_display_busy() && ms < 10000u) {
+        epd_delay_ms(1);
+        ms++;
+        wdg_reload(0xFF);
+    }
+    epd_lut_probe_ms[index] = ms;
+}
+
+void epd_lut_probe(void)
+{
+    uint16_t off;
+
+    epd_lut_probe_done = 0;
+
+    /* The control first, so a sweep that raises nothing anywhere can still be
+     * told apart from a sweep that never ran at all. */
+    epd_lut_probe_one(EPD_LUT_PROBE_LEN, 0, false);
+
+    for (off = 0; off < EPD_LUT_PROBE_LEN; off++) {
+        epd_lut_probe_one(off, off, true);
+        epd_lut_probe_done = (uint16_t)(off + 1u);
+    }
+
+    /* Deliberately never returns. The results are the whole output and the BLE
+     * stack was never started, so there is nothing to go back to - and stopping
+     * here keeps the panel from being repainted over the state that was measured. */
+    epd_sleep();
+    for (;;) {
+        wdg_reload(0xFF);
+    }
+}
+
+#endif  /* EPD_LUT_PROBE */
+
 #if EPD_BITBANG && EPD_PANEL_PROBE
 
 /* Is a panel actually answering?
@@ -953,6 +1027,15 @@ void epd_init(bool full_lut)
      * which is what an OTP read wants, and the read writes nothing so it cannot
      * disturb whatever was just set up. */
     epd_panel_read_id();
+#endif
+
+#if EPD_LUT_PROBE
+    /* Truly last, because it never comes back. Deliberately outside the path
+     * split above so it can run on either waveform: on an OTP panel it is the
+     * measurement, and on one that accepts the Waveshare table it is the control
+     * - the timing region should show up at bytes 35 to 70, which tests the probe
+     * rather than the panel. */
+    epd_lut_probe();
 #endif
 }
 

@@ -247,6 +247,37 @@
     #define EPD_PANEL_ID 0
 #endif
 
+/* Measure the controller's LUT layout, by asking it to time itself.
+ *
+ * The question this answers: these panels reject the hand-written Waveshare
+ * table, running zero frames from it, and the most likely reason is that their
+ * LUT is a different shape - a different step count, so our 70 bytes land in the
+ * wrong fields. We cannot write any waveform, full or partial, until we know the
+ * real layout, and the panels that need one hold no partial waveform in OTP.
+ *
+ * The method needs no instruments. Write a LUT that is entirely zero except for
+ * one marker byte, trigger an update WITHOUT reloading from OTP, and time it.
+ * A marker in a phase-duration field makes the update measurably longer; a marker
+ * anywhere the controller reads as a voltage does not. Sweep the marker across
+ * every offset and the durations draw the register's map: where the timing region
+ * starts, how the groups repeat, and where the register ends - because offsets
+ * past the end read as baseline.
+ *
+ * **It cannot drive the panel.** Exactly one byte is non-zero, so either it is a
+ * voltage with every duration at zero, or a duration with every voltage at zero.
+ * Never both, so no pixel is ever driven and the glass keeps its picture.
+ *
+ * Proven on the Type 5 controller, where it recovered a 144-byte, 12-step layout
+ * from nothing. Worth running on a panel that ACCEPTS the Waveshare table as a
+ * control: the timing region should appear at bytes 35-70, which is a positive
+ * control on the probe itself rather than only on the panel.
+ *
+ * A bench build. It blocks for several minutes at boot and never returns, so the
+ * BLE stack never starts - read the results over SWD. */
+#if !defined(EPD_LUT_PROBE)
+    #define EPD_LUT_PROBE 0
+#endif
+
 /* ---- partial refresh --------------------------------------------------------
  * Repaint only the rows that changed, with the partial waveform, instead of
  * driving every gate line through the full one.
@@ -624,6 +655,29 @@ extern volatile uint8_t  epd_sweep_done;
 /** Run the sweep. Blocks for the whole thing - about a minute - and leaves
  *  the panel showing whatever the last step drew. Bench use only. */
 void epd_temp_sweep(void);
+#endif
+
+#if EPD_LUT_PROBE
+
+/** How many bytes of 0x32 payload to sweep. Past any plausible LUT length on
+ *  purpose - 70 for the SSD1675A family, 144 measured on Type 5's controller, 153
+ *  for the SSD1681 - because offsets the controller ignores read as baseline, and
+ *  that is how the register's real length gets measured instead of assumed. */
+#define EPD_LUT_PROBE_LEN 160u
+
+/** Update duration in ms for a marker at each offset. Index EPD_LUT_PROBE_LEN
+ *  holds the all-zeros control, written FIRST so a sweep that finds nothing can
+ *  still be told from a sweep that never ran.
+ *
+ *  Reading it: entries equal to the control are bytes the controller does not
+ *  treat as a duration. A run of raised entries is the timing region, and its
+ *  stride is the group size. Everything past the register's end returns to
+ *  baseline. */
+extern volatile uint16_t epd_lut_probe_ms[EPD_LUT_PROBE_LEN + 1u];
+extern volatile uint16_t epd_lut_probe_done;   /* offsets completed so far */
+
+/** Run the sweep. Blocks for minutes and never returns. */
+void epd_lut_probe(void);
 #endif
 
 #if EPD_PANEL_ID
