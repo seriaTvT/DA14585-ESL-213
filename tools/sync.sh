@@ -42,7 +42,9 @@ HERE=$(cd "$(dirname "$0")/.." && pwd)
 WORKSPACE=$(cd "$HERE/.." && pwd)
 
 VM=${VM:-vm}
-VM_PROJ=${VM_PROJ:-/home/nina/Downloads/SDK_6.0.22.1401/DA145xx_SDK/6.0.22.1401/projects/target_apps/template/hema_epd_clock}
+# $HOME is this machine's, not the VM's. They agree here, and where they do not
+# the existing "Check VM_PROJ" failure below says so before anything is copied.
+VM_PROJ=${VM_PROJ:-$HOME/Downloads/SDK_6.0.22.1401/DA145xx_SDK/6.0.22.1401/projects/target_apps/template/hema_epd_clock}
 LOCAL_PROJ=${LOCAL_PROJ:-$WORKSPACE/hema-local/toolchain/SDK_6.0.22.1401/DA145xx_SDK/6.0.22.1401/projects/target_apps/template/hema_epd_clock}
 
 SRC_PROJ="$HERE/firmware/hema_epd_clock"
