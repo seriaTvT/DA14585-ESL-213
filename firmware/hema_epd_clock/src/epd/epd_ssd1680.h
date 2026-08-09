@@ -174,6 +174,79 @@
     #define EPD_TEMP_READ 1
 #endif
 
+/* Multiply the Waveshare waveform's drive, to find out WHY some A41 panels sit
+ * inert on it while their border electrode moves normally.
+ *
+ * Two hypotheses produce that exact symptom and the symptom cannot separate
+ * them:
+ *
+ *   under-drive   The table is 60 frames by its own timing groups
+ *                 ((3+3)x2 + (9+9)x2 + (3+3)x2) against an OTP refresh of
+ *                 3003-3642 ms, so it delivers far less total drive than the
+ *                 panel's own waveform. E-paper thresholds are sharp - below
+ *                 the voltage-time product the particles do not detach from
+ *                 the electrode at all - so "not quite enough" and "nothing"
+ *                 look identical. A lot needing 21% more drive (which is what
+ *                 the two measured OTP curves differ by) can therefore fall
+ *                 off a cliff rather than fade.
+ *   wrong shape   The controller wants a different step count, so our 70 bytes
+ *                 land misaligned: the timing bytes fall in the voltage region,
+ *                 the timing region stays zero, and every phase runs zero
+ *                 frames. Not speculation - measured on the Type 5 controller,
+ *                 which wants 12 steps and 144 bytes and went inert on this
+ *                 same table, BUSY clearing normally included.
+ *
+ * This scales the repeat count of each timing group, the one knob that changes
+ * total drive without touching voltages or the layout. The outcome is binary:
+ *
+ *   a gain that brings the matrix to life  -> under-drive
+ *   nothing at any gain                    -> wrong shape, and the LUT probe
+ *                                             ported from Type 5 is next
+ *
+ * Groups already at zero stay at zero; an unused phase must stay unused. 1
+ * ships the table as Waveshare wrote it. 3 puts 180 frames on the panel, the
+ * same order as the OTP path's duration, so it is the natural first try.
+ *
+ * A bench switch, not a shipping default. A gain that works is a finding, not
+ * a waveform: multiplying someone else's calibration is not the same as having
+ * one, and the panel's own OTP is per-lot correct by construction. */
+#if !defined(EPD_LUT_GAIN)
+    #define EPD_LUT_GAIN 1
+#endif
+
+#if EPD_LUT_GAIN < 1
+    #error "EPD_LUT_GAIN is a multiplier - 1 means the table unmodified"
+#endif
+
+/* Read whatever identifies the panel, so a build can tell which lot it is on
+ * instead of being told.
+ *
+ * Worth having because the waveform requirement tracks the panel lot and
+ * nothing in the firmware can currently see it. Two A41 panels with the same
+ * `HINK-E0213A41-FPC` silkscreen and the same PCB need different waveforms, and
+ * today the only thing that predicts which is a sticker read by eye. If any of
+ * these registers differs between lots, that guessing game is over.
+ *
+ * Three registers, cheapest confidence first:
+ *   0x2F  Status Bit Read. Proven to answer on these tags - epd_panel_present()
+ *         already reads it and gets a consistently driven value. May well be
+ *         identical across lots, being status rather than identity.
+ *   0x2E  Read User ID. SSD16xx parts carry a 10-byte OTP user ID, which is
+ *         where a panel maker would put a lot code if it put one anywhere.
+ *   0x2D  OTP Register Read for Display Option, 10 bytes. The two panels are
+ *         KNOWN to hold different OTP waveform tables - measured across 16
+ *         temperature steps, curves that cross - so their OTP differs for
+ *         certain. This is the closest we can get to reading that difference.
+ *
+ * 0x2E and 0x2D are datasheet-level expectations, unverified on this silicon.
+ * A read costs nothing and cannot harm the panel, so the risk is a lapful of
+ * 0xFF rather than anything worse. Results land in epd_panel_id_* for a
+ * debugger; nothing acts on them yet, and nothing should until two panels have
+ * actually been compared. */
+#if !defined(EPD_PANEL_ID)
+    #define EPD_PANEL_ID 0
+#endif
+
 /* ------------------------------------------------------------------------
  * BOARD VARIANT — set exactly one.
  *
@@ -486,6 +559,34 @@ extern volatile uint8_t  epd_sweep_done;
 /** Run the sweep. Blocks for the whole thing - about a minute - and leaves
  *  the panel showing whatever the last step drew. Bench use only. */
 void epd_temp_sweep(void);
+#endif
+
+#if EPD_PANEL_ID
+
+/** How many bytes to clock out of each identity register. The user ID and the
+ *  display-option OTP are documented as 10 bytes; 12 is read so that a register
+ *  which is actually longer shows itself rather than being silently truncated,
+ *  and so that a register which is shorter shows what it repeats or pads with.
+ *  Over-reading a shift register costs nothing but clock cycles. */
+#define EPD_PANEL_ID_LEN 12u
+
+/** Filled in by epd_panel_read_id(), read out over SWD. All 0xFF (or all 0x00)
+ *  means the register did not answer, which is itself a finding - the command is
+ *  then not supported on this silicon and cannot be used to tell lots apart.
+ *
+ *  epd_panel_id_status  cmd 0x2F, one byte. Known to answer.
+ *  epd_panel_id_user    cmd 0x2E, the OTP user ID.
+ *  epd_panel_id_option  cmd 0x2D, the display-option OTP.
+ *  epd_panel_id_done    0 until the read has finished. */
+extern volatile uint8_t epd_panel_id_status;
+extern volatile uint8_t epd_panel_id_user[EPD_PANEL_ID_LEN];
+extern volatile uint8_t epd_panel_id_option[EPD_PANEL_ID_LEN];
+extern volatile uint8_t epd_panel_id_done;
+
+/** Read the identity registers. Non-destructive: it clocks data out and writes
+ *  nothing, so it neither refreshes the panel nor disturbs the waveform, and it
+ *  is safe to call on a tag that is otherwise working normally. */
+void epd_panel_read_id(void);
 #endif
 
 /** Push a full 1bpp framebuffer (EPD_BUF_SIZE bytes, MSB-first per row,

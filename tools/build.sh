@@ -9,6 +9,17 @@
 #                                     type that defaults to the OTP waveform
 #   tools/build.sh --type 3 --clean
 #
+# Bench builds, for working out why a panel behaves as it does. Each gets its
+# own name on disk, for the same reason --fast does.
+#
+#   --sweep          map the panel's OTP waveform against temperature. Blocks
+#                    for ~a minute at boot; read epd_sweep_ms over SWD.
+#   --lut-gain <n>   multiply the Waveshare waveform's drive by n. Separates
+#                    "this lot needs more drive" from "our LUT is the wrong
+#                    shape for this controller". Needs the Waveshare path.
+#   --panel-id       read cmd 0x2F/0x2E/0x2D into epd_panel_id_* over SWD, to
+#                    see whether the controller can say which lot it is.
+#
 # A tag type used to be two macros - the board variant and the panel size -
 # edited by hand in src/config/user_config.h, and kept consistent with the
 # letter passed to flash.sh by whoever remembered. That is one forgotten edit
@@ -51,6 +62,9 @@ types=
 force_clean=0
 fast=0
 also_fast=0
+sweep=0
+panel_id=0
+lut_gain=1
 while [ $# -gt 0 ]; do
     case "$1" in
         --type)    types="${types}${types:+ }${2:-}"; shift 2 ;;
@@ -58,10 +72,19 @@ while [ $# -gt 0 ]; do
         --all)     types="$(known_types | tr '\n' ' ')"; also_fast=1; shift ;;
         --fast)    fast=1; shift ;;
         --clean)   force_clean=1; shift ;;
+        --sweep)   sweep=1; shift ;;
+        --panel-id) panel_id=1; shift ;;
+        --lut-gain)   lut_gain=${2:-}; shift 2 ;;
+        --lut-gain=*) lut_gain=${1#*=}; shift ;;
         -h|--help) usage; exit 2 ;;
         *)         echo "build.sh: unknown argument $1" >&2; usage; exit 2 ;;
     esac
 done
+
+case "$lut_gain" in
+    ''|*[!0-9]*) echo "build.sh: --lut-gain wants a whole number, got '$lut_gain'" >&2; exit 2 ;;
+esac
+[ "$lut_gain" -ge 1 ] || { echo "build.sh: --lut-gain is a multiplier; 1 means unmodified" >&2; exit 2; }
 
 [ -n "$types" ] || { usage; exit 2; }
 [ -r "$TABLE" ] || { echo "build.sh: cannot read $TABLE" >&2; exit 1; }
@@ -138,6 +161,33 @@ build_one() {
         defs="$defs -DEPD_INIT_FROM_OTP=0"
         suffix="-fast"
     fi
+
+    # Bench options. Each one changes the suffix as well as the defines: these
+    # images look identical to a working build from the outside and one of them
+    # blocks for a minute at boot, so an unlabelled copy on disk is a trap.
+    if [ "$sweep" = 1 ]; then
+        defs="$defs -DEPD_TEMP_SWEEP=1"
+        suffix="$suffix-sweep"
+    fi
+    if [ "$panel_id" = 1 ]; then
+        defs="$defs -DEPD_PANEL_ID=1"
+        suffix="$suffix-id"
+    fi
+    if [ "$lut_gain" != 1 ]; then
+        # The gain scales the hand-written table, which only exists on the
+        # Waveshare path - an OTP build compiles it out entirely, so the flag
+        # would be accepted and do nothing. That failure costs a flash and a
+        # look at a screen to notice, so refuse it here instead.
+        if [ "$want_fast" != 1 ] && type_defaults_to_otp "$t"; then
+            echo "build.sh: --lut-gain scales the Waveshare waveform, and type $t" >&2
+            echo "          defaults to the OTP one, which has no table to scale." >&2
+            echo "          Add --fast to put this build on the Waveshare path." >&2
+            exit 2
+        fi
+        defs="$defs -DEPD_LUT_GAIN=$lut_gain"
+        suffix="$suffix-gain$lut_gain"
+    fi
+
     label="$t$suffix"
     [ -r "$BUILD/.tag_type" ] && last=$(cat "$BUILD/.tag_type")
 

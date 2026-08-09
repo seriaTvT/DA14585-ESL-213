@@ -328,9 +328,9 @@ void epd_gpio_init(void)
     GPIO_ConfigurePin(EPD_PWR_PORT,  EPD_PWR_PIN,  OUTPUT, PID_GPIO, true);
 }
 
-#if (EPD_BITBANG && EPD_PANEL_PROBE) || EPD_TEMP_READ
+#if (EPD_BITBANG && EPD_PANEL_PROBE) || EPD_TEMP_READ || EPD_PANEL_ID
 
-/* Clock one byte back out of the controller, MSB first.
+/* Clock bytes back out of the controller, MSB first.
  *
  * The panel's data line is bidirectional - the controller drives it during a
  * read - so the pad has to be turned around to an input and clocked by hand.
@@ -344,11 +344,14 @@ void epd_gpio_init(void)
  * INPUT; epd_panel_present() deliberately reads twice with PULLUP and then
  * PULLDOWN, which is what distinguishes "the panel drove the line" from
  * "nobody did and it followed the pull".
+ *
+ * Split into turnaround / clock / restore so a multi-byte register can be read
+ * with CS held low for the whole transaction. epd_read_byte() below is exactly
+ * the sequence this file has always used; nothing about a single-byte read has
+ * changed.
  */
-static uint8_t epd_read_byte(uint32_t sda_mode)
+static void epd_read_begin(uint32_t sda_mode)
 {
-    uint8_t v = 0;
-
 #if !EPD_BITBANG
     /* Variant B writes through the hardware SPI block, so its clock and data
      * pads are PID_SPI_CLK/PID_SPI_DO and cannot be driven by hand as they
@@ -363,6 +366,11 @@ static uint8_t epd_read_byte(uint32_t sda_mode)
     GPIO_SetActive(EPD_DC_PORT, EPD_DC_PIN);      /* data phase */
     GPIO_ConfigurePin(EPD_SDA_PORT, EPD_SDA_PIN,
                       (GPIO_PUPD)sda_mode, PID_GPIO, false);
+}
+
+static uint8_t epd_read_bits(void)
+{
+    uint8_t v = 0;
 
     for (uint8_t i = 0; i < 8; i++) {
         GPIO_SetInactive(EPD_SCK_PORT, EPD_SCK_PIN);
@@ -370,7 +378,11 @@ static uint8_t epd_read_byte(uint32_t sda_mode)
                       (GPIO_GetPinStatus(EPD_SDA_PORT, EPD_SDA_PIN) ? 1u : 0u));
         GPIO_SetActive(EPD_SCK_PORT, EPD_SCK_PIN);
     }
+    return v;
+}
 
+static void epd_read_end(void)
+{
 #if EPD_BITBANG
     GPIO_ConfigurePin(EPD_SDA_PORT, EPD_SDA_PIN, OUTPUT, PID_GPIO, false);
     epd_cs_high();
@@ -382,10 +394,23 @@ static uint8_t epd_read_byte(uint32_t sda_mode)
     GPIO_ConfigurePin(EPD_SCK_PORT, EPD_SCK_PIN, OUTPUT, PID_SPI_CLK, false);
     GPIO_ConfigurePin(EPD_SDA_PORT, EPD_SDA_PIN, OUTPUT, PID_SPI_DO,  false);
 #endif
-    return v;
 }
 
 #endif  /* read primitive */
+
+#if (EPD_BITBANG && EPD_PANEL_PROBE) || EPD_TEMP_READ
+
+static uint8_t epd_read_byte(uint32_t sda_mode)
+{
+    uint8_t v;
+
+    epd_read_begin(sda_mode);
+    v = epd_read_bits();
+    epd_read_end();
+    return v;
+}
+
+#endif  /* single-byte read */
 
 #if EPD_TEMP_READ
 
@@ -432,6 +457,33 @@ int8_t epd_read_temperature(void)
  * all of it - see epd_resample_temperature(). */
 static void epd_load_waveshare_lut(const uint8_t *lut)
 {
+    const uint8_t *tbl = lut;
+
+#if EPD_LUT_GAIN != 1
+    /* Scale the repeat count of each timing group - see EPD_LUT_GAIN in the
+     * header for what this is trying to distinguish and why.
+     *
+     * The timing region is the seven 5-byte groups at [35:70), repeat count
+     * last in each; the layout note on epd_lut_full has the rest. Voltages and
+     * the A/B/C/D durations are left exactly alone, so the waveform's shape is
+     * unchanged and only the number of frames it runs for grows. */
+    static uint8_t scaled[70];
+    uint16_t i;
+
+    for (i = 0u; i < 70u; i++) {
+        scaled[i] = lut[i];
+    }
+    for (i = 35u; i < 70u; i += 5u) {
+        /* A group with no repeats is an unused phase. Scaling it would invent
+         * drive where the table deliberately asks for none. */
+        if (lut[i + 4u] != 0u) {
+            uint32_t rep = (uint32_t)lut[i + 4u] * (uint32_t)EPD_LUT_GAIN;
+            scaled[i + 4u] = (rep > 255u) ? 255u : (uint8_t)rep;
+        }
+    }
+    tbl = scaled;
+#endif
+
     epd_write_cmd(0x2C); /* Write VCOM Register */
     epd_write_data(0x55);
 
@@ -449,7 +501,7 @@ static void epd_load_waveshare_lut(const uint8_t *lut)
     epd_write_data(lut[75]);
 
     epd_write_cmd(0x32); /* Write LUT Register - first 70 bytes only */
-    epd_write_data_buf(lut, 70);
+    epd_write_data_buf(tbl, 70);
 }
 #endif
 
@@ -655,6 +707,46 @@ bool epd_panel_present(void)
 
 #endif  /* EPD_BITBANG && EPD_PANEL_PROBE */
 
+#if EPD_PANEL_ID
+
+volatile uint8_t epd_panel_id_status;
+volatile uint8_t epd_panel_id_user[EPD_PANEL_ID_LEN];
+volatile uint8_t epd_panel_id_option[EPD_PANEL_ID_LEN];
+volatile uint8_t epd_panel_id_done;
+
+/* Clock `len` bytes out of whichever register the preceding command selected,
+ * holding CS low across the whole transaction.
+ *
+ * That is the reason this is not just a loop over epd_read_byte(): that one
+ * raises CS per byte, and on this controller CS framing is what delimits a
+ * transaction - so a loop would restart the read and hand back byte 0 `len`
+ * times over, which is a failure that looks exactly like a register full of
+ * one repeated value. */
+static void epd_read_block(volatile uint8_t *dst, uint8_t len)
+{
+    epd_read_begin(INPUT);
+    for (uint8_t i = 0; i < len; i++) {
+        dst[i] = epd_read_bits();
+    }
+    epd_read_end();
+}
+
+void epd_panel_read_id(void)
+{
+    epd_write_cmd(0x2F);        /* Status Bit Read - known to answer */
+    epd_read_block(&epd_panel_id_status, 1u);
+
+    epd_write_cmd(0x2E);        /* Read User ID */
+    epd_read_block(epd_panel_id_user, EPD_PANEL_ID_LEN);
+
+    epd_write_cmd(0x2D);        /* OTP Register Read for Display Option */
+    epd_read_block(epd_panel_id_option, EPD_PANEL_ID_LEN);
+
+    epd_panel_id_done = 1u;
+}
+
+#endif  /* EPD_PANEL_ID */
+
 void epd_init(bool full_lut)
 {
 #if EPD_INIT_FROM_OTP
@@ -821,6 +913,13 @@ void epd_init(bool full_lut)
         epd_write_data(0x01);
     }
 #endif  /* EPD_INIT_FROM_OTP */
+
+#if EPD_PANEL_ID
+    /* Last, on both paths: the controller is fully configured and awake by here,
+     * which is what an OTP read wants, and the read writes nothing so it cannot
+     * disturb whatever was just set up. */
+    epd_panel_read_id();
+#endif
 }
 
 bool epd_display_busy(void)
