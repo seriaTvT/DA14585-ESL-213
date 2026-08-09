@@ -203,6 +203,31 @@ build_one() {
         suffix="$suffix-id"
     fi
     if [ "$partial" = 1 ]; then
+        # Measured 2026-08-09 on the SLH1904 tag: these panels hold no partial
+        # waveform in OTP, so there is nothing for a partial refresh to use.
+        # 0x22 <- 0xFF asks the controller to load the LUT with Display Mode 2
+        # selected, and the refresh takes 73 polls - the full waveform's exact
+        # duration, three reads running. Duration is a property of the waveform,
+        # so an identical duration means an identical waveform, and no amount of
+        # display-option configuration can conjure a second one into OTP.
+        #
+        # A build like that is not broken, just pointless: every "partial" runs a
+        # full waveform, the image is correct, and the only costs are 2760 bytes
+        # of RAM and an epd_last_paint that says 1 while lying. Refused rather
+        # than shipped, because the next person to see "partial" in a filename
+        # would reasonably believe it.
+        #
+        # If a lot ever turns up whose OTP does hold a second waveform, this is
+        # the guard to delete - and hema-local/docs/PANEL_LOTS.md is where the
+        # evidence lives.
+        if [ "$is_waveshare" != 1 ]; then
+            echo "build.sh: --partial needs the Waveshare waveform. These panels" >&2
+            echo "          carry no partial waveform in OTP - measured, see" >&2
+            echo "          PANEL_LOTS.md - so an OTP build would run a full" >&2
+            echo "          refresh every time and call it a partial." >&2
+            echo "          Drop --otp, or accept full refreshes on this lot." >&2
+            exit 2
+        fi
         defs="$defs -DEPD_PARTIAL=1"
         suffix="$suffix-partial"
     fi
