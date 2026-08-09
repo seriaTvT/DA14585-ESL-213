@@ -1129,18 +1129,41 @@ epd_paint_t epd_display_start(const uint8_t *framebuffer)
     epd_select_waveform(did == EPD_PAINT_PARTIAL);
 #endif
 
-    epd_write_rows(framebuffer, first, last, 0x24);
-
 #if EPD_PARTIAL
-    /* A full refresh also seeds RAM bank 0x26 with the same frame, because that
-     * is the bank the controller compares against when it does a partial - the
-     * "base image" step in Waveshare's flow. Cheap (~4 ms of SPI) and harmless
-     * on a mono panel, which has no red pigment for bank 2 to drive, so it is
-     * done unconditionally rather than only on the path known to need it. */
-    if (did == EPD_PAINT_FULL) {
-        epd_write_rows(framebuffer, first, last, 0x26);
+    /* RAM bank 0x26 = the frame being REPLACED, written immediately before the
+     * new one goes into 0x24.
+     *
+     * There are two comparisons in a partial refresh and they are easy to
+     * conflate. epd_gfx_dirty_rows() above runs on this CPU against the shadow,
+     * and decides how many ROWS to touch. The controller then does its own
+     * comparison, per pixel, between 0x24 and 0x26, and that is what decides
+     * which pixels actually move - the partial LUT only drives the black-to-white
+     * and white-to-black groups, leaving unchanged pixels alone. That is the
+     * whole point of a partial waveform, and it means 0x26 must hold what the
+     * glass is currently showing or the wrong pixels are left behind.
+     *
+     * Getting this wrong is what put a 9 on top of an 8 on 2026-08-09. Only the
+     * full path seeded 0x26, so every partial compared against the frame from the
+     * last FULL refresh: pixels differing from that were driven correctly, and
+     * pixels that happened to agree with it kept whatever the intervening frames
+     * had left there. The band was right the whole time - it is the per-pixel
+     * comparison that was against a stale frame.
+     *
+     * Written explicitly rather than relying on the controller to copy 0x24 into
+     * 0x26 when an update finishes. Some SSD16xx parts do; whether this one does
+     * in the mode we drive it in is exactly the kind of thing we would be
+     * guessing at, and one extra windowed write is ~4 ms of SPI.
+     *
+     * Nothing else depends on 0x26's contents, so there is deliberately no
+     * attempt to keep it meaningful between refreshes - a full refresh drives
+     * every pixel regardless (its LUT drives all four transition groups, not just
+     * the two that change), so it needs no base at all. */
+    if (did == EPD_PAINT_PARTIAL) {
+        epd_write_rows(s_shadow, first, last, 0x26);
     }
 #endif
+
+    epd_write_rows(framebuffer, first, last, 0x24);
 
     epd_write_cmd(0x22); /* Display Update Control 2 */
     epd_write_data(did == EPD_PAINT_PARTIAL ? EPD_UPD_PARTIAL : EPD_UPD_FULL);
