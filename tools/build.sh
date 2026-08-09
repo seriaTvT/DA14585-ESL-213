@@ -25,6 +25,10 @@
 #                    shape for this controller". Needs the Waveshare path.
 #   --panel-id       read cmd 0x2F/0x2E/0x2D into epd_panel_id_* over SWD, to
 #                    see whether the controller can say which lot it is.
+#   --lut-steps <n>  which LUT shape the hand-written waveform is written for:
+#                    7 (Waveshare's own) or 10 (measured on the A41 controller).
+#                    Waveshare path only. Check s_poll_count, not just the glass:
+#                    ~28 polls means the shape fits, ~4 means zero frames ran.
 #   --lut-probe      measure the controller's LUT layout, by timing an update
 #                    with one marker byte swept across the register. Blocks for
 #                    minutes and never returns; read epd_lut_probe_ms over SWD.
@@ -78,6 +82,7 @@ sweep=0
 panel_id=0
 partial=0
 lut_probe=0
+lut_steps=
 lut_gain=1
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -95,12 +100,19 @@ while [ $# -gt 0 ]; do
         --panel-id) panel_id=1; shift ;;
         --partial) partial=1; shift ;;
         --lut-probe) lut_probe=1; shift ;;
+        --lut-steps)   lut_steps=${2:-}; shift 2 ;;
+        --lut-steps=*) lut_steps=${1#*=}; shift ;;
         --lut-gain)   lut_gain=${2:-}; shift 2 ;;
         --lut-gain=*) lut_gain=${1#*=}; shift ;;
         -h|--help) usage; exit 2 ;;
         *)         echo "build.sh: unknown argument $1" >&2; usage; exit 2 ;;
     esac
 done
+
+case "$lut_steps" in
+    ''|7|10) ;;
+    *) echo "build.sh: --lut-steps must be 7 or 10, got '$lut_steps'" >&2; exit 2 ;;
+esac
 
 case "$lut_gain" in
     ''|*[!0-9]*) echo "build.sh: --lut-gain wants a whole number, got '$lut_gain'" >&2; exit 2 ;;
@@ -206,6 +218,18 @@ build_one() {
     if [ "$panel_id" = 1 ]; then
         defs="$defs -DEPD_PANEL_ID=1"
         suffix="$suffix-id"
+    fi
+    if [ -n "$lut_steps" ]; then
+        # The tables are compiled only on the Waveshare path, so an OTP build
+        # would take the flag and ignore it - the same silent no-op --lut-gain is
+        # refused for.
+        if [ "$is_waveshare" != 1 ]; then
+            echo "build.sh: --lut-steps picks the shape of the hand-written table," >&2
+            echo "          which an OTP build does not use. Drop --otp." >&2
+            exit 2
+        fi
+        defs="$defs -DEPD_LUT_STEPS=$lut_steps"
+        suffix="$suffix-s$lut_steps"
     fi
     if [ "$lut_probe" = 1 ]; then
         defs="$defs -DEPD_LUT_PROBE=1"

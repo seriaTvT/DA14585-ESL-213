@@ -87,13 +87,20 @@
  * full inventory with both silkscreens is hema-local/docs/Screens.txt, and the
  * analysis is hema-local/docs/PANEL_LOTS.md.
  *
- *   lot code         type  Waveshare      OTP
- *   E213A55N18AH28   1     works          untried
- *   E213A41N192QB4   4     works          works, 3003 ms at >=30 C
- *   E213A41N19AS02   3     works          unmeasured
- *   E213A41N195B82   3     does not [1]   works
- *   E213A41N194NM1   4     INERT          works, 3642 ms at >=30 C
+ *   lot code         type  Waveshare        OTP
+ *   E213A55N18AH28   1     works, 7 steps   untried
+ *   E213A41N192QB4   4     works, 7 steps   works, 3003 ms at >=30 C
+ *   E213A41N19AS02   3     works, 7 steps   unmeasured
+ *   E213A41N195B82   3     inert at 7 [1]   works, ~3350 ms
+ *   E213A41N194NM1   4     works, 10 steps  works, 3642 ms at >=30 C
  *   E213A55N18CP31   2     - panel damaged, nothing established -
+ *
+ * The right-hand column of that table is the interesting one: N194NM1 was listed
+ * as OTP-only for a month. Its controller runs TEN steps, not seven, so a table
+ * written for seven left every phase at zero frames - measured, not guessed, with
+ * tools/build.sh --lut-probe. At ten steps it drives the hand-written waveform
+ * correctly, 2.35x faster than its own OTP. N195B82 fails the same way and is the
+ * obvious next one to try at 10; see EPD_LUT_STEPS.
  *
  * [1] Recorded as "hangs" rather than the inert matrix the N194NM1 shows, which
  *     would be a second and different failure mode. The observation was made

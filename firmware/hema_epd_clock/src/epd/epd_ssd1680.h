@@ -61,24 +61,33 @@
  *              0x22 bit 4 loads the factory LUT out of the controller's OTP.
  *              Temperature-compensated: measured 2.6x longer at 0 C than at
  *              30 C, so it is also the slower of the two at room temperature.
- *   WAVESHARE  a hand-written 70-byte LUT via cmd 0x32, from Waveshare's
- *              EPD_2IN13_V2 reference. Fixed, temperature-independent, and
- *              roughly 2.5x quicker.
+ *   WAVESHARE  a hand-written LUT via cmd 0x32, from Waveshare's EPD_2IN13_V2
+ *              reference. Fixed, temperature-independent, and roughly 2.5x
+ *              quicker. 70 bytes at 7 steps, 100 at 10 - see EPD_LUT_STEPS.
  *
- * WHICH ONE A PANEL WILL ACCEPT IS NOT PREDICTABLE FROM ANYTHING VISIBLE.
- * It was gated on panel resolution once, then on board variant; both looked
- * right against every tag available at the time and both were falsified by the
- * next tag. Two A41 panels on identical variant-B boards disagree: one drives
- * on either waveform, the other only on OTP, and on the Waveshare table its
- * matrix stays completely inert while the border still flickers. The lot code
- * on the FPC is the only thing that has tracked it so far.
+ * **The axis is the LUT's SHAPE, not which waveform a panel "accepts".** That
+ * reading held for a month and was wrong. A panel whose matrix stayed completely
+ * inert on the hand-written table, border flickering, looked like a panel that
+ * rejected hand-written waveforms; measured 2026-08-09, its controller simply runs
+ * ten steps where Waveshare's table is written for seven, so the table's timing
+ * groups landed in the region it reads as voltages and every phase ran zero
+ * frames. Rewritten at ten steps, the same panel drives that waveform correctly
+ * and 2.35x faster than its OTP one.
  *
- * So this is not derived here any more. config/tag_types.h sets it per tag
- * type, defaulting to whatever drives every unit of that type we have actually
- * tested, and tools/build.sh --fast overrides it per build. The fallback below
- * exists only for builds that never see that header - the host tests.
+ * So there is no panel here that needs OTP - only panels whose step count we had
+ * not measured. OTP remains the universal fallback and the only temperature-
+ * compensated option, which is worth having on its own merits.
  *
- * See hema-local/docs/TAG_VARIANTS.md and hema-local/re/type4/README.md.
+ * Which shape a controller wants is still not predictable from anything visible,
+ * and the lot code on the FPC is still the only thing that has tracked it. Flash
+ * and look, or read s_poll_count, where a wrong shape is unmistakable: zero frames
+ * measures ~230 ms against a working table's ~1.6 s.
+ *
+ * config/tag_types.h sets the waveform per tag type - every type defaults to
+ * WAVESHARE now - and tools/build.sh --otp overrides it per build. The fallback
+ * below exists only for builds that never see that header, the host tests.
+ *
+ * See hema-local/docs/PANEL_LOTS.md, and re/type4/lut/ for the probe data.
  * ---------------------------------------------------------------------- */
 #if !defined(EPD_INIT_FROM_OTP)
     #if defined(EPD_BOARD_VARIANT_A)
@@ -246,6 +255,103 @@
 #if !defined(EPD_PANEL_ID)
     #define EPD_PANEL_ID 0
 #endif
+
+/* How many steps the hand-written waveform is written for.
+ *
+ * 7 is Waveshare's own shape, and the only one that drives the lots which accept
+ * their table: voltages `[0:35)` as five groups of seven, timing `[35:70)` as
+ * seven groups of five.
+ *
+ * 10 is the shape MEASURED on the SLH1904 panel with --lut-probe: voltages
+ * `[0:50)`, timing `[50:100)` as ten groups of five, and nothing beyond byte 100.
+ * That is why the 7-step table leaves those panels inert - its non-zero timing
+ * groups land at `[35:50)`, which this controller reads as voltages, so its timing
+ * region receives only the zeros our table happens to have at `[50:70)` and every
+ * phase runs zero frames.
+ *
+ * The tables at each shape are the same waveform transposed, not a redesign: the
+ * same voltage levels, the same three active phases, the same repeat counts, and
+ * the same five register bytes afterwards. Only the geometry differs.
+ *
+ * A panel takes one shape or the other, and which one is a property of the
+ * bonded controller. Flash it and look, exactly as with the waveform choice - or
+ * read s_poll_count, which is quicker and less ambiguous: at ~19.8 ms/frame over
+ * ~230 ms of overhead, the 60-frame full table should measure ~1420 ms (~28
+ * polls). A table of the wrong shape runs zero frames and measures ~230 ms
+ * (~4 polls), which is unmistakable and needs no glass. */
+#if !defined(EPD_LUT_STEPS)
+    #define EPD_LUT_STEPS 7
+#endif
+
+#if EPD_LUT_STEPS == 7
+    #define EPD_LUT_BYTES   70u     /* payload of cmd 0x32 */
+    #define EPD_LUT_TIMING  35u     /* where the timing groups start */
+#elif EPD_LUT_STEPS == 10
+    #define EPD_LUT_BYTES   100u
+    #define EPD_LUT_TIMING  50u
+#else
+    #error "EPD_LUT_STEPS must be 7 (Waveshare's shape) or 10 (measured on A41)"
+#endif
+
+/* Five bytes per timing group, and the fifth is the repeat count. Measured, not
+ * assumed: the probe raised the duration for four bytes out of every five. */
+#define EPD_LUT_TIMING_GROUP 5u
+
+/* One more settling step than Waveshare's table has room for, weighted toward
+ * black.
+ *
+ * Waveshare's waveform transposed drives correctly but lands black slightly
+ * faint, most visibly on single-pixel strokes: a thin feature has neighbours
+ * pulling the other way, so it sees a weaker effective field and needs longer to
+ * saturate. Ten of the controller's steps exist and only three are used, so there
+ * is room to settle black further - which the 7-step table did not have.
+ *
+ * **The sub-phase structure is what makes this work, and getting it wrong was
+ * instructive.** A step's four durations TPA..TPD are shared by every group, but
+ * each group's voltage byte says what IT does in each sub-phase. That is how
+ * Waveshare's own step 2 serves both directions at once: black settles during
+ * sub-phase A (0x40) while white settles during B (0x20). One step, two
+ * directions, opposite polarities, no interference.
+ *
+ * The first attempt ignored that and drove black in A with the white groups left
+ * at zero - a unipolar push at black alone. It over-shot badly and the symptom was
+ * not "too black": it was black BLEEDING into the pixels around it, like ink off a
+ * pen. Driving a pixel hard with nothing driving its neighbour leaves the fringe
+ * field to pull that neighbour along, and with no counter-phase to clean it up the
+ * spill just stays. More drive was the right idea; unbalanced drive was not.
+ *
+ * So this step copies step 2's voltage column exactly - black in A, white in B -
+ * and only weights the DURATIONS toward black. White is still driven, so the
+ * fringe is corrected rather than abandoned, and the extra frames still land where
+ * the faintness is.
+ *
+ * The two dials, in frames:
+ *   BLACK  sub-phase A, how much longer black gets to settle
+ *   WHITE  sub-phase B, enough to hold the neighbours; do not set it to 0
+ *
+ * BLACK swept on the SLH1904 panel: 8 still faint, **10 good**, 12 and 14 no
+ * darker. So 10 is not a preference, it is where the film saturates - past it the
+ * extra frames are spent for nothing, and 14 was as clean as 10, so the ceiling is
+ * the pigment rather than the waveform running out of headroom.
+ *
+ * Set BLACK to 0 to drop the step and get the plain transposition back. At 10 the
+ * step is ~198 ms and a full refresh ~1.6 s, against the OTP path's 3.6 s. */
+#if !defined(EPD_LUT_BLACK_FRAMES)
+    #define EPD_LUT_BLACK_FRAMES 10
+#endif
+#if !defined(EPD_LUT_WHITE_FRAMES)
+    #define EPD_LUT_WHITE_FRAMES 2
+#endif
+
+/* The settling levels, taken from step 2 of Waveshare's own table rather than
+ * invented: 0x40 settles black in sub-phase A, 0x20 settles white in B. */
+#define EPD_LUT_BLACK_LEVEL 0x40u
+#define EPD_LUT_WHITE_LEVEL 0x20u
+
+/* The five registers that only exist to go with a hand-written waveform, carried
+ * after the payload rather than in it: 0x03 gate voltage, 0x04 source voltage
+ * (three bytes), 0x3A dummy line period, 0x3B gate line width. */
+#define EPD_LUT_TRAILER 6u
 
 /* Measure the controller's LUT layout, by asking it to time itself.
  *

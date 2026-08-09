@@ -209,7 +209,9 @@ static void epd_hw_reset(void)
  * for cmd 0x03 (gate driving voltage), 0x04 (source driving voltage, 3
  * bytes), 0x3A (dummy line period) and 0x3B (gate line width), exactly as
  * epd_init() below does. */
-static const uint8_t epd_lut_full[76] = {
+#if EPD_LUT_STEPS == 7
+
+static const uint8_t epd_lut_full[EPD_LUT_BYTES + EPD_LUT_TRAILER] = {
     0x80,0x60,0x40,0x00,0x00,0x00,0x00,
     0x10,0x60,0x20,0x00,0x00,0x00,0x00,
     0x80,0x60,0x40,0x00,0x00,0x00,0x00,
@@ -227,7 +229,7 @@ static const uint8_t epd_lut_full[76] = {
     0x15,0x41,0xA8,0x32,0x30,0x0A,
 };
 
-static const uint8_t epd_lut_partial[76] = {
+static const uint8_t epd_lut_partial[EPD_LUT_BYTES + EPD_LUT_TRAILER] = {
     0x00,0x00,0x00,0x00,0x00,0x00,0x00,
     0x80,0x00,0x00,0x00,0x00,0x00,0x00,
     0x40,0x00,0x00,0x00,0x00,0x00,0x00,
@@ -244,6 +246,89 @@ static const uint8_t epd_lut_partial[76] = {
 
     0x15,0x41,0xA8,0x32,0x30,0x0A,
 };
+
+#else  /* EPD_LUT_STEPS == 10 - the shape measured on the A41 controller */
+
+/* Waveshare's waveform transposed into ten steps. Every value above is kept and
+ * nothing is invented: the same three active phases, the same voltage bytes, the
+ * same repeat counts, the same trailing registers. The seven-step groups simply
+ * become ten-step groups with the extra steps idle, which is what the extra
+ * duration bytes read as anyway.
+ *
+ * Group order is Waveshare's, i.e. **group-major**: all ten steps of LUT0, then
+ * all ten of LUT1, and so on. The probe cannot see this - voltage bytes do not
+ * change the duration - so it is a choice, and it is the one that follows the
+ * reference these tables come from. If the panel drives but the image is wrong in
+ * a way that looks like the phases are shuffled, step-major is the other
+ * arrangement to try, and it is a rewrite of these two tables and nothing else.
+ *
+ * Predicted duration, so this can be checked before it is looked at:
+ * (3+3)x2 + (9+9)x2 + (3+3)x2 = 60 frames, at ~19.8 ms over ~230 ms of overhead,
+ * is ~1420 ms - about 28 of the app's 50 ms polls. A table of the wrong shape runs
+ * zero frames and measures ~230 ms, or 4 polls. */
+static const uint8_t epd_lut_full[EPD_LUT_BYTES + EPD_LUT_TRAILER] = {
+    /* voltages: five groups of ten.
+     *
+     * Step 3 is ours, not Waveshare's, and it repeats step 2's column exactly -
+     * black settling in sub-phase A, white in B. Only the durations below are
+     * weighted. Driving black there with white left at zero is what made black
+     * bleed into its neighbours; see EPD_LUT_BLACK_FRAMES. */
+    0x80,0x60,0x40,EPD_LUT_BLACK_LEVEL,
+                        0x00,0x00,0x00,0x00,0x00,0x00,   /* LUT0  black->black */
+    0x10,0x60,0x20,EPD_LUT_WHITE_LEVEL,
+                        0x00,0x00,0x00,0x00,0x00,0x00,   /* LUT1  black->white */
+    0x80,0x60,0x40,EPD_LUT_BLACK_LEVEL,
+                        0x00,0x00,0x00,0x00,0x00,0x00,   /* LUT2  white->black */
+    0x10,0x60,0x20,EPD_LUT_WHITE_LEVEL,
+                        0x00,0x00,0x00,0x00,0x00,0x00,   /* LUT3  white->white */
+    0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,   /* LUT4  VCOM         */
+
+    /* timing: ten groups of TPA TPB TPC TPD RP */
+    0x03,0x03,0x00,0x00,0x02,
+    0x09,0x09,0x00,0x00,0x02,
+    0x03,0x03,0x00,0x00,0x02,
+    /* the settling step: A settles black, B holds white against the fringe */
+    EPD_LUT_BLACK_FRAMES,EPD_LUT_WHITE_FRAMES,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,
+
+    0x15,0x41,0xA8,0x32,0x30,0x0A,
+};
+
+/* The partial pair, same transposition. Only the two transition groups drive, so
+ * a pixel that is not changing is left alone - that is what makes it partial.
+ *
+ * One phase of 10 frames, and the repeat count is 0. That is not a mistake and it
+ * is not zero passes: the probe put a marker of 16 in a duration byte with the
+ * repeat count at zero and measured 317 ms of extra time, i.e. 16 frames. So a
+ * repeat of 0 runs the phase once. Predicted: 230 + 10 x 19.8 = ~430 ms, about
+ * 9 polls. */
+static const uint8_t epd_lut_partial[EPD_LUT_BYTES + EPD_LUT_TRAILER] = {
+    0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+    0x80,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+    0x40,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+
+    0x0A,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,
+    0x00,0x00,0x00,0x00,0x00,
+
+    0x15,0x41,0xA8,0x32,0x30,0x0A,
+};
+
+#endif  /* EPD_LUT_STEPS */
 
 #endif  /* !EPD_INIT_FROM_OTP */
 
@@ -465,17 +550,17 @@ static void epd_load_waveshare_lut(const uint8_t *lut)
     /* Scale the repeat count of each timing group - see EPD_LUT_GAIN in the
      * header for what this is trying to distinguish and why.
      *
-     * The timing region is the seven 5-byte groups at [35:70), repeat count
-     * last in each; the layout note on epd_lut_full has the rest. Voltages and
-     * the A/B/C/D durations are left exactly alone, so the waveform's shape is
-     * unchanged and only the number of frames it runs for grows. */
-    static uint8_t scaled[70];
+     * Bounds come from the shape rather than being written in, so this stays
+     * right at either EPD_LUT_STEPS. Voltages and the A/B/C/D durations are left
+     * exactly alone, so the waveform's shape is unchanged and only the number of
+     * frames it runs for grows. */
+    static uint8_t scaled[EPD_LUT_BYTES];
     uint16_t i;
 
-    for (i = 0u; i < 70u; i++) {
+    for (i = 0u; i < EPD_LUT_BYTES; i++) {
         scaled[i] = lut[i];
     }
-    for (i = 35u; i < 70u; i += 5u) {
+    for (i = EPD_LUT_TIMING; i < EPD_LUT_BYTES; i += EPD_LUT_TIMING_GROUP) {
         /* A group with no repeats is an unused phase. Scaling it would invent
          * drive where the table deliberately asks for none. */
         if (lut[i + 4u] != 0u) {
@@ -489,21 +574,23 @@ static void epd_load_waveshare_lut(const uint8_t *lut)
     epd_write_cmd(0x2C); /* Write VCOM Register */
     epd_write_data(0x55);
 
+    /* The trailer, indexed off the payload length rather than written in, so the
+     * five registers keep following the table whatever shape it is. */
     epd_write_cmd(0x03); /* Gate driving voltage */
-    epd_write_data(lut[70]);
+    epd_write_data(lut[EPD_LUT_BYTES + 0u]);
 
     epd_write_cmd(0x04); /* Source driving voltage */
-    epd_write_data(lut[71]);
-    epd_write_data(lut[72]);
-    epd_write_data(lut[73]);
+    epd_write_data(lut[EPD_LUT_BYTES + 1u]);
+    epd_write_data(lut[EPD_LUT_BYTES + 2u]);
+    epd_write_data(lut[EPD_LUT_BYTES + 3u]);
 
     epd_write_cmd(0x3A); /* Dummy Line Period */
-    epd_write_data(lut[74]);
+    epd_write_data(lut[EPD_LUT_BYTES + 4u]);
     epd_write_cmd(0x3B); /* Gate Line Width */
-    epd_write_data(lut[75]);
+    epd_write_data(lut[EPD_LUT_BYTES + 5u]);
 
-    epd_write_cmd(0x32); /* Write LUT Register - first 70 bytes only */
-    epd_write_data_buf(tbl, 70);
+    epd_write_cmd(0x32); /* Write LUT Register - the payload, without the trailer */
+    epd_write_data_buf(tbl, EPD_LUT_BYTES);
 }
 #endif
 
