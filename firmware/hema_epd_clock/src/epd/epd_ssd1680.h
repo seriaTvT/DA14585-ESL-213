@@ -570,17 +570,37 @@ void epd_temp_sweep(void);
  *  Over-reading a shift register costs nothing but clock cycles. */
 #define EPD_PANEL_ID_LEN 12u
 
-/** Filled in by epd_panel_read_id(), read out over SWD. All 0xFF (or all 0x00)
- *  means the register did not answer, which is itself a finding - the command is
- *  then not supported on this silicon and cannot be used to tell lots apart.
+/** Filled in by epd_panel_read_id(), read out over SWD.
  *
- *  epd_panel_id_status  cmd 0x2F, one byte. Known to answer.
+ *  epd_panel_id_status  cmd 0x2F, one byte.
  *  epd_panel_id_user    cmd 0x2E, the OTP user ID.
  *  epd_panel_id_option  cmd 0x2D, the display-option OTP.
- *  epd_panel_id_done    0 until the read has finished. */
+ *  epd_panel_id_done    0 until the read has finished.
+ *
+ *  Each register is read TWICE - once with no pull, then again with the pad's
+ *  internal pull-up - because a register of all zeros is ambiguous and we have
+ *  met exactly that case. Two A41 panels returned 0x00 for all three registers
+ *  while the temperature read on the same tags worked, which admits two
+ *  readings: the controller drove zeros, or the command is unsupported, the
+ *  controller drove nothing, and the floating pad read low because we had just
+ *  finished clocking a low bit out of it.
+ *
+ *  The pull-up separates them, with no ambiguity left:
+ *
+ *    *_pu equals the plain read   the controller drove the line. The value is
+ *                                 real data and a zero is a real zero.
+ *    *_pu reads 0xFF              nothing drove the line; it followed the pull.
+ *                                 The command is not supported here and the
+ *                                 plain read means nothing.
+ *
+ *  Same trick epd_panel_present() uses, and for the same reason - but done on
+ *  these three registers, and on both board variants rather than bitbang only. */
 extern volatile uint8_t epd_panel_id_status;
 extern volatile uint8_t epd_panel_id_user[EPD_PANEL_ID_LEN];
 extern volatile uint8_t epd_panel_id_option[EPD_PANEL_ID_LEN];
+extern volatile uint8_t epd_panel_id_status_pu;
+extern volatile uint8_t epd_panel_id_user_pu[EPD_PANEL_ID_LEN];
+extern volatile uint8_t epd_panel_id_option_pu[EPD_PANEL_ID_LEN];
 extern volatile uint8_t epd_panel_id_done;
 
 /** Read the identity registers. Non-destructive: it clocks data out and writes

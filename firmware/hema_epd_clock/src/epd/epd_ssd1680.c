@@ -690,7 +690,19 @@ volatile uint8_t epd_probe_pullup;
 volatile uint8_t epd_probe_pulldown;
 
 /* epd_read_byte() now lives above, shared with EPD_TEMP_READ. It was written
- * for this probe and is unchanged in behaviour on this variant. */
+ * for this probe and is unchanged in behaviour on this variant.
+ *
+ * MEASURED 2026-08-09, AND THIS FUNCTION LIES ON VARIANT A. Both variant-A tags
+ * (Type 3, `SLH1910` and `SLH1940`) return 0x00 to cmd 0x2F with no pull and
+ * 0xFF with the pull-up, i.e. the controller does not drive the line for that
+ * command at all - while cmd 0x1B on the same pad, same bit loop, returns a
+ * correct temperature. So the command is simply unsupported on those panels,
+ * and this function reports a healthy panel as ABSENT.
+ *
+ * Left as it is, because nothing acts on the result and the two raw bytes are
+ * still worth having. But do not wire it into a decision, and do not read
+ * "absent" as absent without checking epd_probe_pullup/pulldown by hand: 0xFF
+ * against 0x00 is this, not a loose flex. See hema-local/docs/PANEL_LOTS.md. */
 
 bool epd_panel_present(void)
 {
@@ -712,6 +724,9 @@ bool epd_panel_present(void)
 volatile uint8_t epd_panel_id_status;
 volatile uint8_t epd_panel_id_user[EPD_PANEL_ID_LEN];
 volatile uint8_t epd_panel_id_option[EPD_PANEL_ID_LEN];
+volatile uint8_t epd_panel_id_status_pu;
+volatile uint8_t epd_panel_id_user_pu[EPD_PANEL_ID_LEN];
+volatile uint8_t epd_panel_id_option_pu[EPD_PANEL_ID_LEN];
 volatile uint8_t epd_panel_id_done;
 
 /* Clock `len` bytes out of whichever register the preceding command selected,
@@ -722,25 +737,36 @@ volatile uint8_t epd_panel_id_done;
  * transaction - so a loop would restart the read and hand back byte 0 `len`
  * times over, which is a failure that looks exactly like a register full of
  * one repeated value. */
-static void epd_read_block(volatile uint8_t *dst, uint8_t len)
+static void epd_read_block(volatile uint8_t *dst, uint8_t len, uint32_t pull)
 {
-    epd_read_begin(INPUT);
+    epd_read_begin(pull);
     for (uint8_t i = 0; i < len; i++) {
         dst[i] = epd_read_bits();
     }
     epd_read_end();
 }
 
+/* Issue the command, then read it - twice, with different pulls. The command
+ * has to be re-issued for the second read because it is what selects the
+ * register and starts it shifting; reading again without it would continue past
+ * the end rather than start over. */
+static void epd_read_reg(uint8_t cmd, volatile uint8_t *plain,
+                         volatile uint8_t *pulled, uint8_t len)
+{
+    epd_write_cmd(cmd);
+    epd_read_block(plain, len, INPUT);
+
+    epd_write_cmd(cmd);
+    epd_read_block(pulled, len, INPUT_PULLUP);
+}
+
 void epd_panel_read_id(void)
 {
-    epd_write_cmd(0x2F);        /* Status Bit Read - known to answer */
-    epd_read_block(&epd_panel_id_status, 1u);
-
-    epd_write_cmd(0x2E);        /* Read User ID */
-    epd_read_block(epd_panel_id_user, EPD_PANEL_ID_LEN);
-
-    epd_write_cmd(0x2D);        /* OTP Register Read for Display Option */
-    epd_read_block(epd_panel_id_option, EPD_PANEL_ID_LEN);
+    epd_read_reg(0x2F, &epd_panel_id_status, &epd_panel_id_status_pu, 1u);
+    epd_read_reg(0x2E, epd_panel_id_user, epd_panel_id_user_pu,
+                 EPD_PANEL_ID_LEN);
+    epd_read_reg(0x2D, epd_panel_id_option, epd_panel_id_option_pu,
+                 EPD_PANEL_ID_LEN);
 
     epd_panel_id_done = 1u;
 }
