@@ -225,6 +225,18 @@ static void epd_poll_cb(void)
     }
     s_refreshing = false;
 
+#if EPD_PARTIAL
+    /* A refresh that ran out of polls did not necessarily paint anything, so the
+     * driver's idea of what the glass holds is no longer trustworthy - and a
+     * partial refresh diffed against a frame that was never displayed would leave
+     * stale rows untouched forever. Force the next paint to be a full one.
+     *
+     * Cheap insurance: the only cost of being wrong here is one slow refresh. */
+    if (s_poll_count >= EPD_REFRESH_TIMEOUT) {
+        epd_display_forget();
+    }
+#endif
+
     epd_persist_if_dirty();
 
     if (s_queued != EPD_Q_NONE) {

@@ -964,25 +964,41 @@ bool epd_display_busy(void)
 
 /* Display Update Control 2 payloads.
  *
- * 0xC7 for a full refresh is measured - it is what every working tag has used
- * since bring-up. Neither partial value is:
+ * The bits, which is what makes these values readable rather than magic:
  *
- *   OTP path       0xC7 with bit 3 set. That bit selects Display Mode 2, which
- *                  is the panel's own partial waveform, loaded from the same
- *                  OTP as the full one. Read off the datasheet's bit layout and
- *                  consistent with what Type 5's controller does with 0xF7 and
- *                  0xC7, but never sent to one of these panels.
- *   Waveshare path 0x0C, which is what Waveshare's own partial display call
- *                  sends on the 2.13" V2. A reference value for a panel that is
- *                  not quite this one.
+ *   7 enable clock   6 enable analog   5 load temperature   4 load LUT
+ *   3 Display Mode 2   2 display   1 disable analog   0 disable clock
  *
- * Both are the first thing to suspect if a partial refresh does nothing, or
- * clears the whole panel when it should have touched a few rows. */
+ * So 0xC7 = power up, display, power down. Measured; it is what every working
+ * tag has used since bring-up, and note that it leaves the analog and the clock
+ * OFF when it finishes.
+ *
+ * That last part cost a wedged panel. 0x0C - Waveshare's own partial value -
+ * is mode 2 plus display and *no enable bits at all*, because their flow powers
+ * the panel up separately in its partial init (0x22 <- 0xC0, visible in
+ * epd_init()'s partial branch below) and leaves it powered. We never call that
+ * branch, so 0x0C asked a powered-down controller to refresh: it raised BUSY and
+ * never lowered it, epd_wait_busy() then burned several seconds on every
+ * subsequent refresh, and the BLE link dropped each time from the starved main
+ * loop. Diagnosed 2026-08-09 from s_poll_count 200 with epd_temp_c reading 0.
+ *
+ * So the partial values are self-contained, powering up and down exactly as the
+ * full one does:
+ *
+ *   Waveshare  0xC7, identical to full. On this path the waveform is chosen by
+ *              WHICH LUT was written with 0x32 - see epd_select_waveform() - so
+ *              the activation value has no waveform choice to make. Not setting
+ *              bit 3 is deliberate: mode 2 would select an OTP waveform over the
+ *              table we just wrote by hand.
+ *   OTP        0xCF, i.e. 0xC7 plus Display Mode 2. Here there is no LUT to
+ *              write, so that bit is the only thing that selects the panel's own
+ *              partial waveform. Still a datasheet reading and not yet seen to
+ *              work, but it does at least power the panel correctly. */
 #define EPD_UPD_FULL     0xC7u
 #if EPD_INIT_FROM_OTP
 #define EPD_UPD_PARTIAL  0xCFu
 #else
-#define EPD_UPD_PARTIAL  0x0Cu
+#define EPD_UPD_PARTIAL  0xC7u
 #endif
 
 #if EPD_PARTIAL
@@ -1131,9 +1147,15 @@ epd_paint_t epd_display_start(const uint8_t *framebuffer)
     epd_write_cmd(0x20); /* Master Activation */
 
 #if EPD_PARTIAL
-    /* Recorded now rather than when the refresh finishes: the frame has been
-     * handed to the controller and will be shown, and nothing between here and
-     * BUSY dropping can change what it holds. */
+    /* Recorded now rather than when the refresh finishes, which is a bet that the
+     * refresh will finish. It usually will, and committing here keeps the
+     * completion path free of driver state.
+     *
+     * The bet has to be paid off when it loses, though: a refresh that times out
+     * leaves the glass showing something other than what this says, and every
+     * later diff would be against a frame that was never displayed - stale rows
+     * silently never repainted. So the caller calls epd_display_forget() on
+     * timeout. Do not remove that without moving this. */
     memcpy(s_shadow, framebuffer, EPD_BUF_SIZE);
     s_shadow_valid = true;
     epd_partial_run = (did == EPD_PAINT_PARTIAL)
