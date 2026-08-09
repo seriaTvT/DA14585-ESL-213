@@ -114,6 +114,12 @@ static bool         s_image_mode;
 
 static void epd_poll_cb(void);
 
+#if EPD_PARTIAL
+/* When the panel was last swept clean. Zero at boot, which is correct rather than
+ * lucky: the first paint has no shadow to diff against and is full anyway. */
+static uint32_t s_last_full_sec;
+#endif
+
 /* Write the script to flash if it has changed since the last time.
  *
  * Called after rendering rather than before: a template that wedges the parser
@@ -160,7 +166,29 @@ static void epd_begin_refresh(epd_queued_t what)
         epd_cmd_run();
     }
 
-    if (epd_display_start(epd_framebuffer) == EPD_PAINT_NONE) {
+#if EPD_PARTIAL
+    /* Sweep the panel clean on a clock as well as on a count. The driver's run
+     * limit counts partials, which says nothing about how long they took - see
+     * EPD_FULL_MAX_SECS. Owned here rather than in the driver because time is the
+     * app's business and the driver has no clock.
+     *
+     * Unsigned on purpose: a TIME() sync that moves the clock backwards makes this
+     * difference enormous and forces one full refresh. That is the harmless
+     * direction, and it needs no special case. */
+    if (epd_time_now() - s_last_full_sec >= EPD_FULL_MAX_SECS) {
+        epd_display_forget();
+    }
+#endif
+
+    epd_paint_t painted = epd_display_start(epd_framebuffer);
+
+#if EPD_PARTIAL
+    if (painted == EPD_PAINT_FULL) {
+        s_last_full_sec = epd_time_now();
+    }
+#endif
+
+    if (painted == EPD_PAINT_NONE) {
         /* Nothing was sent, because the frame already matches the glass. BUSY
          * will never rise, so arming the poll timer would burn the whole
          * EPD_REFRESH_TIMEOUT before concluding the panel had died.

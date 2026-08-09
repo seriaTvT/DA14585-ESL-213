@@ -1059,13 +1059,8 @@ static void epd_select_waveform(bool partial)
  * X is always the full width. Restricting it would save a few bytes of SPI and
  * nothing else, because refresh time is set by how many gate lines are driven.
  */
-static void epd_write_rows(const uint8_t *fb, uint16_t first, uint16_t last,
-                           uint8_t ram_cmd)
+static void epd_set_window(uint16_t first, uint16_t last)
 {
-    uint32_t i;
-    uint32_t from = (uint32_t)first * EPD_WIDTH_BYTES;
-    uint32_t to   = ((uint32_t)last + 1u) * EPD_WIDTH_BYTES;
-
     epd_write_cmd(0x44);    /* RAM X window */
     epd_write_data(0x00);
     epd_write_data((EPD_WIDTH_BYTES - 1) & 0xFF);
@@ -1083,6 +1078,16 @@ static void epd_write_rows(const uint8_t *fb, uint16_t first, uint16_t last,
     epd_write_cmd(0x4F);
     epd_write_data(first & 0xFF);
     epd_write_data((first >> 8) & 0xFF);
+}
+
+static void epd_write_rows(const uint8_t *fb, uint16_t first, uint16_t last,
+                           uint8_t ram_cmd)
+{
+    uint32_t i;
+    uint32_t from = (uint32_t)first * EPD_WIDTH_BYTES;
+    uint32_t to   = ((uint32_t)last + 1u) * EPD_WIDTH_BYTES;
+
+    epd_set_window(first, last);
 
     /* Our framebuffer uses 1 = white (matching the vendor's DSL where color 1 =
      * white, and the vendor image encoder), but the panel RAM is the opposite
@@ -1130,8 +1135,39 @@ epd_paint_t epd_display_start(const uint8_t *framebuffer)
 #endif
 
 #if EPD_PARTIAL
-    /* RAM bank 0x26 = the frame being REPLACED, written immediately before the
-     * new one goes into 0x24.
+    /* Both banks, over the WHOLE panel, then the window narrowed just before the
+     * update. That combination is deliberate and it is what fixes ghosting
+     * appearing outside the band.
+     *
+     * The reason is an unknown we do not have to resolve: setting the RAM window
+     * certainly restricts where RAM writes land, but whether the controller also
+     * restricts the GATE SCAN to that window during an update is not something we
+     * have established on this silicon. The evidence from 2026-08-09 says it does
+     * not - as soon as partials began, residue from many earlier frames appeared
+     * across the entire screen, which cannot happen if untouched rows are never
+     * driven.
+     *
+     * If the whole panel is scanned, then every pixel is driven through the
+     * partial LUT, and that LUT moves a pixel only where 0x24 and 0x26 disagree
+     * (its black-to-black and white-to-white groups are zero). So the invariant
+     * that matters is: **outside the changed band, 0x24 must equal 0x26.** Writing
+     * both banks in full guarantees it, because rows outside the band are by
+     * definition identical between the old frame and the new one.
+     *
+     * Writing only the band, as this did before, left 0x26 outside it holding
+     * whatever it happened to hold - frames from an arbitrary distance in the past
+     * - and a full-panel scan then faithfully drove all of that back onto the
+     * glass. Hence "residue from many previous refreshes", and hence why a full
+     * refresh cleaned it and the next partial brought it all back.
+     *
+     * The narrowing afterwards costs two commands and keeps the gate-line saving
+     * available if the scan does turn out to honour the window. Correct either
+     * way; fast if we are lucky.
+     *
+     * Cost of the full writes over banded ones: ~8 ms of SPI against a refresh
+     * measured in hundreds. Not worth optimising against an unknown.
+     *
+     * 0x26 = the frame being REPLACED, written before the new one goes into 0x24.
      *
      * There are two comparisons in a partial refresh and they are easy to
      * conflate. epd_gfx_dirty_rows() above runs on this CPU against the shadow,
@@ -1159,11 +1195,24 @@ epd_paint_t epd_display_start(const uint8_t *framebuffer)
      * every pixel regardless (its LUT drives all four transition groups, not just
      * the two that change), so it needs no base at all. */
     if (did == EPD_PAINT_PARTIAL) {
-        epd_write_rows(s_shadow, first, last, 0x26);
+        epd_write_rows(s_shadow, 0, EPD_HEIGHT - 1, 0x26);
     }
 #endif
 
-    epd_write_rows(framebuffer, first, last, 0x24);
+    epd_write_rows(framebuffer,
+#if EPD_PARTIAL
+                   0, EPD_HEIGHT - 1,
+#else
+                   first, last,
+#endif
+                   0x24);
+
+#if EPD_PARTIAL
+    /* Now narrow the scan to the band, having filled both banks in full. */
+    if (did == EPD_PAINT_PARTIAL) {
+        epd_set_window(first, last);
+    }
+#endif
 
     epd_write_cmd(0x22); /* Display Update Control 2 */
     epd_write_data(did == EPD_PAINT_PARTIAL ? EPD_UPD_PARTIAL : EPD_UPD_FULL);

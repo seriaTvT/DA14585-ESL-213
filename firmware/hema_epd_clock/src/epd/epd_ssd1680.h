@@ -280,6 +280,28 @@
     #define EPD_PARTIAL_RUN_MAX 8
 #endif
 
+/* And force one after this long, however few partials it took.
+ *
+ * EPD_PARTIAL_RUN_MAX counts partials, which makes it blind to time - and the
+ * repaint interval is set by the face, not by us. At EVERY(1) a clock reaches
+ * eight partials in eight minutes. A calendar at EVERY(1440) repaints once a day,
+ * so it would take **eight days** to earn a full refresh, sitting on accumulated
+ * residue the whole time. Same policy, wildly different behaviour, and only
+ * because a count is not a duration.
+ *
+ * An hour bounds it for any face. It also settles the calendar case pleasantly on
+ * its own: a face that repaints daily will always find an hour has passed, so it
+ * gets a full refresh every time - which is exactly right, because a partial
+ * refresh buys nothing when repaints are a day apart, and a clean image is worth
+ * everything. The policy ends up matching itself to the face without being told.
+ *
+ * Panel guidance is usually "at least one full refresh per 24 h". That is an
+ * upper bound on neglect, not a target; an hour costs at most one slow refresh an
+ * hour and keeps residue short-lived. */
+#if !defined(EPD_FULL_MAX_SECS)
+    #define EPD_FULL_MAX_SECS 3600u
+#endif
+
 /* Above this many dirty rows, refresh fully instead.
  *
  * Not for speed - a partial is cheaper at any size - but for looks: a change
