@@ -351,6 +351,10 @@ type_defaults_to_otp() {
 }
 
 "$HERE/tools/sync.sh" --local
+# After the sync, so a source file added in the repo is on disk to be found,
+# and before ensure_tag_defs, so a rule this just cloned still gets patched if
+# it came from a tree that predates the patch.
+python3 "$HERE/tools/register_sources.py" "$BUILD"
 ensure_tag_defs
 for t in $types; do
     build_one "$t" "$wf"
