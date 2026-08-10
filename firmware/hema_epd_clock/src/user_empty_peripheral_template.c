@@ -19,6 +19,8 @@
 #include "app_easy_timer.h"
 #include "epd_time.h"
 #include "epd_store.h"
+#include "adc.h"                     // adc_get_vbat_sample, for {VCC}
+#include "battery.h"                 // battery_get_lvl, for {BAT}
 #if (BLE_SUOTA_RECEIVER)
 #include "app_suotar.h"              // suota_state, SUOTAR_START/SUOTAR_END
 #endif
@@ -159,6 +161,51 @@ static void epd_persist_if_dirty(void)
     }
 }
 
+/* Battery, for the {BAT} and {VCC} template variables.
+ *
+ * Off by default is not the right call here - unlike the panel temperature
+ * there is no build where the ADC is absent - but it stays overridable so a
+ * power measurement can take it out of the picture. */
+#if !defined(EPD_BATT_READ)
+#define EPD_BATT_READ 1
+#endif
+
+#if EPD_BATT_READ
+static void sample_battery(void)
+{
+    /* Percentage first, and not only because it is the headline number:
+     * battery_get_lvl() runs the ADC's offset calibration before it samples,
+     * and adc_get_vbat_sample() below has no way to ask for that itself -
+     * adc_offset_calibrate() is defined in adc_58x.c but declared in no
+     * header. Sampling straight afterwards inherits the fresh calibration,
+     * because the offset registers are not what adc_init() rewrites.
+     *
+     * BATT_CR2032 because that is the cell these tags ship with, and its
+     * curve is a real discharge curve rather than a straight line between
+     * two voltages. */
+    uint8_t pct = battery_get_lvl(BATT_CR2032);
+
+    /* adc_get_vbat_sample() returns the *sum of two* 10-bit conversions, so
+     * full scale is 2046, not 1023 - the SDK's own comment there says to halve
+     * it if 10-bit accuracy is enough. Single-ended with the attenuator in,
+     * which puts full scale at 3.6 V, hence 2046 counts = 3600 mV and the
+     * 1800/1023 below.
+     *
+     * The scale checks out against the SDK's own CR2032 curve for this chip,
+     * which is written in raw counts where the DA14531's is in millivolts:
+     * its 1705 and 1136 count breakpoints are that part's 3000 mV and 2000 mV,
+     * and both give 568-569 counts per volt.
+     *
+     * Uncalibrated per-unit, so treat it as a reading to a few tens of mV
+     * rather than a measurement. {BAT} is the number to show on a face; {VCC}
+     * is for watching a cell age, which the percentage curve flattens out. */
+    uint32_t sample = adc_get_vbat_sample(false);
+    uint16_t mv = (uint16_t)((sample * 1800u) / 1023u);
+
+    epd_cmd_set_batt(pct, mv);
+}
+#endif
+
 /* Start a refresh of whatever is in the framebuffer, or queue one if the panel
  * is still busy with the last. */
 static void epd_begin_refresh(epd_queued_t what)
@@ -197,6 +244,10 @@ static void epd_begin_refresh(epd_queued_t what)
 #if EPD_TEMP_READ
     epd_cmd_set_temp(epd_temp_c);
 #endif
+#endif
+
+#if EPD_BATT_READ
+    sample_battery();
 #endif
 
     if (what == EPD_Q_SCRIPT) {

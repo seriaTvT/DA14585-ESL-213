@@ -168,9 +168,20 @@ function render() {
    * two-digit reading and a negative one are different widths, which is
    * exactly the kind of thing a preview is for. Blank the field to see what a
    * build with no temperature reading shows, which is the literal "{T}". */
-  const tempRaw = $('previewTemp').value;
-  const previewTemp = tempRaw === '' ? undefined : parseInt(tempRaw, 10);
-  const { warnings, every } = runScript(panel, script, previewSeconds(), previewTemp);
+  const num = (id) => {
+    const raw = $(id).value;
+    return raw === '' ? undefined : parseInt(raw, 10);
+  };
+  /* Battery reads the same way and for the same reasons: the tag measures its
+   * own cell, and a blank field is how you see what a face shows on a build
+   * that takes no reading - the literal "{BAT}". Percent and millivolts are
+   * separate fields because they are separate variables; a face is free to
+   * show a bar from one and a diagnostic from the other. */
+  const { warnings, every } = runScript(panel, script, previewSeconds(), {
+    temp: num('previewTemp'),
+    battPct: num('previewBatt'),
+    battMv: num('previewVcc'),
+  });
   show(panel);
   showNotes(script, warnings, every);
 }
@@ -514,7 +525,9 @@ $('revert').addEventListener('click', () => {
 $('editor').addEventListener('input', render);
 /* Same re-render path as the editor: changing what {T} stands for changes the
  * drawing, and a face using it should reflow as you type a different reading. */
-$('previewTemp').addEventListener('input', render);
+for (const id of ['previewTemp', 'previewBatt', 'previewVcc']) {
+  $(id).addEventListener('input', render);
+}
 window.addEventListener('resize', render);
 
 $('tabTemplate').addEventListener('click', () => setMode('template'));

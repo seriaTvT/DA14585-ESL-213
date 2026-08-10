@@ -93,6 +93,7 @@ for f in ('user_custs1_def.c', 'user_custs1_def.h',
     new += link(f'user_profile/{f}', f'{U1}/src/custom_profile/{f}')
 
 for f in ('epd_cmdparser.c', 'epd_cmdparser.h', 'epd_gfx.c', 'epd_gfx.h',
+          'epd_font_data.c', 'epd_font_data.h',
           'epd_ssd1680.c', 'epd_ssd1680.h', 'epd_time.c', 'epd_time.h'):
     new += link(f'user_epd/{f}', f'{U1}/src/epd/{f}')
 
@@ -139,6 +140,7 @@ objs = [r'.\user_app\user_empty_peripheral_template.o',
         r'.\user_profile\user_custs_config.o',
         r'.\user_epd\epd_ssd1680.o',
         r'.\user_epd\epd_gfx.o',
+        r'.\user_epd\epd_font_data.o',
         r'.\user_epd\epd_cmdparser.o',
         r'.\user_epd\epd_time.o',
         r'.\user_platform\epd_store.o',

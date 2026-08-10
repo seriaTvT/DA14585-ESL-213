@@ -203,6 +203,10 @@
       <select id="panel"></select>
       <label for="previewTemp" title="What {T} renders as in this preview. The tag uses its own sensor; this only affects what you see here.">{T} preview</label>
       <input type="number" id="previewTemp" min="-40" max="80" step="1" value="21" style="width:6em">
+      <label for="previewBatt" title="What {BAT} renders as, in percent. The tag measures its own cell; this only affects what you see here.">{BAT} preview</label>
+      <input type="number" id="previewBatt" min="0" max="100" step="1" value="80" style="width:5em">
+      <label for="previewVcc" title="What {VCC} renders as, in millivolts. The tag measures its own cell; this only affects what you see here.">{VCC} preview</label>
+      <input type="number" id="previewVcc" min="0" max="3600" step="10" value="2900" style="width:6em">
     </div>
 
     <div class="screen"><canvas id="canvas"></canvas></div>

@@ -105,6 +105,19 @@ uint16_t epd_cmd_every_min(void);
  *  panel instead of showing a confident zero. */
 void epd_cmd_set_temp(int8_t c);
 
+/** Supply the battery reading that {BAT} and {VCC} render: charge in percent
+ *  (clamped to 100) and terminal voltage in millivolts.
+ *
+ *  Same contract as epd_cmd_set_temp() - call before epd_cmd_run(), and until
+ *  it has been called neither name is known, so a face asking for a battery
+ *  reading on a build that does not take one renders "{BAT}" literally rather
+ *  than a confident 0%.
+ *
+ *  Both come from one caller because they come from one measurement; a face
+ *  wanting a bar wants the percentage, and one wanting to see a cell age wants
+ *  the millivolts, which the percentage's curve has already flattened. */
+void epd_cmd_set_batt(uint8_t pct, uint16_t mv);
+
 /** Replace the stored script wholesale, e.g. with one restored from flash.
  *  Does not mark the script dirty - it is already persisted. */
 void epd_cmd_load_script(const char *buf, uint16_t len);

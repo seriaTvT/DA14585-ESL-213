@@ -25,8 +25,8 @@ test_time: test_time.c $(SRC)/epd_time.c $(SRC)/epd_time.h
 run-test_gfx: test_gfx
 	./$<
 
-test_gfx: test_gfx.c $(SRC)/epd_gfx.c $(SRC)/epd_gfx.h
-	$(CC) $(CFLAGS) -o $@ test_gfx.c $(SRC)/epd_gfx.c
+test_gfx: test_gfx.c $(SRC)/epd_gfx.c $(SRC)/epd_gfx.h $(SRC)/epd_font_data.c
+	$(CC) $(CFLAGS) -o $@ test_gfx.c $(SRC)/epd_gfx.c $(SRC)/epd_font_data.c
 
 # Not part of `all`: it is a diagnostic tool, not a test. See render.c.
 #
@@ -34,13 +34,13 @@ test_gfx: test_gfx.c $(SRC)/epd_gfx.c $(SRC)/epd_gfx.h
 # webui's byte-identity test needs to compare against whichever panel the face
 # was written for. render.c itself is geometry-clean - it writes EPD_BUF_SIZE
 # bytes, whatever that is.
-render: render.c $(SRC)/epd_cmdparser.c $(SRC)/epd_gfx.c $(SRC)/epd_time.c
+render: render.c $(SRC)/epd_cmdparser.c $(SRC)/epd_gfx.c $(SRC)/epd_time.c $(SRC)/epd_font_data.c
 	$(CC) $(CFLAGS) -o $@ render.c \
-		$(SRC)/epd_cmdparser.c $(SRC)/epd_gfx.c $(SRC)/epd_time.c
+		$(SRC)/epd_cmdparser.c $(SRC)/epd_gfx.c $(SRC)/epd_time.c $(SRC)/epd_font_data.c
 
-render-low: render.c $(SRC)/epd_cmdparser.c $(SRC)/epd_gfx.c $(SRC)/epd_time.c
+render-low: render.c $(SRC)/epd_cmdparser.c $(SRC)/epd_gfx.c $(SRC)/epd_time.c $(SRC)/epd_font_data.c
 	$(CC) $(CFLAGS) -DEPD_PANEL_LOW_RES -o $@ render.c \
-		$(SRC)/epd_cmdparser.c $(SRC)/epd_gfx.c $(SRC)/epd_time.c
+		$(SRC)/epd_cmdparser.c $(SRC)/epd_gfx.c $(SRC)/epd_time.c $(SRC)/epd_font_data.c
 
 clean:
 	rm -f $(TESTS) $(TOOLS)

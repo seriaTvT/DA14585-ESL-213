@@ -37,17 +37,22 @@ int main(int argc, char **argv)
      * which is what the firmware does before anything has called
      * epd_cmd_set_temp() - and what the JS does with no temperature. The two
      * only agree if both are given the same value or neither is. */
+    /* --batt <pct> <mv> does the same for {BAT} and {VCC}. One option taking
+     * both because one call supplies both - see epd_cmd_set_batt(). */
     int i;
     for (i = 2; i + 1 < argc; i++) {
         if (strcmp(argv[i], "--temp") == 0) {
             epd_cmd_set_temp((int8_t)strtol(argv[i + 1], NULL, 10));
+        } else if (strcmp(argv[i], "--batt") == 0 && i + 2 < argc) {
+            epd_cmd_set_batt((uint8_t)strtoul(argv[i + 1], NULL, 10),
+                             (uint16_t)strtoul(argv[i + 2], NULL, 10));
         }
     }
 
     if (argc < 2) {
         fprintf(stderr,
                 "usage: %s <seconds-since-2000> [--status|--every]"
-                " [--temp <celsius>] < script > fb.bin\n",
+                " [--temp <celsius>] [--batt <pct> <mv>] < script > fb.bin\n",
                 argv[0]);
         return 2;
     }

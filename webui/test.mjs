@@ -103,9 +103,15 @@ test('local wall-clock time is what gets sent', () => {
 
 test('text metrics match epd_gfx_text()', () => {
   /* 5px glyph + 1px gap, no gap after the last glyph. */
-  assert.equal(textWidth(1, 1), 5);
-  assert.equal(textWidth(5, 5), 145);
-  assert.equal(textWidth(10, 2), 118);
+  assert.equal(textWidth('A', 1), 5);
+  assert.equal(textWidth('09:41', 5), 145);
+  assert.equal(textWidth('ABCDEFGHIJ', 2), 118);
+
+  /* Takes the string, not a glyph count, because the 16x16 face mixes 8px
+   * ASCII with 16px CJK and a count no longer determines a width. */
+  assert.equal(textWidth('\u5e74', 1, 2), 16, 'one CJK cell');
+  assert.equal(textWidth('8', 1, 2), 8, 'ASCII is half-width there');
+  assert.equal(textWidth('2026\u5e74', 1, 2), 52, 'a date line as drawn');
 });
 
 test('rotation transposes the frame', () => {
@@ -634,18 +640,86 @@ test('the 12-hour clock never shows hour zero', () => {
   assert.equal(h(23), '11PM');
 });
 
-test('month names match the firmware table', () => {
-  /* Same guard as the weekday table: the preview must not invent names the
-   * panel will not show. */
+/* Pull one locale's row out of a `NAME[CMD_LOCALE_N][n]` table in the firmware
+ * source. The tables are the one place the two languages' text is written out
+ * by hand on each side, so scraping the C is what stops the preview inventing
+ * names the panel will not show. */
+function firmwareRow(table, locale, count) {
   const c = readFileSync(PARSER_C, 'utf8');
-  const table = /MONTH_NAME\[12\] = \{([^}]*)\}/.exec(c);
-  assert.ok(table, 'MONTH_NAME not found in epd_cmdparser.c');
-  const names = [...table[1].matchAll(/"(\w+)"/g)].map((m) => m[1]);
-  assert.equal(names.length, 12);
+  const m = new RegExp(`${table}\\[CMD_LOCALE_N\\]\\[${count}\\] = \\{([\\s\\S]*?)\\n\\};`)
+    .exec(c);
+  assert.ok(m, `${table} not found in epd_cmdparser.c`);
+  const rows = [...m[1].matchAll(/\{([^}]*)\}/g)]
+    .map((r) => [...r[1].matchAll(/"([^"]*)"/g)].map((x) => x[1]));
+  assert.equal(rows.length, 3, `${table} should have three locales`);
+  assert.equal(rows[locale].length, count);
+  return rows[locale];
+}
 
+test('month names match the firmware table', () => {
+  const names = firmwareRow('MONTH_NAME', 0, 12);
   for (let m = 1; m <= 12; m++) {
     assert.equal(expandVars('{M}', at(2026, m, 1)), names[m - 1]);
   }
+});
+
+test('the localised names match the firmware tables', () => {
+  /* Both non-English rows of all three tables, against a script that selects
+   * the locale - so this covers the LOCALE() command, the table contents and
+   * the reset-per-run default in one place.
+   *
+   * Scraped rather than duplicated here: the strings are CJK, and a typo in a
+   * character neither renderer would refuse is exactly the sort of thing that
+   * reaches a panel unnoticed. */
+  for (const locale of [1, 2]) {
+    const wdays = firmwareRow('WDAY_NAME', locale, 7);
+    const months = firmwareRow('MONTH_NAME', locale, 12);
+    const ampm = firmwareRow('AMPM_NAME', locale, 2);
+
+    for (let d = 0; d < 7; d++) {
+      /* 2026-07-26 is a Sunday, so this walks the week from index 0. */
+      const secs = at(2026, 7, 26 + d);
+      assert.equal(expandVars('{W}', secs, { locale }), wdays[d]);
+    }
+    for (let m = 1; m <= 12; m++) {
+      assert.equal(expandVars('{M}', at(2026, m, 1), { locale }), months[m - 1]);
+    }
+    assert.equal(expandVars('{P}', at(2026, 7, 26, 9), { locale }), ampm[0]);
+    assert.equal(expandVars('{P}', at(2026, 7, 26, 15), { locale }), ampm[1]);
+  }
+});
+
+test('LOCALE() selects the language and resets per run', () => {
+  const p = new Panel();
+  const secs = at(2026, 7, 26);          /* a Sunday */
+  const shown = (script) => {
+    const out = [];
+    const orig = p.text.bind(p);
+    p.text = (x, y, str, ...rest) => { out.push(str); return orig(x, y, str, ...rest); };
+    runScript(p, script, secs);
+    p.text = orig;
+    return out;
+  };
+
+  assert.deepEqual(shown("CLEAR(1)\nTEXT(0,0,'{W}')\n"), ['SUN'],
+    'English is the default');
+  assert.deepEqual(shown("CLEAR(1)\nLOCALE(ja)\nTEXT(0,0,'{W}')\n"), ['日曜日']);
+  assert.deepEqual(shown("CLEAR(1)\nLOCALE(zh)\nTEXT(0,0,'{W}')\n"), ['星期日']);
+  /* Case folded, unlike command names - see lower() in epd_cmdparser.c for
+   * why this one place is an exception. */
+  assert.deepEqual(shown("CLEAR(1)\nLOCALE(JA)\nTEXT(0,0,'{W}')\n"), ['日曜日']);
+  /* Mid-script, so it applies from where it appears rather than to the whole
+   * face - the same way ROTATE does. */
+  assert.deepEqual(
+    shown("CLEAR(1)\nTEXT(0,0,'{W}')\nLOCALE(ja)\nTEXT(0,20,'{W}')\n"),
+    ['SUN', '日曜日']);
+  /* And it does not survive into the next run: a face that drops LOCALE()
+   * must not inherit the previous one's language. */
+  assert.deepEqual(shown("CLEAR(1)\nTEXT(0,0,'{W}')\n"), ['SUN']);
+
+  const { warnings } = runScript(p, "CLEAR(1)\nLOCALE(xx)\n", secs);
+  assert.equal(warnings.length, 1, 'an unknown code is reported');
+  assert.match(warnings[0].msg, /not a language/);
 });
 
 test('the new variables pad like the old ones', () => {
@@ -654,6 +728,33 @@ test('the new variables pad like the old ones', () => {
   assert.equal(expandVars('{h:2d}', at(2026, 7, 26, 9)), ' 9');
   /* {V} must not swallow {VER}: the name is matched whole, not by prefix. */
   assert.equal(expandVars('{VER}', at(2026, 7, 26)), 'HEMA1');
+});
+
+test('the battery variables render only once a reading exists', () => {
+  const t = (s, battPct, battMv) =>
+    expandVars(s, at(2026, 7, 26), { battPct, battMv });
+
+  /* No reading: both render literally, exactly as the firmware does before
+   * anything has called epd_cmd_set_batt(). A face on a build that takes no
+   * reading should say so rather than draw a confident 0%. */
+  assert.equal(t('{BAT}%'), '{BAT}%');
+  assert.equal(t('{VCC}mV'), '{VCC}mV');
+
+  assert.equal(t('{BAT}%', 80, 2900), '80%');
+  assert.equal(t('{VCC}mV', 80, 2900), '2900mV');
+  assert.equal(t('{BAT:03d}', 80, 2900), '080', 'padding works on both');
+
+  /* One supplied and not the other is a state the firmware cannot reach -
+   * epd_cmd_set_batt() takes both - but the preview can, and each name has to
+   * stand on its own rather than one gating the other. */
+  assert.equal(t('{BAT}/{VCC}', 80, undefined), '80/{VCC}');
+
+  /* The multi-letter names must not disturb the single-letter ones, and
+   * {VER} must still reach the text branch rather than being read as a
+   * number - the firmware's var_num() needs an explicit list to get this
+   * right, so it is worth pinning on both sides. */
+  assert.equal(t('{V}|{VER}|{VCC}', 80, 2900), '30|HEMA1|2900');
+  assert.equal(t('{B}|{BAT}', 80, 2900), '{B}|80');
 });
 
 /* ------------------------------------------------------------------ */
@@ -708,6 +809,42 @@ test('the JS renderer is byte-identical to the firmware C', { skip:
     "ROTATE(270)\nCLEAR(1)\nRECT(4,4,60,30,fill=,width=1/0)\n",
     "ROTATE(270)\nCLEAR(1)\nLINE(-20,-20,300,200,width=3)\nPOINT(249,121)\n",
     "ROTATE(270)\nCLEAR(1)\nTEXT(0,0,'{h}{P} A,B',scale=4)\n",
+
+    /* UTF-8 and the 16x16 font. Both sides have to decode the same bytes into
+     * the same codepoints and then advance by the same per-glyph widths, so a
+     * mixed-width string is the case that catches either half going wrong.
+     * align= is in here because it multiplies any width disagreement by the
+     * anchor rather than merely shifting the text one pixel. */
+    "ROTATE(270)\nCLEAR(1)\nTEXT(4,4,'2026年8月10日',font=2)\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(125,20,'星期一',font=2,align=1)\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(125,20,'月曜日',font=2,align=2)\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(4,4,'12时34分',font=2,scale=2)\n",
+    /* Lowercase and the degree sign: the 5x7 table used to have neither. */
+    "ROTATE(270)\nCLEAR(1)\nTEXT(4,4,'Hello, world! 25°C',scale=2)\n",
+    /* A character no font carries draws blank and still advances a cell. */
+    "ROTATE(270)\nCLEAR(1)\nTEXT(4,4,'中文',font=2)\nTEXT(4,24,'A中B',font=2)\n",
+    /* LOCALE(): the tables are written out by hand on each side, so the only
+     * thing that proves they agree is rendering them. All three languages,
+     * and one script that switches mid-face, which is where a preview that
+     * treated the locale as face-wide would part company with the tag. */
+    "ROTATE(270)\nCLEAR(1)\nLOCALE(ja)\nTEXT(4,4,'{W} {M}{d}日 {P}',font=2)\n",
+    "ROTATE(270)\nCLEAR(1)\nLOCALE(zh)\nTEXT(4,4,'{W} {M}{d}日 {P}',font=2)\n",
+    "ROTATE(270)\nCLEAR(1)\nLOCALE(en)\nTEXT(4,4,'{W} {M} {d} {P}')\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(4,4,'{W}')\nLOCALE(ja)\nTEXT(4,24,'{W}',font=2)\n",
+    /* An unknown code leaves the locale alone on both sides rather than
+     * defaulting to something. */
+    "ROTATE(270)\nCLEAR(1)\nLOCALE(ja)\nLOCALE(xx)\nTEXT(4,4,'{W}',font=2)\n",
+
+    /* A two-byte sequence, so the decoder's 0xC0 branch is covered here and
+     * not only its three-byte one.
+     *
+     * Malformed UTF-8 is deliberately absent: this harness passes the script
+     * as a JS string and Node encodes it, so anything expressible here is
+     * valid by construction - '\\x80' would arrive as the two bytes C2 80,
+     * testing U+0080 rather than a stray continuation byte. The firmware's
+     * resynchronisation is tested where raw bytes can actually be written,
+     * in test_gfx.c. */
+    "ROTATE(270)\nCLEAR(1)\nTEXT(4,4,'25°C ±1',scale=2)\n",
     /* Off-panel and degenerate input: both sides must clip, not wrap. */
     "ROTATE(270)\nCLEAR(1)\nRECT(240,110,400,400,fill=1)\nTEXT(230,0,'XYZ',scale=3)\n",
 
@@ -846,7 +983,7 @@ test('the JS renderer is byte-identical to the firmware C', { skip:
 
         const p = new Panel(geom);
         p.clear(1);
-        runScript(p, script, secs, temp);
+        runScript(p, script, secs, { temp });
 
         assert.equal(c.length, p.fb.length, `${key}: framebuffer sizes differ`);
         const at = c.findIndex((b, i) => b !== p.fb[i]);
@@ -855,6 +992,45 @@ test('the JS renderer is byte-identical to the firmware C', { skip:
           `(native row ${(at / geom.wbytes) | 0}) at t=${secs} for:\n${script}`);
       }
       }
+    }
+  }
+});
+
+test('the battery variables render identically in C and JS', { skip:
+      existsSync(RENDER) ? false : 'run: make -C firmware/hema_epd_clock/test render'
+    }, () => {
+  /* A separate test rather than another axis on the cross-product above,
+   * which is already three temperatures by three dates by every preset.
+   *
+   * The unsupplied case is the one worth having: it is where the two can
+   * disagree silently, because rendering "{BAT}" as text and rendering it as
+   * a number are both plausible behaviours and only one of them is ours. */
+  const secs = Math.floor(Date.UTC(2026, 6, 26, 9, 41, 0) / 1000) - 946684800;
+  const scripts = [
+    "ROTATE(270)\nCLEAR(1)\nTEXT(4,4,'{BAT}% {VCC}mV',scale=2)\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(4,4,'{BAT:03d}',scale=2)\n",
+    /* As a numeric argument, not just as text: var_num() is shared with the
+     * expression evaluator in the firmware, so a bar drawn from {BAT} has to
+     * agree too. */
+    "ROTATE(270)\nCLEAR(1)\nRECT(4,4,4+{BAT},12,fill=1)\n",
+    "ROTATE(270)\nCLEAR(1)\nTEXT(4,4,'{V}|{VER}|{VCC}',scale=2)\n",
+  ];
+
+  for (const [pct, mv, extra] of [[undefined, undefined, []],
+                                  [80, 2900, ['--batt', '80', '2900']],
+                                  [0, 1980, ['--batt', '0', '1980']]]) {
+    for (const script of scripts) {
+      const c = execFileSync(RENDER, [String(secs), ...extra], {
+        input: script, maxBuffer: 1 << 20,
+      });
+
+      const p = new Panel(PANELS.high);
+      p.clear(1);
+      runScript(p, script, secs, { battPct: pct, battMv: mv });
+
+      const at = c.findIndex((b, i) => b !== p.fb[i]);
+      assert.equal(at, -1, at < 0 ? '' :
+        `first difference at byte ${at} with pct=${pct} mv=${mv} for:\n${script}`);
     }
   }
 });
@@ -924,37 +1100,22 @@ test('the repaint interval does not leak between scripts', { skip:
   assert.equal(after(['CLEAR(1)\nEVERY(1440)\n', 'CLEAR(1)\nEVERY(30)\n']), 30);
 });
 
-const FONT_TOOL = join(HERE, '../tools/font16.py');
+const FONT_TOOL = join(HERE, '../tools/genfont.py');
 
-test('both copies of the 16x24 table match the generator', { skip:
-      existsSync(FONT_TOOL) ? false : 'tools/font16.py is missing'
+test('the generated font tables match their sources', { skip:
+      existsSync(FONT_TOOL) ? false : 'tools/genfont.py is missing'
     }, () => {
-  /* The table exists twice - once in the firmware, once here - because the
+  /* Every table exists twice - once in the firmware, once here - because the
    * preview has to draw what the panel draws. Both are generated from the
-   * ASCII art in tools/font16.py, and the only way that stays true is if
-   * something checks. A hand-patched copy would show up as a preview that
-   * disagrees with the tag about the shape of a digit, which is exactly the
-   * class of bug the whole parity harness exists to prevent.
+   * ASCII art in tools/font5.py and font16.py and the character list in
+   * tools/glyphs.txt, and the only way that stays true is if something
+   * checks. A hand-patched copy would show up as a preview that disagrees
+   * with the tag about the shape of a character, which is exactly the class
+   * of bug the whole parity harness exists to prevent.
    *
-   * Compares the emitted text against what is actually in each file, so this
-   * fails on a stale copy as well as on an edited one. */
-  const emit = (flag) =>
-    execFileSync('python3', [FONT_TOOL, flag], { encoding: 'utf8' }).trim();
-
-  const cSrc = readFileSync(join(HERE,
-    '../firmware/hema_epd_clock/src/epd/epd_gfx.c'), 'utf8');
-  const jsSrc = readFileSync(join(HERE, 'epd.js'), 'utf8');
-
-  const cTable = /static const glyph16x24_t FONT_16X24\[\] = \{[\s\S]*?\n\};/
-    .exec(cSrc);
-  const jsTable = /const FONT16 = \{[\s\S]*?\n\};/.exec(jsSrc);
-  assert.ok(cTable, 'FONT_16X24 not found in epd_gfx.c');
-  assert.ok(jsTable, 'FONT16 not found in epd.js');
-
-  assert.equal(cTable[0], emit('--emit'),
-    'FONT_16X24 in epd_gfx.c has drifted from tools/font16.py');
-  assert.equal(jsTable[0], emit('--js'),
-    'FONT16 in epd.js has drifted from tools/font16.py');
+   * --check regenerates from the sources and compares against what is on
+   * disk, so this fails on a stale copy as well as on an edited one. */
+  execFileSync('python3', [FONT_TOOL, '--check'], { encoding: 'utf8' });
 });
 
 const STORE_C = join(HERE,
@@ -1112,10 +1273,10 @@ test('the 16x24 font is a font, not the small one scaled up', () => {
   assert.ok(big > small * 3, `font=1 '8' inked ${big}, no bigger than 5x7`);
 
   /* Width follows the wider cell: ((16 + 1)n - 1) * scale. */
-  assert.equal(textWidth(5, 1, 1), 84);
-  assert.equal(textWidth(5, 2, 1), 168);
-  assert.equal(textWidth(1, 1, 1), 16);
-  assert.equal(textWidth(0, 1, 1), 0);
+  assert.equal(textWidth('09:41', 1, 1), 84);
+  assert.equal(textWidth('09:41', 2, 1), 168);
+  assert.equal(textWidth('0', 1, 1), 16);
+  assert.equal(textWidth('', 1, 1), 0);
 
   /* Every digit and the colon is present. A mistyped table entry would leave
    * one character silently invisible, which on a clock is a wrong time. */
@@ -1151,7 +1312,7 @@ test('align= anchors text rather than centring it on the screen', () => {
     return { lo, hi };
   };
 
-  const w = textWidth(5, 2);                 /* 'HELLO' at scale 2 */
+  const w = textWidth('HELLO', 2);
   assert.equal(w, 58);
 
   const left = draw("CLEAR(1)\nTEXT(100,10,'HELLO',scale=2)\n");
@@ -1176,8 +1337,8 @@ test('align= anchors text rather than centring it on the screen', () => {
 test('an empty string has no width', () => {
   /* (6n - 1) alone gives -scale for n = 0, which would shift an align=1 anchor
    * the wrong way by a whole scale unit rather than leaving it alone. */
-  assert.equal(textWidth(0, 1), 0);
-  assert.equal(textWidth(0, 6), 0);
+  assert.equal(textWidth('', 1), 0);
+  assert.equal(textWidth('', 6), 0);
 
   const p = new Panel();
   p.setRotation(3);

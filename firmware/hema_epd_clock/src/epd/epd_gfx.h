@@ -77,20 +77,26 @@ void epd_gfx_circle(int16_t x, int16_t y, int16_t r, uint8_t color, uint8_t pix,
  * glyph cell will paint over it. */
 void epd_gfx_invert(int16_t x1, int16_t y1, int16_t x2, int16_t y2);
 
-/* Two fonts, both ours - drawn here rather than taken from the vendor, whose
- * format is per-font_id PCtoLCD2002 tables we never reverse engineered.
+/* Three fonts, none of them the vendor's - whose format is per-font_id
+ * PCtoLCD2002 tables we never reverse engineered.
  *
- *   5x7    the general one: digits, uppercase, and the punctuation a clock or
- *          calendar face needs. Scales up in whole pixels.
+ *   5x7    the general one: all printable ASCII plus the degree sign. Scales
+ *          up in whole pixels.
  *   16x24  digits and ':' only, drawn at that size. For the case that wants
- *          it - an HH:MM face at scale 5 on a 5x7 glyph is a block of 5px
+ *          it - an HH:MM face at scale 5 on a 5x7 glyph is a block of 5 px
  *          squares and looks like one.
+ *   16x16  Chinese and Japanese, plus ASCII at 8x16 so a mixed string lines
+ *          up. Only the characters the faces actually draw: a whole CJK font
+ *          is 120 KB and the image runs from 96 KiB of SysRAM.
  *
- * A character the 16x24 table lacks draws blank rather than falling back to
- * 5x7: two glyph sizes in one string reads as a fault, while a gap reads as
- * one, and the preview names the character. */
-#define EPD_FONT_5X7    0
-#define EPD_FONT_16X24  1
+ * EPD_FONT_* ids and the tables behind them are generated - see
+ * epd_font_data.h, and tools/genfont.py for how to add a character.
+ *
+ * Text is UTF-8. A character the chosen font lacks draws blank and advances a
+ * full cell rather than falling back to another font: two glyph sizes in one
+ * string reads as a fault, while a gap reads as one, and the preview names
+ * the character. */
+#include "epd_font_data.h"
 
 void epd_gfx_text(int16_t x, int16_t y, const char *text, uint8_t fore,
                   uint8_t back, uint8_t scale, uint8_t font);

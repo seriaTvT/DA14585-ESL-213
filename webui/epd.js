@@ -14,6 +14,9 @@
  * helpful thing possible.
  */
 
+import { FONTS, EPD_FONT_5X7, EPD_FONT_16X24, EPD_FONT_CJK16 }
+  from './font_data.js';
+
 /* Native panel geometry - portrait, as the SSD1680 sees it.
  *
  * Two panels are in the field and they are not interchangeable. Which one a tag
@@ -51,94 +54,61 @@ export function setActivePanel(key) {
   return p;
 }
 
-/* 5x7 fallback font, transcribed from FONT_5X7 in epd_gfx.c.
- * One byte per column, LSB = top row. Uppercase only; lowercase folds up. */
-const FONT = {
-  ' ': [0x00, 0x00, 0x00, 0x00, 0x00],
-  '-': [0x08, 0x08, 0x08, 0x08, 0x08],
-  '/': [0x60, 0x10, 0x08, 0x04, 0x03],
-  ':': [0x00, 0x36, 0x36, 0x00, 0x00],
-  '.': [0x00, 0x60, 0x60, 0x00, 0x00],
-  ',': [0x00, 0x50, 0x30, 0x00, 0x00],
-  '+': [0x08, 0x08, 0x3e, 0x08, 0x08],
-  '%': [0x24, 0x64, 0x08, 0x13, 0x23],
-  '*': [0x14, 0x08, 0x3e, 0x08, 0x14],
-  '(': [0x00, 0x1c, 0x22, 0x41, 0x00],
-  ')': [0x00, 0x41, 0x22, 0x1c, 0x00],
-  "'": [0x00, 0x05, 0x03, 0x00, 0x00],
-  '?': [0x02, 0x01, 0x51, 0x09, 0x06],
-  '!': [0x00, 0x00, 0x5f, 0x00, 0x00],
-  '=': [0x14, 0x14, 0x14, 0x14, 0x14],
-  '~': [0x00, 0x07, 0x05, 0x07, 0x00],   /* stands in for the degree sign */
-  '0': [0x3e, 0x51, 0x49, 0x45, 0x3e],
-  '1': [0x00, 0x42, 0x7f, 0x40, 0x00],
-  '2': [0x62, 0x51, 0x49, 0x49, 0x46],
-  '3': [0x22, 0x41, 0x49, 0x49, 0x36],
-  '4': [0x18, 0x14, 0x12, 0x7f, 0x10],
-  '5': [0x2f, 0x49, 0x49, 0x49, 0x31],
-  '6': [0x3c, 0x4a, 0x49, 0x49, 0x30],
-  '7': [0x01, 0x71, 0x09, 0x05, 0x03],
-  '8': [0x36, 0x49, 0x49, 0x49, 0x36],
-  '9': [0x06, 0x49, 0x49, 0x29, 0x1e],
-  'A': [0x7e, 0x11, 0x11, 0x11, 0x7e],
-  'B': [0x7f, 0x49, 0x49, 0x49, 0x36],
-  'C': [0x3e, 0x41, 0x41, 0x41, 0x22],
-  'D': [0x7f, 0x41, 0x41, 0x22, 0x1c],
-  'E': [0x7f, 0x49, 0x49, 0x49, 0x41],
-  'F': [0x7f, 0x09, 0x09, 0x09, 0x01],
-  'G': [0x3e, 0x41, 0x49, 0x49, 0x7a],
-  'H': [0x7f, 0x08, 0x08, 0x08, 0x7f],
-  'I': [0x00, 0x41, 0x7f, 0x41, 0x00],
-  'J': [0x20, 0x40, 0x41, 0x3f, 0x01],
-  'K': [0x7f, 0x08, 0x14, 0x22, 0x41],
-  'L': [0x7f, 0x40, 0x40, 0x40, 0x40],
-  'M': [0x7f, 0x02, 0x0c, 0x02, 0x7f],
-  'N': [0x7f, 0x04, 0x08, 0x10, 0x7f],
-  'O': [0x3e, 0x41, 0x41, 0x41, 0x3e],
-  'P': [0x7f, 0x09, 0x09, 0x09, 0x06],
-  'Q': [0x3e, 0x41, 0x51, 0x21, 0x5e],
-  'R': [0x7f, 0x09, 0x19, 0x29, 0x46],
-  'S': [0x46, 0x49, 0x49, 0x49, 0x31],
-  'T': [0x01, 0x01, 0x7f, 0x01, 0x01],
-  'U': [0x3f, 0x40, 0x40, 0x40, 0x3f],
-  'V': [0x1f, 0x20, 0x40, 0x20, 0x1f],
-  'W': [0x3f, 0x40, 0x38, 0x40, 0x3f],
-  'X': [0x63, 0x14, 0x08, 0x14, 0x63],
-  'Y': [0x07, 0x08, 0x70, 0x08, 0x07],
-  'Z': [0x61, 0x51, 0x49, 0x45, 0x43],
-};
+/* The three font tables, generated into font_data.js by tools/genfont.py
+ * alongside the firmware's own copy. Both come from one run of the generator,
+ * because a preview that disagrees with the panel about what a character looks
+ * like is worse than no preview - see the header of that tool. */
 
-/* 16x24 digits, transcribed from FONT_16X24 in epd_gfx.c. Both tables are
- * generated from the same ASCII art by tools/font16.py - edit there and
- * re-emit, do not hand-patch either copy.
+/* Font ids, generated alongside the tables. Re-exported because callers and
+ * tests already import everything else from this module. */
+export const FONT_5X7 = EPD_FONT_5X7;
+export const FONT_16X24 = EPD_FONT_16X24;
+export const FONT_CJK16 = EPD_FONT_CJK16;
+
+/* Glyph record for a codepoint, or null. The index is sorted, so bisect. */
+function findGlyph(font, cp) {
+  const idx = font.index;
+  let lo = 0, hi = idx.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (idx[mid][0] < cp) lo = mid + 1;
+    else if (idx[mid][0] > cp) hi = mid;
+    else return idx[mid];
+  }
+  return null;
+}
+
+/* Cell width of one codepoint, excluding the 1px gap that follows it. Per
+ * glyph rather than per font: the 16x16 face stores ASCII at 8px, so '2026年'
+ * advances 8 four times and then 16. Ports glyph_w() in epd_gfx.c. */
+function glyphW(font, cp) {
+  const g = findGlyph(font, cp);
+  return g ? g[2] : font.index[0][2];
+}
+
+/* Text for {W}, {M} and {P} per LOCALE(). Mirrors WDAY_NAME / MONTH_NAME /
+ * AMPM_NAME in epd_cmdparser.c, indexed the same way - en, zh, ja.
  *
- * Column-major like the 5x7 table, but three bytes per column for 24 rows:
- * byte (row / 8), bit (row % 8), LSB at the top. Digits and ':' only; a
- * character that is missing draws blank, exactly as the firmware does. */
-const FONT16 = {
-  '0': [0xc0, 0xff, 0x1f, 0xe0, 0xff, 0x3f, 0xf0, 0xff, 0x7f, 0x70, 0x00, 0x70, 0x38, 0x00, 0xe0, 0x18, 0x00, 0xc0, 0x18, 0x00, 0xc0, 0x18, 0x00, 0xc0, 0x18, 0x00, 0xc0, 0x18, 0x00, 0xc0, 0x18, 0x00, 0xc0, 0x38, 0x00, 0xe0, 0x70, 0x00, 0x70, 0xf0, 0xff, 0x7f, 0xe0, 0xff, 0x3f, 0xc0, 0xff, 0x1f],
-  '1': [0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x03, 0xc0, 0x80, 0x03, 0xc0, 0xc0, 0x01, 0xc0, 0xe0, 0x00, 0xc0, 0x70, 0x00, 0xc0, 0x70, 0x00, 0xc0, 0xf0, 0xff, 0xff, 0xf0, 0xff, 0xff, 0xf0, 0xff, 0xff, 0xf0, 0xff, 0xff, 0x00, 0x00, 0xc0, 0x00, 0x00, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
-  '2': [0xc0, 0x00, 0xc0, 0xe0, 0x00, 0xc0, 0x60, 0x00, 0xe0, 0x30, 0x00, 0xf0, 0x30, 0x00, 0xf8, 0x30, 0x00, 0xdc, 0x30, 0x00, 0xce, 0x30, 0x00, 0xc7, 0x30, 0x80, 0xc3, 0x30, 0xc0, 0xc1, 0x30, 0xe0, 0xc0, 0x30, 0x70, 0xc0, 0x30, 0x38, 0xc0, 0x60, 0x1c, 0xc0, 0xe0, 0x0f, 0xc0, 0xc0, 0x07, 0xc0],
-  '3': [0x80, 0x00, 0x10, 0xc0, 0x00, 0x70, 0xe0, 0x00, 0xf0, 0x60, 0x30, 0xe0, 0x60, 0x30, 0xc0, 0x60, 0x30, 0xc0, 0x60, 0x30, 0xc0, 0x60, 0x30, 0xc0, 0x60, 0x30, 0xc0, 0x60, 0x30, 0xc0, 0x60, 0x30, 0xc0, 0x60, 0x30, 0xc0, 0x60, 0x78, 0xe0, 0xe0, 0xcf, 0xff, 0xc0, 0xcf, 0x7f, 0x80, 0x87, 0x1f],
-  '4': [0x00, 0xc0, 0x01, 0x00, 0xe0, 0x01, 0x00, 0xb0, 0x01, 0x00, 0x98, 0x01, 0x00, 0x8c, 0x01, 0x00, 0x86, 0x01, 0x00, 0x83, 0x01, 0x80, 0x81, 0x01, 0xc0, 0x80, 0x01, 0x60, 0x80, 0x01, 0x30, 0x80, 0x01, 0xf0, 0xff, 0xff, 0xf0, 0xff, 0xff, 0xf0, 0xff, 0xff, 0x00, 0x80, 0x01, 0x00, 0x80, 0x01],
-  '5': [0xe0, 0x3f, 0x10, 0xe0, 0x3f, 0x70, 0xe0, 0x3f, 0xf0, 0x60, 0x38, 0xe0, 0x60, 0x18, 0xc0, 0x60, 0x18, 0xc0, 0x60, 0x18, 0xc0, 0x60, 0x18, 0xc0, 0x60, 0x18, 0xc0, 0x60, 0x18, 0xc0, 0x60, 0x18, 0xc0, 0x60, 0x38, 0xc0, 0x60, 0x38, 0xe0, 0x60, 0xf0, 0xff, 0x60, 0xf0, 0x7f, 0x60, 0xe0, 0x1f],
-  '6': [0x80, 0xff, 0x1f, 0xc0, 0xff, 0x3f, 0xe0, 0xff, 0x7f, 0xf0, 0x38, 0x70, 0x70, 0x18, 0xe0, 0x38, 0x18, 0xc0, 0x18, 0x18, 0xc0, 0x18, 0x18, 0xc0, 0x18, 0x18, 0xc0, 0x18, 0x18, 0xc0, 0x18, 0x18, 0xc0, 0x18, 0x38, 0xe0, 0x18, 0x38, 0x70, 0x18, 0xf0, 0x7f, 0x00, 0xf0, 0x3f, 0x00, 0xe0, 0x1f],
-  '7': [0x30, 0x00, 0x80, 0x30, 0x00, 0xe0, 0x30, 0x00, 0xf8, 0x30, 0x00, 0x7e, 0x30, 0x80, 0x1f, 0x30, 0xc0, 0x07, 0x30, 0xe0, 0x01, 0x30, 0x70, 0x00, 0x30, 0x38, 0x00, 0x30, 0x1c, 0x00, 0x30, 0x0e, 0x00, 0x30, 0x07, 0x00, 0xb0, 0x03, 0x00, 0xf0, 0x01, 0x00, 0xf0, 0x00, 0x00, 0x70, 0x00, 0x00],
-  '8': [0x00, 0x0f, 0x3f, 0x80, 0x9f, 0x7f, 0x80, 0xff, 0x7f, 0xc0, 0xf0, 0xc0, 0xc0, 0x60, 0xc0, 0xc0, 0x60, 0xc0, 0xc0, 0x60, 0xc0, 0xc0, 0x60, 0xc0, 0xc0, 0x60, 0xc0, 0xc0, 0x60, 0xc0, 0xc0, 0x60, 0xc0, 0xc0, 0x60, 0xc0, 0xc0, 0xf0, 0xc0, 0x80, 0xff, 0x7f, 0x80, 0x9f, 0x7f, 0x00, 0x0f, 0x3f],
-  '9': [0x80, 0x1f, 0x00, 0xc0, 0x3f, 0x00, 0xe0, 0x3f, 0x00, 0x60, 0x70, 0x00, 0x70, 0x60, 0x00, 0x30, 0x60, 0x00, 0x30, 0x60, 0x00, 0x30, 0x60, 0x00, 0x30, 0x60, 0x00, 0x30, 0x60, 0x00, 0x30, 0x60, 0x00, 0x70, 0x60, 0x00, 0x60, 0x70, 0x00, 0xe0, 0xff, 0xff, 0xc0, 0xff, 0xff, 0x80, 0xff, 0xff],
-  ':': [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0f, 0x0f, 0x00, 0x0f, 0x0f, 0x00, 0x0f, 0x0f, 0x00, 0x0f, 0x0f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
-};
+ * Chinese and Japanese take the numeric month form, 7月 rather than 七月,
+ * because that is what a printed calendar shows in either language. Every
+ * character here is in tools/glyphs.txt; the missing-glyph warning below is
+ * what catches it if that stops being true. */
+export const LOCALES = ['en', 'zh', 'ja'];
 
-/* Font ids, matching EPD_FONT_* in epd_gfx.h. */
-export const FONT_5X7 = 0;
-export const FONT_16X24 = 1;
-
-/* Cell width per font, excluding the 1px gap that follows each glyph. */
-const fontW = (font) => (font === FONT_16X24 ? 16 : 5);
-
-const WDAY_NAME = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
-const MONTH_NAME = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
-                    'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+const WDAY_NAME = [
+  ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'],
+  ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'],
+  ['日曜日', '月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日'],
+];
+const MONTH_NAME = [
+  ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN',
+   'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'],
+  ['1月', '2月', '3月', '4月', '5月', '6月',
+   '7月', '8月', '9月', '10月', '11月', '12月'],
+  ['1月', '2月', '3月', '4月', '5月', '6月',
+   '7月', '8月', '9月', '10月', '11月', '12月'],
+];
+const AMPM_NAME = [['AM', 'PM'], ['上午', '下午'], ['午前', '午後']];
 
 /* The firmware's clock counts seconds from 2000-01-01; Date works in Unix
  * seconds. The tag has no notion of a timezone, so local wall-clock time is
@@ -317,26 +287,26 @@ export class Panel {
     }
   }
 
-  text(x, y, str, fore, back, scale, font = FONT_5X7) {
+  text(x, y, str, fore, back, scale, font = EPD_FONT_5X7) {
     if (scale < 1) scale = 1;
-    const big = font === FONT_16X24;
-    const gw = fontW(font);
-    const gh = big ? 24 : 7;
+    if (font < 0 || font >= FONTS.length) font = EPD_FONT_5X7;
+
+    const f = FONTS[font];
+    const gh = f.h;
     let cursor = x;
 
+    /* for..of iterates codepoints, which is what the firmware's utf8_next()
+     * yields - not UTF-16 units, which would split anything outside the BMP
+     * into two glyphs the tag would draw as one. */
     for (const ch of str) {
-      /* Case folding is the 5x7 table's affordance; the large table is digits
-       * and ':' only, and folding would not find them anything. */
-      const glyph = big ? (FONT16[ch] || null) : (FONT[ch.toUpperCase()] || null);
+      const g = findGlyph(f, ch.codePointAt(0));
+      const gw = g ? g[2] : f.index[0][2];
 
       for (let col = 0; col < gw; col++) {
         for (let row = 0; row < gh; row++) {
-          /* Three bytes per column in the large font, one in the small - for
-           * which row < 8 always, so this reduces to the old single-byte
-           * form. Mirrors the same expression in epd_gfx_text(). */
-          const bits = glyph
-            ? (big ? glyph[col * 3 + (row >> 3)] : glyph[col])
-            : 0x00;
+          /* Column-major, LSB = top, bpc bytes per column: byte (row / 8),
+           * bit (row % 8). Mirrors the same expression in epd_gfx_text(). */
+          const bits = g ? f.bits[g[1] + col * f.bpc + (row >> 3)] : 0x00;
           const color = ((bits >> (row & 7)) & 1) ? fore : back;
           for (let sx = 0; sx < scale; sx++)
             for (let sy = 0; sy < scale; sy++)
@@ -348,17 +318,26 @@ export class Panel {
   }
 }
 
-/** Rendered width of `n` glyphs at `scale` - no gap after the last one.
- *  Handy for centring text, which is most of what face authoring is. */
-/* Ports epd_gfx_text_width(). Takes a glyph count rather than the string,
- * since every caller here already has one. 0 glyphs is 0 px - not -scale,
- * which is what (6n-1) alone would give and what a naive port would inherit. */
-export function textWidth(n, scale, font = FONT_5X7) {
+/** Rendered width of `str` at `scale` - no gap after the last glyph.
+ *  Handy for centring text, which is most of what face authoring is.
+ *
+ *  Ports epd_gfx_text_width(). Takes the string rather than a glyph count,
+ *  which is what it took while every glyph in a font was the same width: the
+ *  16x16 face mixes 8px ASCII with 16px CJK, so a count no longer determines
+ *  a width. Empty text is 0 px - not -scale, which is what the old
+ *  ((w+1)n - 1) gave and what a naive port would inherit. */
+export function textWidth(str, scale, font = EPD_FONT_5X7) {
   if (scale < 1) scale = 1;
-  return n === 0 ? 0 : scale * ((fontW(font) + 1) * n - 1);
+  if (font < 0 || font >= FONTS.length) font = EPD_FONT_5X7;
+
+  const f = FONTS[font];
+  let w = 0;
+  for (const ch of str) w += glyphW(f, ch.codePointAt(0)) + 1;
+  return w === 0 ? 0 : (w - 1) * scale;
 }
-export const TEXT_HEIGHT = (scale, font = FONT_5X7) =>
-  (font === FONT_16X24 ? 24 : 7) * scale;
+
+export const TEXT_HEIGHT = (scale, font = EPD_FONT_5X7) =>
+  (FONTS[font] ? FONTS[font].h : FONTS[EPD_FONT_5X7].h) * scale;
 
 /* ------------------------------------------------------------------ */
 /* {} variable expansion - the expand_vars() port.                     */
@@ -399,13 +378,21 @@ export function varNum(name, tm) {
      * called epd_cmd_set_temp(). The two have to agree or the byte-identity
      * test would be comparing a number against the literal text. */
     case 'T': return tm.temp;
+    /* Battery: charge in percent and terminal voltage in millivolts, from one
+     * reading. Same undefined-unless-supplied rule as {T} above, and for the
+     * same parity reason - the firmware does not know either until something
+     * has called epd_cmd_set_batt(). Multi-letter names work here for free
+     * because this switches on the whole string; var_num() in the firmware
+     * needs an explicit branch, and must not let {VER} reach it. */
+    case 'BAT': return tm.battPct;
+    case 'VCC': return tm.battMv;
     default:  return undefined;
   }
 }
 
-export function expandVars(input, secs, temp) {
+export function expandVars(input, secs, env = {}) {
   const tm = tagTime(secs);
-  tm.temp = temp;
+  Object.assign(tm, env);
   let out = '';
   let i = 0;
 
@@ -431,11 +418,11 @@ export function expandVars(input, secs, temp) {
         out += String(n).padStart(width, zero ? '0' : ' ');
       }
     } else if (name === 'W') {
-      out += WDAY_NAME[tm.wday % 7];
+      out += WDAY_NAME[tm.locale | 0][tm.wday % 7];
     } else if (name === 'M') {
-      out += MONTH_NAME[(tm.month - 1) % 12];
+      out += MONTH_NAME[tm.locale | 0][(tm.month - 1) % 12];
     } else if (name === 'P') {
-      out += tm.hour < 12 ? 'AM' : 'PM';
+      out += AMPM_NAME[tm.locale | 0][tm.hour < 12 ? 0 : 1];
     } else if (name === 'VER') {
       out += 'HEMA1';
     } else {
@@ -666,6 +653,24 @@ class Args {
     return out;
   }
 
+  /** A bare unquoted token, for LOCALE()'s language code.
+   *
+   * The firmware reads two characters and insists the next one is ')', which
+   * is not quite this - but the two agree on every input that matters: every
+   * code it accepts is two letters, and anything else is rejected by both,
+   * one as a note_err() and the other as a warning here. */
+  token() {
+    let j = skipSpace(this.s, this.i);
+    let out = '';
+    while (j < this.s.length && this.s[j] !== ')' && this.s[j] !== ','
+           && out.length < 16) {
+      out += this.s[j++];
+    }
+    if (this.s[j] === ',' || this.s[j] === ')') j++;
+    this.i = j;
+    return out.trim();
+  }
+
   /** Ports named_int(): an option's value, or `dflt` if it was not given. */
   named(name, dflt) {
     const at = findNamed(this.s, name);
@@ -721,6 +726,7 @@ export const OPTIONS = {
   ROTATE: [],
   INVERT: [],
   EVERY:  [],
+  LOCALE: [],
   TIME:   [],
   RESET:  [],
 };
@@ -740,7 +746,7 @@ export const EVERY_MAX = 1440;
  * Returns { warnings: [{line, text, msg}] } - authoring aid only; the firmware
  * itself ignores everything it doesn't recognise.
  */
-export function runScript(panel, script, secs, temp) {
+export function runScript(panel, script, secs, env = {}) {
   const warnings = [];
   /* Default to a repaint a minute, and reset per run, so the interval is a
    * property of this script and nothing carried over - matching epd_cmd_run(),
@@ -758,8 +764,18 @@ export function runScript(panel, script, secs, temp) {
   const tm = tagTime(secs);
   /* Carried on tm rather than passed alongside it, so every consumer that
    * already takes tm - varNum(), the expression evaluator, expandVars() -
-   * sees it without a second parameter threaded through each one. */
-  tm.temp = temp;
+   * sees it without a second parameter threaded through each one.
+   *
+   * One object rather than a parameter each: {T} was the first, the battery
+   * added two more, and LOCALE() adds a fourth that - unlike the others - the
+   * script itself can change as it runs. A positional list was going to keep
+   * growing and every caller would have to count undefineds to reach the one
+   * it cared about. */
+  Object.assign(tm, env);
+  /* LOCALE() defaults to English and resets per run, matching epd_cmd_run():
+   * dropping it from a face must not leave the previous face's language
+   * standing. Carried on tm so expandVars() below sees it. */
+  tm.locale = 0;
 
   lines.forEach((raw, n) => {
     /* Leading whitespace is skipped by the firmware too (skip_ws), so an
@@ -818,7 +834,7 @@ export function runScript(panel, script, secs, temp) {
         const [x, y] = a.ints(2);
         const str = a.str();
         const scale = a.named('scale', 1);
-        const shown = expandVars(str, secs, temp);
+        const shown = expandVars(str, secs, tm);
 
         /* align= moves the anchor: x is the left edge at 0, the centre at 1,
          * the right edge at 2. Measured after expansion, because the width of
@@ -826,22 +842,27 @@ export function runScript(panel, script, secs, temp) {
          * the firmware's integer division - both floor for the positive
          * widths this can produce, but the intent should not rest on that. */
         const align = a.named('align', 0);
-        const font = a.named('font', FONT_5X7);
+        const font = a.named('font', EPD_FONT_5X7);
         let tx = x;
         if (align !== 0) {
-          const w = textWidth(shown.length, scale, font);
+          const w = textWidth(shown, scale, font);
           tx -= align === 1 ? Math.trunc(w / 2) : w;
         }
 
-        /* The large font has digits and ':' only. The tag draws anything else
-         * blank without complaint - it has nowhere to complain to - so this is
-         * the only place an author finds out before looking at the panel. */
-        if (font === FONT_16X24) {
-          const missing = [...new Set(shown)].filter((c) => !FONT16[c]);
+        /* No font carries every character: the large one is digits and ':',
+         * and the 16x16 one holds the characters tools/glyphs.txt lists and
+         * no more. The tag draws anything else blank without complaint - it
+         * has nowhere to complain to - so this is the only place an author
+         * finds out before looking at the panel. */
+        const table = FONTS[font];
+        if (table) {
+          const missing = [...new Set(shown)]
+            .filter((c) => !findGlyph(table, c.codePointAt(0)));
           if (missing.length) {
             warnings.push({
               line: n + 1, text: line,
-              msg: `font=1 has no glyph for ${missing.map((c) => `'${c}'`).join(', ')}`
+              msg: `font=${font} has no glyph for `
+                 + `${missing.map((c) => `'${c}'`).join(', ')}`
                  + ' - the tag will leave a gap there',
             });
           }
@@ -889,6 +910,25 @@ export function runScript(panel, script, secs, temp) {
         if (n < 1) n = 1;
         if (n > EVERY_MAX) n = EVERY_MAX;
         every = n;
+        break;
+      }
+
+      case 'LOCALE': {
+        /* Draws nothing; it selects the language {W}, {M} and {P} render in.
+         * An unknown code is reported and leaves the locale alone, matching
+         * the firmware - and matching ROTATE, where guessing would put a whole
+         * face in the wrong script with nothing to go on. */
+        const code = a.token().toLowerCase();
+        const i = LOCALES.indexOf(code);
+        if (i < 0) {
+          warnings.push({
+            line: n + 1, text: line,
+            msg: `LOCALE(${code || ''}) is not a language this understands`
+               + ` - use ${LOCALES.join(', ')}`,
+          });
+        } else {
+          tm.locale = i;
+        }
         break;
       }
 

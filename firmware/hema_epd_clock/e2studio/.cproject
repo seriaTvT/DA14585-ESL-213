@@ -211,6 +211,7 @@
 									<listOptionValue builtIn="false" value="&quot;.\user_profile\user_custs_config.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_ssd1680.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_gfx.o&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_font_data.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_cmdparser.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_time.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_platform\epd_store.o&quot;"/>
@@ -567,6 +568,7 @@
 									<listOptionValue builtIn="false" value="&quot;.\user_profile\user_custs_config.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_ssd1680.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_gfx.o&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_font_data.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_cmdparser.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_time.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_platform\epd_store.o&quot;"/>
@@ -921,6 +923,7 @@
 									<listOptionValue builtIn="false" value="&quot;.\user_profile\user_custs_config.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_ssd1680.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_gfx.o&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_font_data.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_cmdparser.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_time.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_platform\epd_store.o&quot;"/>
@@ -1291,6 +1294,7 @@
 									<listOptionValue builtIn="false" value="&quot;.\user_profile\user_custs_config.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_ssd1680.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_gfx.o&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_font_data.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_cmdparser.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_time.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_platform\epd_store.o&quot;"/>
@@ -1659,6 +1663,7 @@
 									<listOptionValue builtIn="false" value="&quot;.\user_profile\user_custs_config.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_ssd1680.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_gfx.o&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_font_data.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_cmdparser.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_epd\epd_time.o&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;.\user_platform\epd_store.o&quot;"/>

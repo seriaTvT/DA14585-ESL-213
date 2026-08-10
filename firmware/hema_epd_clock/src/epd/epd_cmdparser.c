@@ -112,15 +112,49 @@ static void append_str(char *out, uint16_t out_size, uint16_t *n, const char *s)
     }
 }
 
-static const char *const WDAY_NAME[7] = {
-    "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"
+/* Language for the text-valued variables {W}, {M} and {P}, chosen by LOCALE().
+ *
+ * The Chinese and Japanese strings are UTF-8 literals, and every character in
+ * them is in tools/glyphs.txt - which is the whole reason that file lists the
+ * characters it does. A face selecting a locale whose glyphs are absent would
+ * draw a row of blank cells, so the two have to be kept in step; the preview's
+ * missing-glyph warning is what catches it. */
+#define CMD_LOCALE_EN  0
+#define CMD_LOCALE_ZH  1
+#define CMD_LOCALE_JA  2
+#define CMD_LOCALE_N   3
+
+static uint8_t s_locale;
+
+static const char *const WDAY_NAME[CMD_LOCALE_N][7] = {
+    { "SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT" },
+    /* 星期日 … 星期六 */
+    { "星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六" },
+    /* 日曜日 … 土曜日 */
+    { "日曜日", "月曜日", "火曜日", "水曜日", "木曜日", "金曜日", "土曜日" },
 };
 
-/* Three letters, to match WDAY_NAME and the 5x7 font's uppercase-only glyph
- * table. A face that wants "JULY" can spell it out itself. */
-static const char *const MONTH_NAME[12] = {
-    "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
-    "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"
+/* English is three letters, to match WDAY_NAME and because the 5x7 font is the
+ * one a Latin face will use. A face that wants "JULY" can spell it out itself.
+ *
+ * Chinese and Japanese both take the numeric form - 7月, not 七月 - because
+ * that is what a printed calendar in either language shows, and because
+ * spelling the numerals out would need 十 and the two-character 十一/十二 for
+ * no gain a reader would notice. */
+static const char *const MONTH_NAME[CMD_LOCALE_N][12] = {
+    { "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+      "JUL", "AUG", "SEP", "OCT", "NOV", "DEC" },
+    { "1月", "2月", "3月", "4月", "5月", "6月",
+      "7月", "8月", "9月", "10月", "11月", "12月" },
+    { "1月", "2月", "3月", "4月", "5月", "6月",
+      "7月", "8月", "9月", "10月", "11月", "12月" },
+};
+
+/* {P}: 上午/下午 in Chinese, 午前/午後 in Japanese. */
+static const char *const AMPM_NAME[CMD_LOCALE_N][2] = {
+    { "AM", "PM" },
+    { "上午", "下午" },
+    { "午前", "午後" },
 };
 
 /* Clock snapshot for the script currently being run, taken once in
@@ -144,14 +178,54 @@ static uint16_t  s_every_min = 1;
 static int8_t    s_temp_c;
 static bool      s_temp_valid;
 
+/* Battery for {BAT} and {VCC}, pushed in the same way and for the same reason
+ * as the temperature above: reading it needs the SDK's ADC, which does not
+ * exist in the host test build. */
+static uint8_t   s_batt_pct;
+static uint16_t  s_batt_mv;
+static bool      s_batt_valid;
+
+/* Exact-match compare, for the multi-letter variable names below. Not strcmp:
+ * this file has no string.h and one comparison does not earn it. */
+static bool name_is(const char *name, const char *want)
+{
+    while (*want) {
+        if (*name != *want) return false;
+        name++; want++;
+    }
+    return *name == '\0';
+}
+
 /* Value of a {} variable as a number. False for the text-valued names ({W},
  * {M}, {P}, {VER}) and for anything unrecognised. Shared by expand_vars()
  * and the expression parser, so a name cannot mean one thing inside FONT text
  * and another in a coordinate. */
 static bool var_num(const char *name, int32_t *out)
 {
-    if (!name[0] || name[1]) {
-        return false;              /* every numeric name is a single letter */
+    /* Multi-letter names, matched before the single-letter switch below.
+     *
+     * An explicit list rather than anything general, because {VER} must NOT
+     * be found here: expand_vars() only reaches its text-valued branch when
+     * var_num() declines, so a loose match on three-letter names would turn
+     * {VER} into a number and lose the version string.
+     *
+     * Both are gated on a reading having arrived, exactly as {T} is - see the
+     * note there. A tag that cannot measure its battery should say so on the
+     * panel rather than draw a confident 0%. */
+    if (name[0] && name[1]) {
+        if (name_is(name, "BAT")) {
+            if (!s_batt_valid) { return false; }
+            *out = s_batt_pct; return true;
+        }
+        if (name_is(name, "VCC")) {
+            if (!s_batt_valid) { return false; }
+            *out = s_batt_mv; return true;
+        }
+        return false;              /* every other numeric name is one letter */
+    }
+
+    if (!name[0]) {
+        return false;
     }
     switch (name[0]) {
     case 'y': *out = s_tm.year;  return true;
@@ -235,11 +309,13 @@ static void expand_vars(const char *in, char *out, uint16_t out_size)
         if (nlen && var_num(name, &num)) {
             append_int(out, out_size, &n, num, width, zero_pad);
         } else if (name[0]=='W' && !name[1]) {
-            append_str(out, out_size, &n, WDAY_NAME[s_tm.wday % 7]);
+            append_str(out, out_size, &n, WDAY_NAME[s_locale][s_tm.wday % 7]);
         } else if (name[0]=='M' && !name[1]) {
-            append_str(out, out_size, &n, MONTH_NAME[(s_tm.month - 1) % 12]);
+            append_str(out, out_size, &n,
+                       MONTH_NAME[s_locale][(s_tm.month - 1) % 12]);
         } else if (name[0]=='P' && !name[1]) {
-            append_str(out, out_size, &n, s_tm.hour < 12 ? "AM" : "PM");
+            append_str(out, out_size, &n,
+                       AMPM_NAME[s_locale][s_tm.hour < 12 ? 0 : 1]);
         } else if (name[0]=='V' && name[1]=='E' && name[2]=='R' && !name[3]) {
             append_str(out, out_size, &n, "HEMA1");
         } else {
@@ -274,6 +350,19 @@ static const char *skip_ws(const char *s)
 {
     while (*s == ' ' || *s == '\t') s++;
     return s;
+}
+
+/* Case folding for LOCALE()'s language code, and nothing else.
+ *
+ * A deliberate exception to the rule just above, not an erosion of it. That
+ * rule exists because case already carries meaning in this language - {d} and
+ * {D} are different variables - so folding command names would leave it
+ * meaningful in one place and not another. A language code has no such
+ * distinction to lose: ISO 639-1 defines lowercase, "JA" cannot mean anything
+ * else, and the cost of refusing it is a blank face on a shelf label. */
+static char lower(char c)
+{
+    return (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
 }
 
 /* ---------------------------------------------------------------------------
@@ -888,6 +977,39 @@ static void dispatch_line(const char *line)
         return;
     }
 
+    /* LOCALE(en|zh|ja) - the language {W}, {M} and {P} render in.
+     *
+     * An ISO 639-1 code rather than an index, for the reason spelled out under
+     * ROTATE: a bare 0/1/2 is exactly the sort of opaque number that survives
+     * a copy-paste into a face that meant something else by it, and there is
+     * nothing in "LOCALE(2)" for a reader to check. Two letters, case
+     * insensitive, unquoted - it names a language, not a string to draw.
+     *
+     * An unknown code is reported and leaves the locale alone, matching
+     * ROTATE: guessing a language would put a whole face in the wrong script
+     * and give the author nothing to go on. */
+    if (starts_with(line, "LOCALE(")) {
+        const char *args = line + 7;
+        p = skip_ws(args);
+        check_options(args, OPTS_NONE);
+
+        char a = lower(p[0]), b = lower(p[1]);
+        const char *end = skip_ws(p + 2);
+
+        if (*end != ')') {
+            note_err(EPD_ERR_BAD_ARG);       /* not a bare two-letter code */
+        } else if (a == 'e' && b == 'n') {
+            s_locale = CMD_LOCALE_EN;
+        } else if (a == 'z' && b == 'h') {
+            s_locale = CMD_LOCALE_ZH;
+        } else if (a == 'j' && b == 'a') {
+            s_locale = CMD_LOCALE_JA;
+        } else {
+            note_err(EPD_ERR_BAD_ARG);
+        }
+        return;
+    }
+
     /* TIME() and RESET() never reach here - they are applied and dropped as
      * they arrive, in handle_line(), so they are neither stored nor replayed. */
 
@@ -1136,6 +1258,13 @@ void epd_cmd_set_temp(int8_t c)
     s_temp_valid = true;
 }
 
+void epd_cmd_set_batt(uint8_t pct, uint16_t mv)
+{
+    s_batt_pct = (pct > 100) ? 100 : pct;
+    s_batt_mv = mv;
+    s_batt_valid = true;
+}
+
 void epd_cmd_load_script(const char *buf, uint16_t len)
 {
     if (len > CMD_SCRIPT_MAX - 1) {
@@ -1190,6 +1319,11 @@ void epd_cmd_run(void)
      * face would silently keep the previous one's interval, and a tag could
      * end up refreshing hourly with no line anywhere saying so. */
     s_every_min = 1;
+
+    /* And the locale, for the same reason: dropping LOCALE() from a face must
+     * not leave it rendering in the previous face's language, which is the
+     * kind of thing nobody would think to look for. */
+    s_locale = CMD_LOCALE_EN;
 
     if (s_script_full) {
         s_cur_line = 0;                     /* the batch, not one line */

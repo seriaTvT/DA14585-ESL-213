@@ -60,6 +60,26 @@ static int ink(void)
     return n;
 }
 
+/* True if two strings draw different pixels in the same font. Stronger than
+ * comparing ink(): distinct glyphs collide on pixel counts all the time. */
+static int differs(const char *a, const char *b, uint8_t font)
+{
+    static uint8_t first[EPD_BUF_SIZE];
+
+    epd_gfx_clear(1);
+    epd_gfx_text(0, 0, a, 0, 1, 1, font);
+    memcpy(first, epd_framebuffer, EPD_BUF_SIZE);
+    int inked = ink();
+
+    epd_gfx_clear(1);
+    epd_gfx_text(0, 0, b, 0, 1, 1, font);
+
+    /* Both must actually draw something, or "different" would be satisfied by
+     * one of them being a missing glyph. */
+    return inked > 0 && ink() > 0 &&
+           memcmp(first, epd_framebuffer, EPD_BUF_SIZE) != 0;
+}
+
 int main(void)
 {
     printf("epd_gfx:\n");
@@ -133,6 +153,85 @@ int main(void)
             failures++;
         }
     }
+
+    /* ---- UTF-8 and the 16x16 CJK font -----------------------------------
+     * Text is bytes on the wire and characters here. These pin the boundary:
+     * a three-byte sequence is one glyph, not three. */
+    eq(epd_gfx_text_width("\xe5\xb9\xb4", 1, EPD_FONT_CJK16), 16,
+       "one CJK glyph is one 16 px cell");
+    eq(epd_gfx_text_width("8", 1, EPD_FONT_CJK16), 8,
+       "ASCII in the CJK font is half-width");
+
+    /* The reason width is per glyph rather than per font. '8年' is 8 + gap +
+     * 16; a fixed cell would give either 33 or 17 and overlap or gap. */
+    eq(epd_gfx_text_width("8\xe5\xb9\xb4", 1, EPD_FONT_CJK16), 25,
+       "half- and full-width cells mix in one string");
+    eq(epd_gfx_text_width("2026\xe5\xb9\xb4", 1, EPD_FONT_CJK16), 52,
+       "a full date line measures as drawn");
+
+    /* Malformed input must resynchronise rather than run off the string. A
+     * lone continuation byte and a truncated sequence are each one cell, and
+     * the test completing at all is the proof the decoder always advances. */
+    eq(epd_gfx_text_width("\x80", 1, EPD_FONT_CJK16), 8, "a stray continuation byte");
+    eq(epd_gfx_text_width("\xe5\xb9", 1, EPD_FONT_CJK16), 8, "a truncated sequence");
+
+    /* Lowercase used to fold to uppercase because the 5x7 table was uppercase
+     * only. Now it has its own glyphs, so the two must differ.
+     *
+     * Compared as pixels, not as ink counts: two unrelated 5x7 glyphs land on
+     * the same pixel total often enough that a count proves nothing. The
+     * degree sign and the tilde below are exactly that case, both 6 px. */
+    eq(differs("a", "A", EPD_FONT_5X7), 1, "lowercase is its own glyph, not folded");
+
+    /* The degree sign is the one non-ASCII character in the 5x7 font, and it
+     * arrives as two UTF-8 bytes. '~' used to stand in for it and is now a
+     * real tilde, so the two must not be the same shape. */
+    eq(differs("\xc2\xb0", "~", EPD_FONT_5X7), 1, "the degree sign is not the tilde");
+
+    /* Every glyph in every generated table must have ink. A character listed
+     * in tools/glyphs.txt but rendered blank - a typo, or a codepoint the
+     * font has no design for - would otherwise be invisible until a face
+     * used it. The space is the one legitimate blank. */
+    for (uint8_t f = 0; f < EPD_FONT_COUNT; f++) {
+        const epd_font_t *font = &EPD_FONTS[f];
+        for (uint16_t i = 0; i < font->count; i++) {
+            uint32_t cp = font->index[i].cp;
+            char s[5];
+            int n = 0;
+            if (cp == ' ') {
+                continue;
+            }
+            if (cp < 0x80) {
+                s[n++] = (char)cp;
+            } else if (cp < 0x800) {
+                s[n++] = (char)(0xC0 | (cp >> 6));
+                s[n++] = (char)(0x80 | (cp & 0x3F));
+            } else {
+                s[n++] = (char)(0xE0 | (cp >> 12));
+                s[n++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+                s[n++] = (char)(0x80 | (cp & 0x3F));
+            }
+            s[n] = '\0';
+
+            epd_gfx_clear(1);
+            epd_gfx_text(0, 0, s, 0, 1, 1, f);
+            if (ink() == 0) {
+                printf("  FAIL font %u glyph U+%04lX is blank\n",
+                       f, (unsigned long)cp);
+                failures++;
+            }
+        }
+    }
+
+    /* A codepoint no font carries draws blank but still advances a full cell,
+     * so the gap in the line is where the character was. U+4E2D is not in
+     * glyphs.txt; if it is added later this becomes a false failure, which is
+     * the right way round - it fails loudly rather than silently passing. */
+    epd_gfx_clear(1);
+    epd_gfx_text(0, 0, "\xe4\xb8\xad", 0, 1, 1, EPD_FONT_CJK16);
+    eq(ink(), 0, "an unlisted character draws blank");
+    eq(epd_gfx_text_width("\xe4\xb8\xad", 1, EPD_FONT_CJK16), 8,
+       "and still advances a cell");
 
     /* ---- invert ---------------------------------------------------------
      * Corners in either order, which INVERT() itself cannot produce but the

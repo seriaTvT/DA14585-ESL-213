@@ -38,7 +38,10 @@ which is what makes it a clock rather than a picture.
 ## What it does
 
 - **Drives the panel directly** — 1bpp framebuffer, points, lines, rects,
-  circles, pixel inversion, two fonts, four screen rotations.
+  circles, pixel inversion, three fonts, four screen rotations.
+- **Renders Chinese and Japanese.** Text is UTF-8, and a 16×16 font carries the
+  characters the faces actually use — `LOCALE(zh)` or `LOCALE(ja)` switches the
+  weekday, month and AM/PM names over. See [fonts](#fonts).
 - **Runs a small drawing language.** Numeric arguments are integer expressions
   and date/time variables work inside them, so a face can *draw* itself rather
   than only label itself — a progress bar across the month, a hand that tracks
@@ -54,7 +57,8 @@ which is what makes it a clock rather than a picture.
   language falls back to the built-in default rather than misdrawing.
 - **Reports what it made of a script** over a status characteristic, so a typo is
   visible without a debugger.
-- **Reads the panel's own temperature sensor** and renders it as `{T}`.
+- **Reads the panel's own temperature sensor** and renders it as `{T}`, and the
+  battery as `{BAT}` (percent) and `{VCC}` (millivolts).
 - **Updates its own firmware over BLE**: 40 KB in ~35 s, into whichever
   image bank is not running, so a failed update leaves the tag booting what it was
   already running. See [firmware update over BLE](#firmware-update-over-ble).
@@ -373,6 +377,7 @@ an option be added later without disturbing a face already stored on a tag.
 | `TEXT(x, y, 'string')` | `color=0`, `bg=1`, `scale=1`, `align=0`, `font=0` |
 | `ROTATE(0\|90\|180\|270)` | — |
 | `EVERY(minutes)` | — |
+| `LOCALE(en\|zh\|ja)` | — |
 | `TIME(seconds)` | — |
 | `RESET()` | — |
 
@@ -384,14 +389,22 @@ an option be added later without disturbing a face already stored on a tag.
 - **`TEXT`** is opaque, because `bg` fills the glyph cell; white-on-black is
   `color=1,bg=0`. `align=` moves the anchor — `0` left, `1` centre, `2` right — so
   centring is `align=1` at `x = width/2`.
-- **`font=0`** is a 5×7 general font (digits, uppercase, clock punctuation),
-  scaling in whole pixels. **`font=1`** is 16×24, digits and `:` only, for big
-  time. A character `font=1` lacks draws blank rather than falling back.
+- **`font=0`** is a 5×7 general font — all printable ASCII plus `°` — scaling in
+  whole pixels. **`font=1`** is 16×24, digits and `:` only, for big time.
+  **`font=2`** is 16×16 Chinese and Japanese, with ASCII at 8×16 so a mixed
+  string lines up. A character a font lacks draws blank rather than falling
+  back to another size; the preview names it.
 - **`ROTATE`** takes degrees only; `90` and `270` are landscape. `ROTATE(3)` — the
   vendor's index form — is reported as an error rather than taken as 3 degrees.
 - **`EVERY(n)`** sets minutes between repaints, 1 to 1440, and travels with the
   face that wants it. Boundaries are absolute, so `EVERY(1440)` lands at midnight
   rather than wherever the tag booted.
+- **`LOCALE(code)`** picks the language `{W}`, `{M}` and `{P}` render in — an ISO
+  639-1 code, not an index, so a face says what it means. It applies from where it
+  appears, like `ROTATE`, and resets to `en` each run, so dropping it cannot leave
+  the previous face's language standing. An unknown code is reported and changes
+  nothing. Chinese and Japanese need `font=2`; at `font=0` they draw as gaps, and
+  the preview says which characters.
 - **`TIME(seconds since 2000-01-01)`** and **`RESET()`** are applied on arrival and
   never stored, so a `TIME()`-only sync leaves the face alone.
 
@@ -409,10 +422,22 @@ an option be added later without disturbing a face already stored on a tag.
 | `{j}` | day of year | `{w}` | weekday, 0 = Sunday |
 | `{J}` | days in this year | `{u}` | seconds since 2000-01-01 |
 | `{V}` | ISO 8601 week number | `{T}` | panel temperature, °C |
-| `{G}` | ISO week-numbering year | | |
+| `{G}` | ISO week-numbering year | `{BAT}` | battery charge, 0–100 % |
+| | | `{VCC}` | battery voltage, mV |
 
 Four are text and work only inside a string: `{W}` (`SUN`…`SAT`), `{M}`
 (`JAN`…`DEC`), `{P}` (`AM`/`PM`) and `{VER}` (`HEMA1`).
+
+`{T}`, `{BAT}` and `{VCC}` render as the literal `{T}`/`{BAT}`/`{VCC}` until a
+reading exists — on a build that takes none, a face says so on the panel instead
+of showing a confident `0`. The web preview has a field for each; blank it to see
+that case.
+
+`{BAT}` is the number to put on a face: it comes from the SDK's CR2032 discharge
+curve, which is not a straight line between two voltages. `{VCC}` is the raw
+terminal voltage, useful for watching a cell age after the percentage has
+flattened, and is uncalibrated per unit — trust it to a few tens of millivolts,
+not to the digit.
 
 Lower case is a position, upper case the length it runs against — `{d}`/`{D}`
 within the month, `{j}`/`{J}` within the year — which makes a progress bar one
@@ -443,7 +468,40 @@ characteristic — unknown command, unknown option, line too long, script full, 
 argument — with the line number of the first. An unknown `{variable}` renders as
 the literal `{name}` rather than vanishing.
 
-Limits: a line is at most **128 bytes**, a script **3072 bytes**.
+Limits: a line is at most **128 bytes**, a script **3072 bytes**. A line is bytes,
+not characters, so a CJK character costs three of them.
+
+### Fonts
+
+Three, selected with `font=` on `TEXT`:
+
+| | Cell | Covers |
+|---|---|---|
+| `font=0` | 5×7 | all printable ASCII, plus `°` |
+| `font=1` | 16×24 | digits and `:`, for big time |
+| `font=2` | 16×16 | Chinese and Japanese, plus ASCII at 8×16 |
+
+All three are generated into the firmware **and** the web preview by one command,
+so the panel and the preview cannot disagree about what a character looks like:
+
+```sh
+python3 tools/genfont.py            # what would be built, and its size
+python3 tools/genfont.py --show 年月日   # preview glyphs as ASCII art
+python3 tools/genfont.py --emit     # write the tables
+```
+
+The 5×7 and 16×24 fonts are hand-drawn as ASCII art in `tools/font5.py` and
+`tools/font16.py`. The CJK font is **a list of characters, not a font**: a full
+Chinese font at this size is 120 KB and the image runs from 96 KiB of SysRAM, so
+`tools/glyphs.txt` names the characters the faces actually draw — about 3 KB for
+all of them today. Add a line there, re-run `--emit`, and it appears everywhere.
+
+Chinese and Japanese mostly differ by *codepoint* rather than by shape, so one
+table serves both: 时 and 時 are separate characters. Where they share a codepoint
+and Noto draws them differently, `@lang` in `glyphs.txt` picks which design to
+bake, and `--emit` lists every character where that choice was real. Glyphs come
+from Noto Sans CJK (SIL OFL); do not repoint the generator at SimSun or MS YaHei,
+which are Microsoft-licensed.
 
 ---
 
@@ -506,6 +564,8 @@ firmware/hema_epd_clock/
   test/                 host tests, and `render` — the firmware renderer on the host
 webui/                  browser control panel: editor, live preview, image upload
 tools/                  build, flash, SUOTA/boot image wrapping, project generation
+  glyphs.txt            the characters font=2 carries - edit here, then --emit
+  genfont.py            builds all three fonts into the firmware and the preview
 out/                    built images, named by type (gitignored)
 ```
 

@@ -1,0 +1,86 @@
+# Every non-ASCII character the firmware can draw.
+#
+# This file is the single source of truth. Add a character here, re-run
+#
+#     python3 tools/genfont.py --emit
+#
+# and it appears in the firmware table, the web preview table, and the size
+# report together. Editing the generated tables by hand instead is how the
+# panel and the preview start disagreeing about what a character looks like.
+#
+# FORMAT
+#   Blank lines and lines starting with '#' are ignored.
+#   '[name]' starts a section - a label for the report, nothing more.
+#   '@lang sc|jp|tc' inside a section picks whose typography that section's
+#   characters are drawn in. Defaults to sc. See SHAPES below.
+#   Every other line contributes its characters. Spaces are ignored, so you
+#   can group them however reads best. Listing a character in two sections is
+#   fine and it is stored once - unless the two disagree about @lang, which
+#   genfont.py reports as a conflict for you to settle.
+#
+# COST
+#   32 bytes per character, plus 5 bytes of index. The whole point of listing
+#   characters rather than pulling in a font is that this file stays small:
+#   a full Chinese font would be 120 KB and does not fit on the nRF52811 at
+#   all. Add what a face actually draws. The report at the end of a --emit
+#   run tells you what you have spent.
+#
+# SHAPES
+#   Chinese and Japanese mostly differ by codepoint rather than by shape -
+#   时/時 and 电/電 are separate characters and coexist here with nothing to
+#   decide. Where they do share a codepoint, Noto carries two designs and we
+#   have to bake one, which is what '@lang' picks. A --emit run lists every
+#   character where the choice was real, so nothing is decided silently.
+#
+#   Judge those from the report, not from squinting at the two renderings:
+#   most of the differences are a one-pixel shift that does not survive a
+#   16x16 cell anyway. The ones that genuinely read differently are rare and
+#   mostly outside clock and calendar vocabulary.
+
+[weekday - Chinese]
+@lang sc
+# 星期日 星期一 ... 星期六
+星期
+
+[weekday - Japanese]
+@lang jp
+# 日曜日 月曜日 ... 土曜日. 日 and 月 are also date units, below - they are
+# listed there without a @lang, so those two come out in the sc design. The
+# report will say so; the two designs are identical for both characters.
+曜 火 水 木 金 土
+
+[numerals]
+# Weekday and month names in both languages, and dates written 二〇二六年.
+一二三四五六七八九十 〇
+
+[date units]
+年 月 日
+
+[time units]
+# 时 and 時 are different codepoints, so both languages coexist with no
+# conflict. Same for 分 and 秒, which are shared.
+时 時 分 秒
+
+[morning and afternoon - Chinese]
+# 上午 下午
+上 下 午
+
+[morning and afternoon - Japanese]
+@lang jp
+# 午前 午後. 午 is shared and listed above, so it takes the sc design; the
+# two are identical. 後 is Japanese-only, and its two designs do differ.
+前 後
+
+# ---------------------------------------------------------------------------
+# Sections below are not drawn by any current face. Uncomment a line and
+# re-run --emit to add it; each of these costs about 300 bytes.
+# ---------------------------------------------------------------------------
+
+[weather - not currently used]
+# 晴 阴 曇 雨 雪 云 雲 多 阵
+
+[battery - not currently used]
+# 电 池 電 残 量 剩 余 充
+
+[temperature - not currently used]
+# 温 度 気 湿
