@@ -61,4 +61,30 @@ epd_store_res_t epd_store_last_result(void);
  *  the tag up on the built-in default. */
 epd_store_res_t epd_store_last_load(void);
 
+#if defined(EPD_SUOTA) && (EPD_SUOTA)
+/** Hold the flash bus across many operations, for SUOTA.
+ *
+ * The two calls above are self-contained: each takes the bus and hands it back.
+ * A SUOTA session cannot work that way. It writes the image in ~230 blocks over
+ * minutes, the SDK's receiver re-derives the pin configuration on every block
+ * from a map the *client* sent, and between blocks the kernel scheduler runs -
+ * which is where a minute tick would otherwise call epd_spi_claim() and take
+ * the bus back mid-image.
+ *
+ * So the session claims the bus once at SUOTAR_START and releases it at
+ * SUOTAR_END, and the app suppresses repaints in between. Panel and flash
+ * cannot share the bus; on variant B they share CLK and MOSI outright and P0_5
+ * is the panel's D/C *and* the flash's MISO, so "share" is not available as a
+ * design.
+ *
+ * epd_store_flash_claim() returns false if the flash did not answer, in which
+ * case the session should be refused rather than written blind.
+ *
+ * Callers must pair these. epd_store_flash_release() hands the bus back to the
+ * panel via epd_spi_claim(), so a missed release leaves the panel mute until
+ * the next reboot - the panel's pins are still configured for the flash. */
+bool epd_store_flash_claim(void);
+void epd_store_flash_release(void);
+#endif
+
 #endif // _EPD_STORE_H_

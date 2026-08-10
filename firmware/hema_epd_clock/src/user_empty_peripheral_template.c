@@ -19,6 +19,9 @@
 #include "app_easy_timer.h"
 #include "epd_time.h"
 #include "epd_store.h"
+#if (BLE_SUOTA_RECEIVER)
+#include "app_suotar.h"              // suota_state, SUOTAR_START/SUOTAR_END
+#endif
 
 /* Scratch for a template restored from flash. Matches the parser's script
  * buffer; static because it is far too big for this callback's stack. */
@@ -112,6 +115,28 @@ static epd_queued_t s_queued;
  * image do not fit in its sector. */
 static bool         s_image_mode;
 
+#if (BLE_SUOTA_RECEIVER)
+/* True for the whole of a SUOTA session. While it is set the panel is left
+ * completely alone: no repaint is started, no in-flight one is watched, and the
+ * SPI bus belongs to the flash rather than to the panel.
+ *
+ * The panel and the boot flash cannot share the bus. On variant B they share
+ * CLK and MOSI outright, and P0_5 is the panel's D/C *and* the flash's MISO, so
+ * there is no arrangement in which both are addressable at once - see
+ * flash_bus_acquire() in platform/epd_store.c. A session lasts minutes and
+ * ~230 blocks, and the kernel scheduler runs between blocks, so a minute tick
+ * landing in one of those gaps would call epd_spi_claim() and take the bus back
+ * underneath the transfer. Hence a session-long claim and this flag, rather
+ * than the per-operation claim epd_store_save() gets away with. */
+static bool         s_suota;
+
+/* Whether the flash answered when the session claimed the bus. Nothing in the
+ * firmware reads it; it is volatile so it can be read over SWD, which is the
+ * only way to tell a transfer that failed on the bus hand-off from one that
+ * failed on the radio. */
+static volatile bool s_suota_bus_ok;
+#endif
+
 static void epd_poll_cb(void);
 
 #if EPD_PARTIAL
@@ -138,6 +163,21 @@ static void epd_persist_if_dirty(void)
  * is still busy with the last. */
 static void epd_begin_refresh(epd_queued_t what)
 {
+#if (BLE_SUOTA_RECEIVER)
+    /* A SUOTA session owns the SPI bus, so there is no way to reach the panel
+     * and nothing useful to do but drop this. Dropped rather than queued: the
+     * session ends with a repaint anyway, and by then the queue would only say
+     * which of the ticks that passed happened to be last.
+     *
+     * This is the one funnel every repaint goes through - the minute tick, the
+     * flush after a script push, the completed image upload, and the drain at
+     * the end of a refresh - which is why the check lives here and not at each
+     * of those. */
+    if (s_suota) {
+        return;
+    }
+#endif
+
     if (s_refreshing) {
         /* A queued script render supersedes a queued framebuffer one: it is
          * about to regenerate the framebuffer anyway. */
@@ -359,6 +399,197 @@ static void epd_schedule_flush(void)
     s_flush_timer = app_easy_timer(EPD_FLUSH_DELAY, epd_flush_cb);
 }
 
+#if (BLE_SUOTA_RECEIVER)
+/* --- SUOTA sessions -------------------------------------------------------
+ *
+ * Both halves are idempotent, because they are reached from two directions that
+ * cannot see each other. app_suotar_stop() - and so SUOTAR_END - is called only
+ * when the client ends the service cleanly or the image completes. A client that
+ * simply drops the link mid-transfer never produces it, and that is the ordinary
+ * case for a fleet update that goes wrong: out of range, flat battery, closed
+ * laptop. Without the disconnect path below, such a session would hold the bus
+ * and suppress repaints until the next power cycle, leaving a tag that
+ * advertises perfectly and never updates its glass again.
+ *
+ * A failed transfer is otherwise harmless: the receiver erases the target bank's
+ * header before writing anything and only marks it valid at the end, so an
+ * abandoned bank is invalid and the bootloader ignores it. Proven on this
+ * hardware - hema-local/re/type4/suota/README.md. */
+static void epd_suota_begin(void)
+{
+    if (s_suota) {
+        return;
+    }
+    s_suota = true;
+
+    /* Abandon an in-flight refresh rather than wait for it. Waiting is not
+     * available - this runs in a BLE callback and the first image block can
+     * arrive tens of milliseconds later - and abandoning costs very little: once
+     * Master Activation has been sent the controller drives the update by
+     * itself with no further SPI traffic, so what is given up is only the
+     * deep-sleep command afterwards. That costs power, not correctness. */
+    if (s_poll_timer != EASY_TIMER_INVALID_TIMER) {
+        app_easy_timer_cancel(s_poll_timer);
+        s_poll_timer = EASY_TIMER_INVALID_TIMER;
+    }
+    s_refreshing = false;
+    s_queued = EPD_Q_NONE;
+
+#if EPD_PARTIAL
+    /* We stopped watching a refresh part way through, so what the glass ended up
+     * holding is no longer known. Saying so here is what stops the repaint after
+     * the session diffing against a shadow that describes a frame nobody saw. */
+    epd_display_forget();
+#endif
+
+    /* Recorded rather than acted on. The session cannot be refused from here -
+     * the callback returns void and the SDK has already told the client the
+     * service is open - and a flash that does not answer will fail the transfer
+     * on its own, with an error the client sees. What matters is being able to
+     * tell that apart afterwards from a transfer the radio dropped. */
+    s_suota_bus_ok = epd_store_flash_claim();
+}
+
+static void epd_suota_end(void)
+{
+    if (!s_suota) {
+        return;
+    }
+    epd_store_flash_release();
+    s_suota = false;
+
+    /* Repaint on the way out. Every tick during the session was dropped, so on a
+     * clock the glass is now stale by however long the transfer took. Follows
+     * whoever last owned the panel, the same rule the rest of the app uses: an
+     * uploaded image is still in the framebuffer and should come back, otherwise
+     * re-run the template.
+     *
+     * On a successful update this is wasted work, since the tag is about to
+     * reboot into the new image. It is the abandoned sessions this is for. */
+    epd_begin_refresh(s_image_mode ? EPD_Q_FRAMEBUFFER : EPD_Q_SCRIPT);
+}
+
+void on_suotar_status_change(const uint8_t suotar_event)
+{
+    if (suotar_event == SUOTAR_START) {
+        epd_suota_begin();
+    } else {
+        epd_suota_end();
+    }
+}
+#endif // (BLE_SUOTA_RECEIVER)
+
+/* --- a device name that identifies the individual tag ----------------------
+ *
+ * Every tag used to advertise as "HemaEPD-Clock", which is fine with one on the
+ * bench and useless with several: a scanner - and in particular the vendor's own
+ * SUOTA app, which offers a list to pick from - shows several identical entries
+ * and no way to tell which is the one in your hand. So the low three bytes of the
+ * BD address go on the end: "HemaEPD-T4B-682F8D".
+ *
+ * The address is the tag's own and needs no storage of ours. gapm_get_bdaddr()
+ * is a ROM function (0x07f185ed in da14585_symbols.txt) that returns what the
+ * stack is actually advertising with, so the name cannot disagree with the
+ * address a scanner shows beside it. Declared here rather than by including
+ * gapm_util.h, which is a stack-internal header and not on this project's
+ * include path.
+ *
+ * Why the name has to be patched on *every* advertising restart, rather than
+ * once: app_easy_gap_undirected_advertise_start() sets its cached command back
+ * to NULL after sending it, so the next start rebuilds the advertising data from
+ * USER_DEVICE_NAME - the placeholder - and a one-off patch would survive exactly
+ * one connection. Hence the whole advertising operation is ours; it is a
+ * documented hook (default_operation_adv in user_callback_config.h), so nothing
+ * is being subverted here. */
+extern struct bd_addr *gapm_get_bdaddr(void);
+
+/* Starts as the placeholder and keeps its length forever - see USER_DEVICE_NAME.
+ * Not const: the last six characters are the point. */
+static char s_dev_name[USER_DEVICE_NAME_LEN + 1] = USER_DEVICE_NAME;
+static bool s_dev_name_ready;
+
+static void user_dev_name_init(void)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    struct bd_addr *bd = gapm_get_bdaddr();
+    char *p = &s_dev_name[USER_DEVICE_NAME_LEN - 6];
+
+    s_dev_name_ready = true;
+    if (bd == NULL) {
+        return;                 /* leave the placeholder's zeroes visible */
+    }
+    /* bd_addr is little-endian, so addr[0] is the byte a scanner prints last.
+     * Walking down from addr[2] puts them in the printed order. */
+    for (int8_t i = 2; i >= 0; i--) {
+        *p++ = hex[(bd->addr[i] >> 4) & 0x0Fu];
+        *p++ = hex[bd->addr[i] & 0x0Fu];
+    }
+}
+
+/* Overwrite the name inside one advertising payload, if it is in this one.
+ *
+ * Found by walking the AD structures rather than by assuming an offset: which of
+ * the two payloads the SDK puts the name in depends on how much room is left in
+ * each (app.c), and that depends on USER_ADVERTISE_DATA_LEN, which is not this
+ * file's business. Only the length the SDK already reserved is written, so a
+ * payload cannot be lengthened here. */
+static void user_dev_name_patch(uint8_t *data, uint8_t len)
+{
+    uint8_t i = 0;
+
+    while (i + 1u < len && data[i] != 0u) {
+        uint8_t field = data[i];            /* length of type + payload */
+
+        if (data[i + 1u] == GAP_AD_TYPE_COMPLETE_NAME && i + 1u + field <= len) {
+            uint8_t n = field - 1u;
+            if (n > USER_DEVICE_NAME_LEN) {
+                n = USER_DEVICE_NAME_LEN;
+            }
+            memcpy(&data[i + 2u], s_dev_name, n);
+            return;
+        }
+        i = (uint8_t)(i + field + 1u);
+    }
+}
+
+void user_advertise_operation(void)
+{
+    struct gapm_start_advertise_cmd *cmd;
+
+    if (!s_dev_name_ready) {
+        user_dev_name_init();
+    }
+
+    cmd = app_easy_gap_undirected_advertise_get_active();
+    if (cmd != NULL) {
+        user_dev_name_patch(cmd->info.host.adv_data,
+                            cmd->info.host.adv_data_len);
+        user_dev_name_patch(cmd->info.host.scan_rsp_data,
+                            cmd->info.host.scan_rsp_data_len);
+    }
+
+    /* Mirrors default_advertise_operation(), which this replaces. */
+    if (user_default_hnd_conf.adv_scenario == DEF_ADV_WITH_TIMEOUT) {
+        app_easy_gap_undirected_advertise_with_timeout_start(
+            user_default_hnd_conf.advertise_period, NULL);
+    } else {
+        app_easy_gap_undirected_advertise_start();
+    }
+}
+
+/* What a connected peer reads from the GAP Device Name characteristic. Without
+ * this the SDK answers with the placeholder, so the name in a scan list and the
+ * name after connecting would disagree - and the second is the one a phone
+ * remembers. */
+void user_on_get_dev_name(struct app_device_name *device_name)
+{
+    if (!s_dev_name_ready) {
+        user_dev_name_init();
+    }
+    device_name->length = USER_DEVICE_NAME_LEN;
+    memcpy(device_name->name, s_dev_name, USER_DEVICE_NAME_LEN);
+}
+
 void user_on_set_dev_config_complete(void)
 {
     default_app_on_set_dev_config_complete();
@@ -430,6 +661,25 @@ void user_on_disconnect( struct gapc_disconnect_ind const *param )
      * transfer write its first byte into the middle of the framebuffer -
      * silent corruption rather than an honest failure. */
     s_img_write_offset = 0;
+
+#if (BLE_SUOTA_RECEIVER)
+    /* End any SUOTA session the client did not end itself. The SDK only calls
+     * app_suotar_stop() on a clean service exit or a completed image, so a
+     * client that goes out of range mid-transfer leaves the session open -
+     * holding the SPI bus and suppressing every repaint. This is the only thing
+     * that gets the panel back without a power cycle. */
+    epd_suota_end();
+
+    /* Then serve a reboot the receiver asked for. It sets this and disconnects
+     * rather than resetting under the client, so that the client learns the
+     * image was accepted before the tag goes away. Ordering matters: the reset
+     * never returns, so the bus hand-off above has to happen first - on a
+     * successful update it is the repaint that is wasted, not the release. */
+    if (suota_state.reboot_requested) {
+        suota_state.reboot_requested = 0;
+        platform_reset(RESET_AFTER_SUOTA_UPDATE);
+    }
+#endif
 
     default_app_on_disconnect(param);
 }

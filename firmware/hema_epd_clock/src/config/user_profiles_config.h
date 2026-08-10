@@ -58,6 +58,37 @@
 #define CFG_PRF_DISS
 #define CFG_PRF_CUST1
 
+/* SUOTA - firmware update over BLE. Off unless tools/build.sh --suota.
+ *
+ * This is the switch that puts the service in the GATT database; rwprf_config.h
+ * turns CFG_PRF_SUOTAR into BLE_SUOTA_RECEIVER, which is what the rest of the
+ * SDK and our on_suotar_status_change() are guarded on. The receiver module
+ * itself has always been in the build - EXCLUDE_DLG_SUOTAR is 0 in
+ * user_modules_config.h - so this is the only thing that was missing, and the
+ * image we already build for the SWD path is the image SUOTA expects. See
+ * hema-local/docs/SUOTA_PLAN.md.
+ *
+ * Kept behind a build flag rather than always on, because it puts a writable
+ * path to the boot flash on the air. Two things about that are worth stating:
+ *
+ *  - the bank a transfer targets is provably recoverable. A failed transfer
+ *    leaves it invalid and the tag boots the other one - measured on this
+ *    hardware, three ways, in hema-local/re/type4/suota/README.md.
+ *  - a wrong-type image is refused by the *client*, not by the tag. The tag
+ *    publishes its identity (HEMA_COMPAT_STR, on Firmware Revision below) and
+ *    hema-local/tools/suota.py compares it against the image before sending
+ *    anything. A generic SUOTA app would not, and a Type 3 image on a Type 4
+ *    tag boots, advertises and leaves only the panel dead. Enforcing it on the
+ *    tag needs a patch to the SDK's app_read_image_headers(), which is why it
+ *    is the client's job for now.
+ *
+ * The flag is also how an image that can be updated over the air is told apart
+ * from one that cannot - the name on disk says so.
+ */
+#if defined(EPD_SUOTA) && (EPD_SUOTA)
+#define CFG_PRF_SUOTAR
+#endif
+
 /***************************************************************************************/
 /* Profile application configuration section                                           */
 /***************************************************************************************/
@@ -126,8 +157,19 @@
 #define APP_DIS_HARD_REV_STR_LEN        (7)
 #endif
 
-/// Firmware Revision
-#define APP_DIS_FIRM_REV_STR            SDK_VERSION
+/// Firmware Revision - our SUOTA compatibility identity, not the SDK version.
+///
+/// This is the one thing a client needs to know about a tag before pushing
+/// firmware to it, and DIS is the standard place to publish it: the client
+/// reads it here, compares it with the identity in the image it is about to
+/// send, and refuses a mismatch before transferring 40 KB. See HEMA_COMPAT_STR
+/// in config/tag_types.h for what the fifteen characters mean and why each of
+/// them can cost a panel.
+///
+/// Nothing is lost by displacing SDK_VERSION: it is still on Software Revision
+/// below, and it was never the more useful of the two here since every tag we
+/// build reports the same SDK.
+#define APP_DIS_FIRM_REV_STR            HEMA_COMPAT_STR
 #define APP_DIS_FIRM_REV_STR_LEN        (sizeof(APP_DIS_FIRM_REV_STR) - 1)
 
 /// Software Revision String

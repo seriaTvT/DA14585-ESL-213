@@ -72,6 +72,24 @@ void app_advertise_complete(const uint8_t);
  */
 void on_suotar_status_change(const uint8_t suotar_event);
 
+/**
+ ****************************************************************************************
+ * @brief Start advertising, having first put this tag's own name in the payload.
+ *        Replaces default_advertise_operation() and mirrors what it does; see
+ *        user_advertise_operation() for why a one-off patch will not do.
+ ****************************************************************************************
+ */
+void user_advertise_operation(void);
+
+/**
+ ****************************************************************************************
+ * @brief Device name read by a connected peer. Answers with the same per-tag
+ *        name that is advertised, not the compile-time placeholder.
+ * @param[in,out] device_name  The device_name value returned.
+ ****************************************************************************************
+ */
+void user_on_get_dev_name(struct app_device_name *device_name);
+
 
 /*
  * LOCAL VARIABLE DEFINITIONS
@@ -115,7 +133,7 @@ static const struct app_callbacks user_app_callbacks = {
     .app_on_db_init_complete            = default_app_on_db_init_complete,
     .app_on_scanning_completed          = NULL,
     .app_on_adv_report_ind              = NULL,
-    .app_on_get_dev_name                = default_app_on_get_dev_name,
+    .app_on_get_dev_name                = user_on_get_dev_name,
     .app_on_get_dev_appearance          = default_app_on_get_dev_appearance,
     .app_on_get_dev_slv_pref_params     = default_app_on_get_dev_slv_pref_params,
     .app_on_set_dev_info                = default_app_on_set_dev_info,
@@ -160,7 +178,10 @@ static const struct app_bond_db_callbacks user_app_bond_db_callbacks = {
 #define app_process_catch_rest_cb       user_catch_rest_hndl
 
 static const struct default_app_operations user_default_app_operations = {
-    .default_operation_adv = default_advertise_operation,
+    /* Not default_advertise_operation: every advertising start has to re-patch
+     * the per-tag device name into the payload, because the SDK rebuilds that
+     * payload from USER_DEVICE_NAME each time. This is the hook meant for it. */
+    .default_operation_adv = user_advertise_operation,
 };
 
 static const struct arch_main_loop_callbacks user_app_main_loop_callbacks = {

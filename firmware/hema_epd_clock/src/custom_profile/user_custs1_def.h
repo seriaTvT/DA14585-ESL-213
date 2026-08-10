@@ -43,8 +43,11 @@
  * Different UUIDs turn that subtly wrong result into an honest "service not
  * found" at the first attempt.
  *
- * Nothing is lost by moving: no service UUID is advertised (see
- * USER_ADVERTISE_DATA), so discovery is by device name and unaffected. */
+ * This UUID is now advertised, as the incomplete 128-bit service list in
+ * USER_ADVERTISE_DATA, and it is how clients find a tag - the device name is for
+ * people and is not matched on. So changing it here is no longer free: keep it in
+ * step with the copy in user_config.h, and with webui/ble.js and
+ * hema-local/tools/suota.py, which filter scans on it. */
 #define DEF_CMD_SVC_UUID_128        {0x14,0x17,0x59,0x0c,0x4e,0xe6,0x6e,0xab,0xc5,0x42,0xc0,0x1f,0x60,0xb2,0x7f,0x67}
 #define DEF_CMD_CHAR_UUID_128       {0x48,0x25,0x4d,0x9c,0x8f,0x98,0x75,0xa7,0xea,0x4a,0x39,0x42,0x97,0x9b,0x33,0xc0}
 

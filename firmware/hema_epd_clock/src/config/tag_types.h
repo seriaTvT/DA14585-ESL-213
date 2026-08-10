@@ -161,4 +161,98 @@
 #define HEMA__STR(x)        HEMA__STR2(x)
 #define HEMA_TAG_TYPE_TAG   "HEMA-TAG-TYPE-" HEMA__STR(HEMA_TAG_TYPE)
 
+/* --- the SUOTA compatibility identity -------------------------------------
+ *
+ * All of the above condensed into fifteen characters, because a firmware
+ * update over the air has no operator and no flasher to check it.
+ *
+ *      T4B-104x212-W10
+ *      ^^ ^  ^      ^ ^-- LUT steps: 7 or 10; absent on the OTP waveform
+ *      |  |  |      +---- waveform: W Waveshare, O the panel's own OTP
+ *      |  |  +----------- panel geometry
+ *      |  +-------------- board variant, which is the wiring
+ *      +----------------- tag type
+ *
+ * Each of those is a way to kill a panel from a distance, and none of them
+ * announces itself as a bad update - every one presents as a broken screen.
+ * The type and variant decide the pin map; the geometry decides whether the
+ * image is merely garbled; the waveform decides whether the matrix moves at
+ * all on this panel lot; and the step count decides it again, since a 7-step
+ * table on the 10-step controller runs zero frames and leaves the glass blank.
+ * tools/flash.sh refuses all of these over SWD by reading the stamps out of the
+ * binary. This is the same refusal, in the one field the SUOTA image header has
+ * spare: version[16], IMAGE_HEADER_VERSION_SIZE.
+ *
+ * EPD_PARTIAL is deliberately not in it. It changes how the panel is driven,
+ * not whether it can be, so a partial build is a legitimate update for a tag
+ * running a full-refresh one rather than a mismatch.
+ *
+ * It lives here, and not beside the other stamps in epd/epd_ssd1680.h, because
+ * config/user_profiles_config.h needs it for the Device Information Service and
+ * is processed long before that header can be included. The price is that the
+ * geometry and the default step count are restated here rather than derived
+ * from EPD_WIDTH/EPD_HEIGHT/EPD_LUT_STEPS - so epd_ssd1680.h asserts at compile
+ * time that these agree with those. Change one and the build stops.
+ *
+ * Fifteen characters leaves one spare. Keep it that way: the SDK memcmp's the
+ * field at a fixed sixteen and a silently truncated identity is worse than
+ * none, since two different tags would then look alike. */
+#if defined(EPD_PANEL_LOW_RES)
+    #define HEMA_COMPAT_W       104
+    #define HEMA_COMPAT_H       212
+#else
+    #define HEMA_COMPAT_W       122
+    #define HEMA_COMPAT_H       250
+#endif
+
+#if defined(EPD_BOARD_VARIANT_A)
+    #define HEMA_COMPAT_VARIANT "A"
+#else
+    #define HEMA_COMPAT_VARIANT "B"
+#endif
+
+/* Must match the default in epd_ssd1680.h, which is what the asserted check
+ * over there is for. Only meaningful on the Waveshare path - the OTP waveform
+ * lives in the panel and has no step count of ours. */
+#if !defined(EPD_LUT_STEPS)
+    #define HEMA_COMPAT_STEPS   7
+#else
+    #define HEMA_COMPAT_STEPS   EPD_LUT_STEPS
+#endif
+
+#if EPD_INIT_FROM_OTP
+    #define HEMA_COMPAT_WAVE    "O"
+#else
+    #define HEMA_COMPAT_WAVE    "W" HEMA__STR(HEMA_COMPAT_STEPS)
+#endif
+
+/* Type and variant together - "T4B". Named because it is used twice: it opens
+ * the compatibility identity below, and it is also the readable part of the
+ * advertised device name (USER_DEVICE_NAME in user_config.h), so that a scanner
+ * showing a list of tags says which kind each one is. Always three characters. */
+#define HEMA_COMPAT_TAGID   "T" HEMA__STR(HEMA_TAG_TYPE) HEMA_COMPAT_VARIANT
+
+/* High or low resolution, as one character, for the device name.
+ *
+ * Strictly redundant - the type number already implies the panel - but the name
+ * is read by a person choosing between tags in a scanner, and "is this the
+ * 122x250 one?" should not need a lookup table. One character is cheap enough to
+ * spend on that. Deliberately NOT in the compatibility identity, which carries
+ * the geometry in full because a machine compares it. */
+#if defined(EPD_PANEL_LOW_RES)
+    #define HEMA_COMPAT_RES     "L"
+#else
+    #define HEMA_COMPAT_RES     "H"
+#endif
+
+#define HEMA_COMPAT_STR     HEMA_COMPAT_TAGID \
+                            "-" HEMA__STR(HEMA_COMPAT_W) "x" \
+                            HEMA__STR(HEMA_COMPAT_H) "-" HEMA_COMPAT_WAVE
+
+/* The same string behind a prefix, so tools/mksuota.py can find it in the .bin
+ * the way tools/flash.sh finds the other stamps. The bare form is what goes on
+ * the air in the Device Information Service, where a client reads it to learn
+ * what a tag will accept *before* spending a transfer finding out. */
+#define HEMA_COMPAT_TAG     "HEMA-COMPAT-" HEMA_COMPAT_STR
+
 #endif /* _TAG_TYPES_H_ */

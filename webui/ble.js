@@ -64,7 +64,10 @@ import { activePanel, PANELS } from './epd.js';
 export const IMG_SERVICE = '86c08205-f21a-4257-aabd-4602d25c2448';
 export const IMG_CHAR    = '855c0ea3-ae40-4bab-8a7a-52d86e9a5a2b';
 
-export const DEVICE_NAME = 'HemaEPD-Clock';
+/* Tags advertise as <type><variant><res>-<end of their MAC>, e.g. T4BL-682F8D,
+ * so several of them are distinguishable in the chooser. Nothing matches on it:
+ * the name is for the person picking a tag, and CMD_SERVICE below is what
+ * identifies one. */
 
 /* The tag's EPD_BUF_SIZE, which depends on which panel it has - see PANELS in
  * epd.js. It refreshes when exactly this many bytes have arrived, with no
@@ -141,10 +144,17 @@ export class Tag extends EventTarget {
 
     this._log('Requesting device…');
     this.device = await navigator.bluetooth.requestDevice({
-      /* Filter by name rather than by service: the tag does not advertise its
-       * 128-bit service UUIDs (they do not fit alongside the name in a 31-byte
-       * advertisement), so a services filter would match nothing. */
-      filters: [{ namePrefix: 'HemaEPD' }],
+      /* Filter by service, not by name. The tag advertises CMD_SERVICE (see
+       * USER_ADVERTISE_DATA in the firmware's user_config.h), so this matches
+       * every tag running this firmware and nothing else - including tags whose
+       * name we have never seen, which a name filter cannot promise. The device
+       * name has changed twice and each time it broke every client that matched
+       * on it; a service UUID is the stable contract.
+       *
+       * The name is in the scan response rather than the advertisement, because
+       * the UUIDs do not leave room for it. Chrome performs an active scan, so
+       * the chooser still shows it. */
+      filters: [{ services: [CMD_SERVICE] }],
       optionalServices: [CMD_SERVICE, IMG_SERVICE],
     });
 

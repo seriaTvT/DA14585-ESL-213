@@ -55,6 +55,9 @@ which is what makes it a clock rather than a picture.
 - **Reports what it made of a script** over a status characteristic, so a typo is
   visible without a debugger.
 - **Reads the panel's own temperature sensor** and renders it as `{T}`.
+- **Updates its own firmware over BLE** (`--suota`): 40 KB in ~35 s, into whichever
+  image bank is not running, so a failed update leaves the tag booting what it was
+  already running. See [firmware update over BLE](#firmware-update-over-ble).
 
 The web UI previews a face pixel-for-pixel before you push it, dithers and uploads
 arbitrary images, and sets the clock.
@@ -280,11 +283,59 @@ If a flash dies verifying RAMCode and the `Write:`/`Read:` lines differ by a bit
 or two, that is the SWD link: reseat and retry with `--speed 1000`. If they differ
 wholesale, power-cycle and flash as the *first* J-Link operation.
 
+A flash can also fail *without* J-Link noticing: verify reads back over the same
+link, so a link fault that corrupts writes corrupts the verify identically. Seen
+once at the default 4 MHz, as a whole bank written one bit shifted — the tag then
+booted the other bank and looked like a dead panel. `--speed 1000` fixed it. If a
+freshly flashed tag misbehaves, suspect the flash before the firmware.
+
+### Firmware update over BLE
+
+Built with `--suota`, the tag carries the standard SUOTA service and can be
+updated over the air — worth having as soon as there are more tags than J-Links.
+
+```sh
+tools/build.sh --type 4 --lut-steps 10 --partial --suota
+tools/mksuota.py --ota <stock_dump.bin> out/hema_epd_clock-type4-s10-partial-suota.bin t4.img
+```
+
+Then push it with any SUOTA client — a `--suota` build advertises SUOTA's
+`0xFEF5`, which is what standard clients scan for. Measured on a Type 4 tag:
+**40 KB in ~35 s**, three consecutive updates, each rebooting into the image it
+received. A client will ask for the flash wiring: MISO `P0_5`, MOSI `P0_6`, CS
+`P0_3`, SCK `P0_0`, on both board variants. Blocks must be **512 bytes or fewer**.
+
+The receiver writes whichever bank is *not* running and only marks it bootable
+once the whole image has arrived and checksummed, so an interrupted transfer
+leaves that bank invalid and the tag goes on booting what it was already running.
+That was tested directly before the feature was trusted — three kinds of broken
+bank, including one claiming to be valid and newer with a bad CRC, and the tag
+recovered from all of them. Both banks end below the product header and the stored
+face lives above it, so **an update never costs the tag its picture**.
+
+Note the first successful update overwrites the vendor image, since that is the
+bank not in use. From then on the tag is its own fallback: a failed update rolls
+back to the previous version of *this* firmware. Keep the stock dump.
+
+Because a wrong-type image is silent — it boots, advertises, and leaves only the
+panel dead — every image stamps a compatibility identity into its header and the
+tag reports the same string on the DIS Firmware Revision characteristic:
+
+```
+T4B-104x212-W10     type, board variant, panel geometry, waveform, LUT steps
+```
+
+A client should read it and refuse a mismatch **before** transferring. The tag
+does not enforce this itself, so a generic SUOTA app can still push the wrong
+image; use a client that checks.
+
 ### 4. Drive it
 
-The tag comes up advertising as **`HemaEPD-Clock`**, showing the built-in clock
-face and reading `00:00` on 2000-01-01 until a host syncs it. Open the web UI and
-**Connect**.
+The tag comes up advertising as **`T4BL-682F8D`** — type, board variant, panel
+resolution, and the tail of its own MAC — showing the built-in clock face and
+reading `00:00` on 2000-01-01 until a host syncs it. Open the web UI and
+**Connect**; the chooser filters on the tag's service UUID, so only tags running
+this firmware are offered.
 
 ---
 
@@ -396,7 +447,18 @@ Limits: a line is at most **128 bytes**, a script **3072 bytes**.
 
 ## The BLE interface
 
-Advertised name `HemaEPD-Clock`. No service UUID is advertised; discover by name.
+**Discover by service UUID, not by name.** The advertisement carries the command
+service below (and SUOTA's `0xFEF5` when built with `--suota`), which is what
+identifies a tag running this firmware. The name is for whoever is choosing
+between tags and carries no guarantee: it has changed twice, and each time it
+broke every client that matched on it.
+
+Names look like `T4BL-682F8D` — tag type, board variant, panel resolution (`H`
+122×250 / `L` 104×212), then the low three bytes of the tag's own BD address, so
+several tags are distinguishable at a glance. It is filled in at boot from the
+address the radio actually uses, so nothing is configured per unit. Because the
+service UUIDs leave no room for it in the 31-byte advertisement, the name travels
+in the scan response — visible to any active scan, which is what scanners do.
 
 | Attribute | UUID |
 |---|---|
@@ -486,7 +548,14 @@ rather than hand-patching either copy.
 - **The clock does not survive a power cut.** There is no RTC. A tag boots at
   `00:00` on 2000-01-01 until a host sends `TIME()`; the picture persists, the time
   does not.
-- **No SUOTA.** Updating the firmware means SWD, every time.
+- **A wrong-type image over the air is refused by the client, not by the tag.**
+  The tag publishes what it is and every image says what it is for, but nothing on
+  the tag compares them, so a generic SUOTA app can still push a Type 3 image to a
+  Type 4 tag and leave the panel dead. Enforcing it on the tag needs a change to
+  the SDK's receiver.
+- **SUOTA has only been exercised on variant B.** Variant A should be easier — its
+  panel and flash pins are disjoint, so there is no bus to arbitrate — but it is
+  untested.
 
 ---
 

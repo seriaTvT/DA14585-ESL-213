@@ -173,8 +173,37 @@ static const struct advertise_configuration user_adv_conf = {
  *    - The maximum length of the user defined response data shall be 31 bytes.
  ****************************************************************************************
  */
-/// Advertising data
-#define USER_ADVERTISE_DATA                   ""
+/// Advertising data: the service UUIDs, so that a client can find this tag by
+/// what it *is* rather than by what it is called.
+///
+/// This used to be empty, and clients matched on the device name. That is a poor
+/// contract - the name is for people, and every time it changes (it has now
+/// changed twice) every client breaks - so the services go on the air instead.
+/// Bytes are little-endian, over the air and in the arrays in
+/// custom_profile/user_custs1_def.h, which is where these are copied from.
+///
+/// `0x06` rather than `0x07`: this is the *incomplete* list of 128-bit service
+/// UUIDs, which is the honest type, because the image service is deliberately
+/// left out. There is not room for both, and one is enough to recognise a tag.
+#define USER_ADV_UUID_CMD \
+    "\x11\x06\x14\x17\x59\x0c\x4e\xe6\x6e\xab\xc5\x42\xc0\x1f\x60\xb2\x7f\x67"
+
+/// SUOTA's 16-bit UUID (0xFEF5), advertised only when the service is actually
+/// present. This is what a generic SUOTA client scans for - the vendor's own app
+/// will not list a tag that does not advertise it - so it is the difference
+/// between "updatable over the air" being true and being usable.
+#if defined(EPD_SUOTA) && (EPD_SUOTA)
+    #define USER_ADV_UUID_SUOTA               "\x03\x03\xF5\xFE"
+#else
+    #define USER_ADV_UUID_SUOTA               ""
+#endif
+
+/// 4 + 18 = 22 bytes with SUOTA, 18 without, against a 28-byte budget (31 less
+/// the 3-byte Flags the SDK prepends). The device name does not fit alongside
+/// them, so the SDK puts it in the scan response instead - which is fine, and is
+/// why the name is still visible in a scanner. See app.c, and note it decides
+/// this by arithmetic on USER_DEVICE_NAME_LEN, so both are compile-time.
+#define USER_ADVERTISE_DATA                   USER_ADV_UUID_SUOTA USER_ADV_UUID_CMD
 
 /// Advertising data length - maximum 28 bytes, 3 bytes are reserved to set
 #define USER_ADVERTISE_DATA_LEN               (sizeof(USER_ADVERTISE_DATA)-1)
@@ -197,9 +226,6 @@ static const struct advertise_configuration user_adv_conf = {
  *
  ****************************************************************************************
  */
-/// Device name
-#define USER_DEVICE_NAME        "HemaEPD-Clock"
-
 /// Which tag this image is for. This header is force-included ahead of every
 /// other, so the selection lands before epd_ssd1680.h picks its own defaults.
 ///
@@ -223,6 +249,65 @@ static const struct advertise_configuration user_adv_conf = {
 /// BUSY reading idle, so the refresh returns instantly and looks exactly like
 /// a bad init sequence. Costs ~240 bytes, so it stays out of a shipping image.
 // #define EPD_PANEL_PROBE 1
+
+/// Where the SDK's bond database lives in the boot flash.
+///
+/// This has to be set because SUOTA needs CFG_SPI_FLASH_ENABLE, and that macro
+/// does double duty in the SDK: as well as pointing the SUOTA receiver at the
+/// SPI flash, it is the only thing selecting where app_bond_db keeps its data
+/// (app_bond_db.h). Its default is 0x1E000, and app_bond_db_store() **erases
+/// the whole 4 KiB sector** around that address before writing.
+///
+/// 0x1E000 is inside an image bank on every layout we have measured:
+///
+///   Type 1     bank 1 0x002000..0x014000, bank 2 0x014000..0x038000
+///              -> 0x1E000 lands inside the stock image in bank 2, which is
+///                 the fallback a failed update relies on
+///   Type 2/3/4 bank 1 0x004000..0x01F000, bank 2 0x01F000..0x038000
+///              -> 0x1E000 lands in bank 1, past a 35 KB image today but
+///                 inside the region a larger one would occupy
+///
+/// The database is inert in the current build only because CFG_SPI_FLASH_ENABLE
+/// is undefined, so neither of app_bond_db's storage branches is selected.
+/// Turning SUOTA on activates it, and app_bond_db is reached from
+/// default_app_on_pairing_request - so any peer that asks to pair can trigger
+/// that erase. Nothing in this firmware pairs deliberately, which is exactly
+/// what would make it hard to find.
+///
+/// 0x040000 is the free upper half of the 512 KiB part, above the template
+/// store at 0x03F000 and above everything the bootloader reads. On a 256 KiB
+/// part it would be out of range and bonds simply would not persist, which is
+/// the right way for this to fail.
+#define USER_CFG_BOND_DB_DATA_OFFSET    (0x040000)
+
+/// Advertised device name, and a template rather than the final string.
+///
+/// The last six characters are replaced at boot with the low three bytes of the
+/// tag's own BD address, so a scanner listing several tags shows which is which:
+///
+///     T4BL-682F8D
+///     ^^ ^^ ^^^^^^ the end of the MAC, as a scanner prints it
+///     |  |+------- panel resolution, H or L, for reading at a glance
+///     |  +-------- board variant, which is the wiring
+///     +----------- tag type
+///
+/// No vendor name in it. These tags were decommissioned and run nothing of the
+/// vendor's any more, so carrying "HemaEPD" said something untrue about them and
+/// spent seven of the advertisement's bytes doing it. **Nothing matches on this
+/// name** - clients find a tag by the service UUIDs in USER_ADVERTISE_DATA above,
+/// which is a contract that does not break the next time the name changes. It has
+/// changed twice.
+///
+/// Written as a placeholder of exactly the final length, and filled in rather
+/// than rebuilt, because USER_DEVICE_NAME_LEN is a compile-time constant that
+/// the SDK uses for real work: it sizes the name's slot in the advertising data
+/// (app.c) and is asserted against BD_NAME_SIZE on every name read (app_task.c).
+/// A runtime string of a different length would put those two out of step with
+/// what is actually advertised.
+///
+/// Filled in by user_dev_name_init() in user_empty_peripheral_template.c, which
+/// also explains why the patching has to happen on every advertising restart.
+#define USER_DEVICE_NAME        HEMA_COMPAT_TAGID HEMA_COMPAT_RES "-000000"
 
 /// Device name length
 #define USER_DEVICE_NAME_LEN    (sizeof(USER_DEVICE_NAME)-1)

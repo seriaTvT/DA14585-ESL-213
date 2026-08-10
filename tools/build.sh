@@ -37,6 +37,11 @@
 #   --partial        repaint only changed rows with the partial waveform. Costs
 #                    EPD_BUF_SIZE of RAM and has two unmeasured values in it;
 #                    see EPD_PARTIAL in src/epd/epd_ssd1680.h before trusting it.
+#   --suota          put the SUOTA service in the GATT database, so the firmware
+#                    can be updated over BLE instead of over SWD. Off by default
+#                    because nothing over the air yet refuses an image built for
+#                    another tag type, the way flash.sh does - see CFG_PRF_SUOTAR
+#                    in src/config/user_profiles_config.h.
 #
 # A tag type used to be two macros - the board variant and the panel size -
 # edited by hand in src/config/user_config.h, and kept consistent with the
@@ -83,6 +88,7 @@ also_alt=0
 sweep=0
 panel_id=0
 partial=0
+suota=0
 lut_probe=0
 lut_steps=
 lut_gain=1
@@ -101,6 +107,7 @@ while [ $# -gt 0 ]; do
         --sweep)   sweep=1; shift ;;
         --panel-id) panel_id=1; shift ;;
         --partial) partial=1; shift ;;
+        --suota)   suota=1; shift ;;
         --lut-probe) lut_probe=1; shift ;;
         --lut-steps)   lut_steps=${2:-}; shift 2 ;;
         --lut-steps=*) lut_steps=${1#*=}; shift ;;
@@ -265,6 +272,10 @@ build_one() {
         fi
         defs="$defs -DEPD_PARTIAL=1"
         suffix="$suffix-partial"
+    fi
+    if [ "$suota" = 1 ]; then
+        defs="$defs -DEPD_SUOTA=1"
+        suffix="$suffix-suota"
     fi
     if [ "$lut_gain" != 1 ]; then
         # The gain scales the hand-written table, which only exists on the

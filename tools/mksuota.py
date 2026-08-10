@@ -33,6 +33,21 @@ to an image it already boots.
 
 Usage:  mksuota.py <stock_flash_dump.bin> <firmware.bin> <out.bin> [bank]
         bank defaults to 1.
+
+        mksuota.py --ota <stock_flash_dump.bin> <firmware.bin> <out.img>
+
+--ota writes just the bank contents - the 64-byte image header followed by the
+payload - instead of a whole flash image. That is exactly what a SUOTA client
+sends over the air: the receiver takes the header from the first block, sizes
+the transfer from its code_size, and writes header and payload into whichever
+bank it picked. So the two outputs are the same bytes for the same firmware,
+and the difference is only whether they arrive over SWD or over BLE.
+
+The header is built the same way for both, which is the point of doing it here
+rather than in the client: `imageid` is the one field the receiver overwrites
+(it assigns its own), and everything else - including the `encryption` and
+`reserved` fields nobody has decoded - stays copied from a stock header the
+bootloader already accepts.
 """
 import struct
 import sys
@@ -66,23 +81,103 @@ def find_product_header(flash: bytes) -> tuple:
     raise ValueError("no product header found - is this a full flash dump?")
 
 
+# Offsets into the 64-byte image header. From s_imageHeader in the SDK's
+# utilities/secondary_bootloader/includes/bootloader.h, which is the definition
+# the *bootloader* uses and therefore the one that matters:
+#
+#   0  signature[2]   2  validflag   3  imageid   4  code_size
+#   8  CRC           12  version[16]            28  timestamp
+#  32  encryption    33  reserved[31]
+#
+# Counted out here rather than left implicit because getting them wrong is not
+# a visible failure. Writing the timestamp at 32 instead of 28 lands on
+# `encryption`, and the bootloader rejects a non-zero encryption *before* it
+# checks the CRC - so the image verifies perfectly against this tool, boots
+# nothing, and the tag silently falls back to the other bank. Done exactly that.
+VERSION_OFF = 12
+VERSION_LEN = 16        # IMAGE_HEADER_VERSION_SIZE
+TIMESTAMP_OFF = 28
+ENCRYPTION_OFF = 32
+COMPAT_PREFIX = b'HEMA-COMPAT-'
+
+
+def compat_of(payload: bytes) -> bytes:
+    """The build's own compatibility identity, read out of the binary.
+
+    Read from the image rather than taken as an argument for the same reason
+    tools/flash.sh reads its stamps there: the binary is the only thing that
+    knows what it was built for, and anything typed alongside it can be wrong.
+    See HEMA_COMPAT_STR in src/config/tag_types.h.
+    """
+    at = payload.find(COMPAT_PREFIX)
+    if at < 0:
+        return b''
+    end = payload.index(b'\0', at)
+    s = payload[at + len(COMPAT_PREFIX):end]
+    if len(s) > VERSION_LEN:
+        raise ValueError(f"compatibility string {s!r} is {len(s)} bytes; the "
+                         f"image header field holds {VERSION_LEN}")
+    return s
+
+
 def build_header(stock_hdr: bytes, payload: bytes, imageid: int) -> bytes:
     h = bytearray(stock_hdr)
     h[0:2] = IMG_SIG
     h[2] = VALID
     h[3] = imageid
+    crc = zlib.crc32(payload) & 0xFFFFFFFF
     struct.pack_into('<I', h, 4, len(payload))
-    struct.pack_into('<I', h, 8, zlib.crc32(payload) & 0xFFFFFFFF)
+    struct.pack_into('<I', h, 8, crc)
+
+    # version[16] and timestamp are together what the SUOTA receiver compares
+    # against the image already in the bank it is about to write
+    # (app_read_image_headers: equal version AND equal timestamp is
+    # IMAGE_HEADER_SAME_VERSION, which it refuses as SUOTAR_SAME_IMG_ERR). The
+    # stock images leave both all-zero, so before this every image looked
+    # identical to every other and the receiver refused every update. They are
+    # not decoration.
+    #
+    # The two carry different questions on purpose:
+    #   version   - what this image is FOR. Two builds sharing it are
+    #               interchangeable as far as the panel is concerned.
+    #   timestamp - which build it IS. crc32 of the payload, so it is derived
+    #               from the content rather than the clock: builds stay
+    #               reproducible, and re-pushing a byte-identical image is
+    #               correctly refused while a rebuild with real changes is not.
+    compat = compat_of(payload)
+    h[VERSION_OFF:VERSION_OFF + VERSION_LEN] = compat.ljust(VERSION_LEN, b'\0')
+    struct.pack_into('<I', h, TIMESTAMP_OFF, crc)
+
+    # The bootloader refuses an image whose `encryption` byte is set, and it
+    # refuses it *before* the CRC check, so nothing downstream of here would
+    # notice: the image passes every check this tool makes and the tag quietly
+    # boots the other bank instead. Since the fields either side of it are the
+    # two written just above, assert rather than trust the arithmetic.
+    if h[ENCRYPTION_OFF] != stock_hdr[ENCRYPTION_OFF]:
+        raise ValueError(
+            f"header build disturbed the encryption byte at offset "
+            f"{ENCRYPTION_OFF} (0x{stock_hdr[ENCRYPTION_OFF]:02X} -> "
+            f"0x{h[ENCRYPTION_OFF]:02X}). The bootloader would reject this "
+            f"image and fall back to the other bank, silently. Check "
+            f"VERSION_OFF/TIMESTAMP_OFF against s_imageHeader.")
+    if len(h) != HDR_LEN:
+        raise ValueError(f"header is {len(h)} bytes, not {HDR_LEN}")
     return bytes(h)
 
 
 def main() -> int:
-    if len(sys.argv) not in (4, 5):
+    args = sys.argv[1:]
+    ota = False
+    if args and args[0] == '--ota':
+        ota = True
+        args = args[1:]
+    if len(args) not in (3, 4) or (ota and len(args) != 3):
         print(__doc__)
         return 2
-    flash = bytearray(open(sys.argv[1], 'rb').read())
-    payload = open(sys.argv[2], 'rb').read()
-    bank = int(sys.argv[4]) if len(sys.argv) == 5 else 1
+    flash = bytearray(open(args[0], 'rb').read())
+    payload = open(args[1], 'rb').read()
+    out_path = args[2]
+    bank = int(args[3]) if len(args) == 4 else 1
 
     ph, b1, b2 = find_product_header(flash)
     target, other = (b1, b2) if bank == 1 else (b2, b1)
@@ -103,6 +198,28 @@ def main() -> int:
         imageid = 1
 
     hdr = build_header(bytes(flash[target:target + HDR_LEN]), payload, imageid)
+
+    compat = compat_of(payload)
+    if not compat:
+        print("WARNING: no HEMA-COMPAT- stamp in this firmware, so the image "
+              "header carries\n         no identity. A client cannot tell "
+              "which tag it suits, and the\n         receiver will refuse it "
+              "as a duplicate of anything else unstamped.\n"
+              "         Rebuild with tools/build.sh.")
+    else:
+        print(f"compatibility: {compat.decode()}")
+
+    if ota:
+        # No padding: the receiver reads code_size out of the header and stops
+        # there, and every byte sent is a byte over the air.
+        open(out_path, 'wb').write(hdr + payload)
+        print(f"{out_path}: {HDR_LEN + len(payload)} bytes "
+              f"({HDR_LEN} header + {len(payload)} payload), "
+              f"crc=0x{zlib.crc32(payload) & 0xFFFFFFFF:08x}")
+        print("  imageid is a placeholder - the receiver assigns its own, and "
+              "picks the bank\n  itself, so this image is not tied to either.")
+        return 0
+
     flash[target:limit] = (hdr + payload).ljust(limit - target, b'\xFF')
 
     # Blank the sector epd_store.c persists the display template into, so a
@@ -113,11 +230,11 @@ def main() -> int:
     flash[STORE_ADDR:STORE_ADDR + STORE_SECTOR] = b'\xFF' * STORE_SECTOR
     print(f"store sector @ 0x{STORE_ADDR:06x}: blanked ({STORE_SECTOR} bytes)")
 
-    open(sys.argv[3], 'wb').write(flash)
+    open(out_path, 'wb').write(flash)
     print(f"bank {bank} @ 0x{target:06x}: {len(payload)} bytes, "
           f"imageid={imageid} (other bank has {other_id}), "
           f"crc=0x{zlib.crc32(payload) & 0xFFFFFFFF:08x}")
-    print(f"{sys.argv[3]}: {len(flash)} bytes")
+    print(f"{out_path}: {len(flash)} bytes")
     return 0
 
 

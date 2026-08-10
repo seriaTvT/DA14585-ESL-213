@@ -106,7 +106,23 @@
 /* SPI FLASH  (#define CFG_SPI_FLASH_ENABLE)                                                                    */
 /* I2C EEPROM (#define CFG_I2C_EEPROM_ENABLE)                                                                   */
 /****************************************************************************************************************/
+/* SUOTA writes the new image to the boot flash, and this macro is how the SDK
+ * is told which memory the receiver drives: app_suotar.h turns it into
+ * SUOTAR_SPI_DISABLE 0, SUOTAR_I2C_DISABLE 1 and SUOTAR_SPI_DELATE_SECTOR_ERASE
+ * 1, which are the three values we want. Without it the receiver compiles with
+ * both memories disabled and refuses every block.
+ *
+ * It has a second, non-obvious effect: it is also what selects SPI flash for the
+ * SDK's bond database, whose default offset lands inside an image bank. See
+ * USER_CFG_BOND_DB_DATA_OFFSET in user_config.h, which is set because of this.
+ *
+ * The store shares this flash too (platform/epd_store.c), which is why a SUOTA
+ * session takes the bus for its whole duration rather than per block. */
+#if defined(EPD_SUOTA) && (EPD_SUOTA)
+#define CFG_SPI_FLASH_ENABLE
+#else
 #undef CFG_SPI_FLASH_ENABLE
+#endif
 #undef CFG_I2C_EEPROM_ENABLE
 
 /****************************************************************************************************************/

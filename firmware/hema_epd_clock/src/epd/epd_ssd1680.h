@@ -655,6 +655,27 @@
     #endif
 #endif
 
+/* HEMA_COMPAT_STR, the SUOTA compatibility identity, is built in
+ * config/tag_types.h rather than here - it has to be visible to
+ * config/user_profiles_config.h, which is processed long before this header
+ * and cannot include it.
+ *
+ * The cost of living there is that it restates the geometry and the default
+ * LUT step count instead of deriving them from EPD_WIDTH/EPD_HEIGHT/
+ * EPD_LUT_STEPS. This is where that is checked. A mismatch would be silent and
+ * expensive: the identity is what a client uses to decide an image is safe to
+ * push, so an identity that disagrees with the build would licence exactly the
+ * transfer it exists to prevent.
+ *
+ * Spelled as a negative array size rather than _Static_assert because this
+ * header is also compiled by the host tests at -std=c99. */
+typedef char epd_compat_geometry_agrees[
+    (HEMA_COMPAT_W == EPD_WIDTH && HEMA_COMPAT_H == EPD_HEIGHT) ? 1 : -1];
+#if !EPD_INIT_FROM_OTP
+typedef char epd_compat_lut_steps_agree[
+    (HEMA_COMPAT_STEPS == EPD_LUT_STEPS) ? 1 : -1];
+#endif
+
 /* ------------------------------------------------------------------------
  * API
  * ---------------------------------------------------------------------- */
@@ -864,8 +885,17 @@ epd_paint_t epd_display_start(const uint8_t *framebuffer);
 #if EPD_PARTIAL
 /** Forget what the panel is believed to hold, forcing the next refresh to be a
  *  full one. Called for you by epd_init() and epd_sleep(); exposed because a
- *  caller that has reason to doubt the glass should be able to say so. */
+ *  caller that has reason to doubt the glass should be able to say so.
+ *
+ *  Declared only on the partial path, because that is the only build that has
+ *  a belief to discard - there is no shadow without EPD_PARTIAL and every
+ *  refresh is already full. The declaration used to be unconditional, which
+ *  turned calling it from unguarded code into a link error naming a function
+ *  this header appears to promise; guarded, it is a compile error at the call
+ *  site instead. */
+#if EPD_PARTIAL
 void epd_display_forget(void);
+#endif
 
 /** Partials since the last full refresh, and what the last paint did. For SWD
  *  and for the render report - a tag that has quietly stopped doing partials is

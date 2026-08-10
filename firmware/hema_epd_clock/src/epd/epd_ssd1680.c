@@ -71,6 +71,27 @@ const char hema_tag_type_tag[] = HEMA_TAG_TYPE_TAG;
 __attribute__((used))
 const char hema_waveform_tag[] = HEMA_WAVEFORM_TAG;
 
+/* Whether this image can itself be updated over the air. Present only when it
+ * can, so its absence is the signal.
+ *
+ * Not part of HEMA_COMPAT_STR, because SUOTA is not a panel-compatibility axis -
+ * an image without it drives the panel exactly as well. But pushing one over the
+ * air is a one-way door: the tag that receives it has no SUOTA service
+ * afterwards and needs SWD for every update from then on, which on a fleet means
+ * opening the case. A client can see this stamp and say so before it happens. */
+#if defined(EPD_SUOTA) && (EPD_SUOTA)
+__attribute__((used))
+const char hema_suota_tag[] = "HEMA-SUOTA-1";
+#endif
+
+/* And the sixteen-byte compatibility identity, for the over-the-air path.
+ * tools/mksuota.py greps this one and copies what follows the prefix into the
+ * SUOTA image header's version field; the same string without the prefix is
+ * what the tag reports over BLE, so a client can compare the two before it
+ * spends four minutes transferring an image the panel cannot use. */
+__attribute__((used))
+const char hema_compat_tag[] = HEMA_COMPAT_TAG;
+
 /* Pixel polarity, CONFIRMED ON HARDWARE (2026-07-25).
  *
  * Our framebuffer uses 1 = white / 0 = black (matching the vendor's drawing
