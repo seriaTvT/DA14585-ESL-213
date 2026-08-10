@@ -668,13 +668,21 @@
  * transfer it exists to prevent.
  *
  * Spelled as a negative array size rather than _Static_assert because this
- * header is also compiled by the host tests at -std=c99. */
+ * header is also compiled by the host tests at -std=c99.
+ *
+ * Guarded on HEMA_COMPAT_W for the same reason HEMA_TAG_TYPE_TAG above has a
+ * fallback: the host tests compile this header without config/tag_types.h, so
+ * there is no identity to check against and an unguarded reference is simply
+ * an undefined identifier. A firmware build always has it, which is the build
+ * where a mismatch could reach a tag. */
+#if defined(HEMA_COMPAT_W)
 typedef char epd_compat_geometry_agrees[
     (HEMA_COMPAT_W == EPD_WIDTH && HEMA_COMPAT_H == EPD_HEIGHT) ? 1 : -1];
 #if !EPD_INIT_FROM_OTP
 typedef char epd_compat_lut_steps_agree[
     (HEMA_COMPAT_STEPS == EPD_LUT_STEPS) ? 1 : -1];
 #endif
+#endif /* HEMA_COMPAT_W */
 
 /* ------------------------------------------------------------------------
  * API
