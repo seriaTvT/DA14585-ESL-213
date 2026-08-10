@@ -170,6 +170,68 @@ const HIGH = {
     "TEXT(10,102,'WEEK {V:02d} OF {G}')\n" +
     "TEXT(235,102,'DAY {j:03d}/{J}',align=2)\n",
 
+  /* ---- the localised pair -------------------------------------------------
+   * Calendar's skeleton - header, rule, big clock, two footer corners - with
+   * the header in the local language and the footer carrying the readings the
+   * tag can take of itself. The two differ only by LOCALE(), which is the
+   * point: the layout is the same because the metrics are.
+   *
+   * The header is font=2, where ASCII is 8 px and CJK 16, so
+   * "2026年8月10日 星期日" measures 36+17+9+17+18+17+9+51-1 = 173 px from x=8.
+   * That is why the weekday sits on the header line here and gets its own
+   * right-aligned slot on the narrower panel below.
+   *
+   * {T} and {VCC} render as their own names until the tag has taken a reading,
+   * so on a preview with the fields blank this face says "{T}°C" rather than
+   * a confident zero - see the note on epd_cmd_set_batt(). */
+  'Calendar 中文':
+    'ROTATE(270)\n' +
+    'CLEAR(1)\n' +
+    'LOCALE(zh)\n' +
+    "TEXT(8,8,'{y}年{m}月{d}日 {W}',font=2)\n" +
+    'LINE(8,30,239,30)\n' +
+    `TEXT(${MID},38,'{H:02d}:{N:02d}',font=1,scale=2,align=1)\n` +
+    "TEXT(10,102,'{T}°C')\n" +
+    "TEXT(235,102,'{VCC}mV',align=2)\n",
+
+  'Calendar 日本語':
+    'ROTATE(270)\n' +
+    'CLEAR(1)\n' +
+    'LOCALE(ja)\n' +
+    "TEXT(8,8,'{y}年{m}月{d}日 {W}',font=2)\n" +
+    'LINE(8,30,239,30)\n' +
+    `TEXT(${MID},38,'{H:02d}:{N:02d}',font=1,scale=2,align=1)\n` +
+    "TEXT(10,102,'{T}°C')\n" +
+    "TEXT(235,102,'{VCC}mV',align=2)\n",
+
+  /* ---- status --------------------------------------------------------------
+   * The face to leave on a tag while watching a cell drain.
+   *
+   * The bar is drawn from {BAT} directly, which is why the variable is a
+   * percentage and not a voltage: 0-100 maps onto pixels with one multiply.
+   * {BAT}*229/100 multiplies before dividing for the same reason Month
+   * progress does - integer arithmetic would otherwise collapse the fraction
+   * and the bar would jump in steps rather than creep.
+   *
+   * Inside the frame by 2 px on each side, so a full bar reads as full without
+   * touching the border: the frame spans 8..241 and the fill 10..239.
+   *
+   * With no reading {BAT} is 0 in an expression, so the bar is empty rather
+   * than wrong - while the text above it still says "{BAT}%", which is what
+   * tells you the difference between a flat cell and a build that takes no
+   * reading. */
+  'Status':
+    'ROTATE(270)\n' +
+    'CLEAR(1)\n' +
+    "TEXT(8,8,'BATTERY',scale=2)\n" +
+    "TEXT(242,8,'{BAT}%',scale=2,align=2)\n" +
+    'RECT(8,30,241,50,width=2)\n' +
+    'RECT(10,32,10+{BAT}*229/100,48,fill=1)\n' +
+    "TEXT(8,62,'{VCC} mV',scale=2)\n" +
+    "TEXT(242,62,'{T}°C',scale=2,align=2)\n" +
+    'LINE(8,86,241,86)\n' +
+    `TEXT(${MID},94,'{H:02d}:{N:02d}  {y}-{m:02d}-{d:02d}',scale=2,align=1)\n`,
+
   /* Draws itself rather than just labelling itself: the fill is an expression
    * over {d} and {D}, so it grows across the month and resets on the 1st.
    *
@@ -231,10 +293,14 @@ const HIGH = {
    * degrees Celsius), so this face makes that the headline and keeps the clock
    * underneath it.
    *
-   * The glyph is drawn rather than typed: the fonts are uppercase ASCII and
-   * have no degree sign, let alone a thermometer. A filled bulb, an outlined
-   * stem with a filled column inside it, and three ticks read as one at a
-   * glance and cost five commands.
+   * The thermometer itself is drawn rather than typed - no font here has one -
+   * as a filled bulb, an outlined stem with a filled column inside it, and
+   * three ticks: one shape at a glance, five commands.
+   *
+   * The degree sign is typed, though. It used to be drawn too, back when the
+   * 5x7 table was uppercase ASCII and had no such glyph; it is U+00B0 now and
+   * arrives as two UTF-8 bytes. "25°C" at scale 4 is 92 px against the 68 px
+   * that "25C" measured, which the centred layout absorbs.
    *
    * {T} renders literally as "{T}" on a build with no temperature reading -
    * see EPD_TEMP_READ - which is deliberate: it says "this tag cannot measure
@@ -248,7 +314,7 @@ const HIGH = {
     'LINE(44,40,56,40,color=0,width=2)\n' +
     'LINE(44,58,56,58,color=0,width=2)\n' +
     'LINE(44,76,56,76,color=0,width=2)\n' +
-    "TEXT(165,22,'{T}C',scale=4,align=1)\n" +
+    "TEXT(165,22,'{T}°C',scale=4,align=1)\n" +
     "TEXT(165,62,'{H:02d}:{N:02d}',scale=3,align=1)\n" +
     "TEXT(165,95,'{y}-{m:02d}-{d:02d}',scale=2,align=1)\n",
 
@@ -338,6 +404,51 @@ const LOW = {
     "TEXT(8,88,'WEEK {V:02d} OF {G}')\n" +
     "TEXT(203,88,'DAY {j:03d}/{J}',align=2)\n",
 
+  /* The same three faces re-fitted, not rescaled. The 212 px frame cannot hold
+   * the date and the weekday on one header line - "2026年8月10日 星期日" is
+   * 173 px and would leave 30 px of margin for both ends - so the weekday
+   * takes the right-hand slot, the way this panel's Calendar already splits
+   * its header. The date measures 113 px from x=8 and the weekday 50 px back
+   * from 203, so they meet no closer than 121 against 153. */
+  'Calendar 中文':
+    'ROTATE(270)\n' +
+    'CLEAR(1)\n' +
+    'LOCALE(zh)\n' +
+    "TEXT(8,6,'{y}年{m}月{d}日',font=2)\n" +
+    "TEXT(203,6,'{W}',font=2,align=2)\n" +
+    'LINE(8,26,203,26)\n' +
+    `TEXT(${MID_LOW},32,'{H:02d}:{N:02d}',font=1,scale=2,align=1)\n` +
+    "TEXT(8,88,'{T}°C')\n" +
+    "TEXT(203,88,'{VCC}mV',align=2)\n",
+
+  'Calendar 日本語':
+    'ROTATE(270)\n' +
+    'CLEAR(1)\n' +
+    'LOCALE(ja)\n' +
+    "TEXT(8,6,'{y}年{m}月{d}日',font=2)\n" +
+    "TEXT(203,6,'{W}',font=2,align=2)\n" +
+    'LINE(8,26,203,26)\n' +
+    `TEXT(${MID_LOW},32,'{H:02d}:{N:02d}',font=1,scale=2,align=1)\n` +
+    "TEXT(8,88,'{T}°C')\n" +
+    "TEXT(203,88,'{VCC}mV',align=2)\n",
+
+  /* Status, re-fitted: the bar frame spans 8..203 and the fill 10..201, so the
+   * multiplier is 191 rather than the high-res 229. The date drops to its own
+   * line at scale 1 - at scale 2 the clock and the date together are 202 px
+   * against a 212 px frame, which fits but leaves nothing either side. */
+  'Status':
+    'ROTATE(270)\n' +
+    'CLEAR(1)\n' +
+    "TEXT(8,6,'BATTERY')\n" +
+    "TEXT(203,6,'{BAT}%',align=2)\n" +
+    'RECT(8,18,203,34,width=2)\n' +
+    'RECT(10,20,10+{BAT}*191/100,32,fill=1)\n' +
+    "TEXT(8,44,'{VCC} mV',scale=2)\n" +
+    "TEXT(203,44,'{T}°C',scale=2,align=2)\n" +
+    'LINE(8,66,203,66)\n' +
+    `TEXT(${MID_LOW},74,'{H:02d}:{N:02d}',scale=2,align=1)\n` +
+    `TEXT(${MID_LOW},92,'{y}-{m:02d}-{d:02d}',align=1)\n`,
+
   /* Same idea as the high-res bar, re-fitted: the frame is x 4..207 - a 4 px
    * margin against a last column of 211 - so the fill spans 203 px and the
    * multiply still comes before the divide, or integer arithmetic would
@@ -385,7 +496,7 @@ const LOW = {
     'RECT(23,48,29,78,color=0,fill=1)\n' +
     'LINE(36,34,46,34,color=0,width=2)\n' +
     'LINE(36,50,46,50,color=0,width=2)\n' +
-    "TEXT(135,18,'{T}C',scale=3,align=1)\n" +
+    "TEXT(135,18,'{T}°C',scale=3,align=1)\n" +
     "TEXT(135,48,'{H:02d}:{N:02d}',scale=3,align=1)\n" +
     "TEXT(135,80,'{y}-{m:02d}-{d:02d}',scale=2,align=1)\n",
 
