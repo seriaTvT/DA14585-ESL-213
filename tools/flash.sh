@@ -149,6 +149,10 @@ built_type=$(stamp 'HEMA-TAG-TYPE-[0-9]\+');      built_type=${built_type##*-}
 built_var=$(stamp 'HEMA-BOARD-VARIANT-[AB]');     built_var=${built_var##*-}
 built_panel=$(stamp 'HEMA-PANEL-[0-9x]\+');       built_panel=${built_panel#HEMA-PANEL-}
 built_wave=$(stamp 'HEMA-WAVEFORM-[A-Z]\+');      built_wave=${built_wave#HEMA-WAVEFORM-}
+# Present only in an image that carries the SUOTA service - see HEMA-SUOTA-1 in
+# src/epd/epd_ssd1680.c. Absence is the signal, so this is a test for "", not a
+# value to compare.
+built_suota=$(stamp 'HEMA-SUOTA-[0-9]\+')
 
 # Type 0 is what an image built outside the normal path is stamped with - see
 # HEMA_TAG_TYPE_TAG in epd_ssd1680.h. It is not a tag, so treat it as unstamped
@@ -197,6 +201,17 @@ if [ -n "$TYPE" ]; then
             echo "  note: the fast waveform. If the panel goes dead but its"
             echo "        border still flickers, this is why - reflash the"
             echo "        plain type $TYPE image."
+        fi
+        # Said out loud because the filename no longer settles it: SUOTA became
+        # the default, so an image built before that has none and is named the
+        # same. And this is a one-way door - a tag running an image without SUOTA
+        # can only be updated by coming back with the J-Link.
+        if [ -n "$built_suota" ]; then
+            echo "  SUOTA: yes - this tag will be updatable over the air."
+        else
+            echo "  SUOTA: NO. This tag will only be updatable over SWD, and"
+            echo "         putting SUOTA back means flashing it here again."
+            echo "         Rebuild without --no-suota if that is not intended."
         fi
     fi
     VARIANT=${built_var:-$VARIANT}

@@ -37,11 +37,12 @@
 #   --partial        repaint only changed rows with the partial waveform. Costs
 #                    EPD_BUF_SIZE of RAM and has two unmeasured values in it;
 #                    see EPD_PARTIAL in src/epd/epd_ssd1680.h before trusting it.
-#   --suota          put the SUOTA service in the GATT database, so the firmware
-#                    can be updated over BLE instead of over SWD. Off by default
-#                    because nothing over the air yet refuses an image built for
-#                    another tag type, the way flash.sh does - see CFG_PRF_SUOTAR
-#                    in src/config/user_profiles_config.h.
+#   --no-suota       leave the SUOTA service out. On by default, so the tag can
+#                    be updated over BLE rather than over SWD; this is how you
+#                    opt out, and the image is named -nosuota so the choice is
+#                    visible on disk. Think before using it: a tag running an
+#                    image without SUOTA can only be updated by attaching SWD to
+#                    it again.
 #
 # A tag type used to be two macros - the board variant and the panel size -
 # edited by hand in src/config/user_config.h, and kept consistent with the
@@ -88,7 +89,7 @@ also_alt=0
 sweep=0
 panel_id=0
 partial=0
-suota=0
+suota=1
 lut_probe=0
 lut_steps=
 lut_gain=1
@@ -107,7 +108,8 @@ while [ $# -gt 0 ]; do
         --sweep)   sweep=1; shift ;;
         --panel-id) panel_id=1; shift ;;
         --partial) partial=1; shift ;;
-        --suota)   suota=1; shift ;;
+        --suota)   suota=1; shift ;;            # the default; kept explicit
+        --no-suota) suota=0; shift ;;
         --lut-probe) lut_probe=1; shift ;;
         --lut-steps)   lut_steps=${2:-}; shift 2 ;;
         --lut-steps=*) lut_steps=${1#*=}; shift ;;
@@ -273,9 +275,22 @@ build_one() {
         defs="$defs -DEPD_PARTIAL=1"
         suffix="$suffix-partial"
     fi
+    # SUOTA is ON by default, and --no-suota is the flag that gets a suffix.
+    #
+    # It was the other way round for exactly one afternoon, and that was wrong:
+    # `--all` then built twenty images, none of which could ever be updated over
+    # the air. Flashing one is a one-way door - the tag has no SUOTA service
+    # afterwards, so the only way to put SUOTA back is SWD, on a bench, per tag -
+    # and the whole reason this feature exists is that there is one J-Link and
+    # many tags. A default whose cost is "you must physically revisit every tag
+    # you used it on" is not a safe default.
+    #
+    # It costs +4.9 KB of flash and +548 bytes of RAM. The image is ~41 KB and the
+    # smallest bank on any tag is 73664 bytes, so there is no pressure here.
     if [ "$suota" = 1 ]; then
         defs="$defs -DEPD_SUOTA=1"
-        suffix="$suffix-suota"
+    else
+        suffix="$suffix-nosuota"
     fi
     if [ "$lut_gain" != 1 ]; then
         # The gain scales the hand-written table, which only exists on the

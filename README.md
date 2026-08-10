@@ -55,7 +55,7 @@ which is what makes it a clock rather than a picture.
 - **Reports what it made of a script** over a status characteristic, so a typo is
   visible without a debugger.
 - **Reads the panel's own temperature sensor** and renders it as `{T}`.
-- **Updates its own firmware over BLE** (`--suota`): 40 KB in ~35 s, into whichever
+- **Updates its own firmware over BLE**: 40 KB in ~35 s, into whichever
   image bank is not running, so a failed update leaves the tag booting what it was
   already running. See [firmware update over BLE](#firmware-update-over-ble).
 
@@ -291,15 +291,17 @@ freshly flashed tag misbehaves, suspect the flash before the firmware.
 
 ### Firmware update over BLE
 
-Built with `--suota`, the tag carries the standard SUOTA service and can be
-updated over the air — worth having as soon as there are more tags than J-Links.
+Every build carries the standard SUOTA service unless you pass `--no-suota`, so a
+tag can be updated over the air — which is what you want as soon as there are more
+tags than J-Links. Note that an image built *without* it can only be replaced by
+attaching SWD to that tag again, so `--no-suota` is a one-way door.
 
 ```sh
-tools/build.sh --type 4 --lut-steps 10 --partial --suota
+tools/build.sh --type 4 --lut-steps 10 --partial
 tools/mksuota.py --ota <stock_dump.bin> out/hema_epd_clock-type4-s10-partial-suota.bin t4.img
 ```
 
-Then push it with any SUOTA client — a `--suota` build advertises SUOTA's
+Then push it with any SUOTA client — the tag advertises SUOTA's
 `0xFEF5`, which is what standard clients scan for. Measured on a Type 4 tag:
 **40 KB in ~35 s**, three consecutive updates, each rebooting into the image it
 received. A client will ask for the flash wiring: MISO `P0_5`, MOSI `P0_6`, CS
@@ -448,7 +450,7 @@ Limits: a line is at most **128 bytes**, a script **3072 bytes**.
 ## The BLE interface
 
 **Discover by service UUID, not by name.** The advertisement carries the command
-service below (and SUOTA's `0xFEF5` when built with `--suota`), which is what
+service below, and SUOTA's `0xFEF5` unless built `--no-suota`, which is what
 identifies a tag running this firmware. The name is for whoever is choosing
 between tags and carries no guarantee: it has changed twice, and each time it
 broke every client that matched on it.

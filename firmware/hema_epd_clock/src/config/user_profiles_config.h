@@ -58,7 +58,8 @@
 #define CFG_PRF_DISS
 #define CFG_PRF_CUST1
 
-/* SUOTA - firmware update over BLE. Off unless tools/build.sh --suota.
+/* SUOTA - firmware update over BLE. ON by default; tools/build.sh --no-suota
+ * leaves it out.
  *
  * This is the switch that puts the service in the GATT database; rwprf_config.h
  * turns CFG_PRF_SUOTAR into BLE_SUOTA_RECEIVER, which is what the rest of the
@@ -68,8 +69,17 @@
  * image we already build for the SWD path is the image SUOTA expects. See
  * hema-local/docs/SUOTA_PLAN.md.
  *
- * Kept behind a build flag rather than always on, because it puts a writable
- * path to the boot flash on the air. Two things about that are worth stating:
+ * Behind a build flag at all - rather than unconditional - because it puts a
+ * writable path to the boot flash on the air, and anyone in BLE range can use it.
+ * That is a real consideration for a shelf label, though a modest one next to
+ * what this firmware already accepts unauthenticated over the same radio: any
+ * peer can already replace the displayed face or push an arbitrary image.
+ *
+ * It defaults ON because the alternative default is worse. An image without the
+ * service can only be replaced by attaching SWD to that tag, so choosing it by
+ * omission means physically revisiting every tag it was flashed to - and the
+ * whole reason this exists is one J-Link and many tags. Two things about the
+ * arrangement are worth stating:
  *
  *  - the bank a transfer targets is provably recoverable. A failed transfer
  *    leaves it invalid and the tag boots the other one - measured on this
