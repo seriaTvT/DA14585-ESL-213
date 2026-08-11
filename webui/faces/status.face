@@ -1,0 +1,49 @@
+# name: Status
+# category: Sensors
+# order: 130
+#
+# ---- status --------------------------------------------------------------
+# The face to leave on a tag while watching a cell drain.
+#
+# The bar is drawn from {BAT} directly, which is why the variable is a
+# percentage and not a voltage: 0-100 maps onto pixels with one multiply.
+# {BAT}*229/100 multiplies before dividing for the same reason Month
+# progress does - integer arithmetic would otherwise collapse the fraction
+# and the bar would jump in steps rather than creep.
+#
+# Inside the frame by 2 px on each side, so a full bar reads as full without
+# touching the border: the frame spans 8..241 and the fill 10..239.
+#
+# With no reading {BAT} is 0 in an expression, so the bar is empty rather
+# than wrong - while the text above it still says "{BAT}%", which is what
+# tells you the difference between a flat cell and a build that takes no
+# reading.
+
+# --- panel: high
+ROTATE(270)
+CLEAR(1)
+TEXT(8,8,'BATTERY',scale=2)
+TEXT(242,8,'{BAT}%',scale=2,align=2)
+RECT(8,30,241,50,width=2)
+RECT(10,32,10+{BAT}*229/100,48,fill=1)
+TEXT(8,62,'{VCC} mV',scale=2)
+TEXT(242,62,'{T}°C',scale=2,align=2)
+LINE(8,86,241,86)
+TEXT(125,94,'{H:02d}:{N:02d}  {y}-{m:02d}-{d:02d}',scale=2,align=1)
+
+# --- panel: low
+# Status, re-fitted: the bar frame spans 8..203 and the fill 10..201, so the
+# multiplier is 191 rather than the high-res 229. The date drops to its own
+# line at scale 1 - at scale 2 the clock and the date together are 202 px
+# against a 212 px frame, which fits but leaves nothing either side.
+ROTATE(270)
+CLEAR(1)
+TEXT(8,6,'BATTERY')
+TEXT(203,6,'{BAT}%',align=2)
+RECT(8,18,203,34,width=2)
+RECT(10,20,10+{BAT}*191/100,32,fill=1)
+TEXT(8,44,'{VCC} mV',scale=2)
+TEXT(203,44,'{T}°C',scale=2,align=2)
+LINE(8,66,203,66)
+TEXT(106,74,'{H:02d}:{N:02d}',scale=2,align=1)
+TEXT(106,92,'{y}-{m:02d}-{d:02d}',align=1)

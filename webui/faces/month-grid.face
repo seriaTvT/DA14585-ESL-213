@@ -1,0 +1,129 @@
+# name: Month grid
+# category: Calendars
+# order: 110
+#
+# A real month grid, with today boxed out.
+#
+# The highlight is one INVERT rather than a filled RECT plus the number
+# redrawn in white: inverting whatever is already there does not need to
+# know which number it is covering, so it stays one line and keeps working
+# if the grid geometry moves. It has to come last - the 5x7 font paints its
+# whole glyph cell, so any day drawn afterwards would blank the box.
+#
+# Today's cell needs no column arithmetic at all: the column of day {d} is
+# {w}, by definition.
+#
+# ---- about the 31 near-identical lines --------------------------------------
+# They were produced mechanically, by a loop that used to live in presets.js,
+# and they are literal here because the file is the source of truth now. If
+# you need to move the grid, change one line and re-derive the rest the same
+# way rather than editing 31 by hand.
+#
+# The DSL has no conditionals and no way to bind an intermediate value, so
+# every line re-derives where day 1 sits. (({w}-{d}+71)%7) is the weekday of
+# the 1st: the +71 keeps the subtraction positive and 71 = 1 (mod 7), so it
+# lands on day 1 without disturbing the modulus. Each day's own column is
+# (({w}-{d}+n+70)%7), derived from n directly because that is the shorter
+# spelling and it appears 31 times.
+#
+# Days 29-31 do not exist in every month and there is no way to skip a line,
+# so n/({D}+1) is 0 while the day is real and 1 once it is past the end of the
+# month - the number is pushed 200 px off the panel and clipped. February
+# stops at 28 with no conditional.
+#
+# This repetition is what makes this face ~2.3 KB, and it is the reason the
+# script buffer is 3072 bytes.
+#
+# EVERY(1440) is the point of the face. Nothing here changes until the date
+# does, and the default of a repaint a minute would spend 1439 full panel
+# refreshes a day redrawing identical pixels - by far the most expensive
+# thing this tag does.
+
+# --- panel: high
+ROTATE(270)
+CLEAR(1)
+EVERY(1440)
+TEXT(125,10,'{M} {y}',scale=2,align=1)
+TEXT(8,30,'S     M    T     W     T     F    S')
+LINE(4,39,245,39)
+TEXT(8+(({w}-{d}+1+70)%7)*34,42+(((({w}-{d}+71)%7)+0)/7)*14,'1')
+TEXT(8+(({w}-{d}+2+70)%7)*34,42+(((({w}-{d}+71)%7)+1)/7)*14,'2')
+TEXT(8+(({w}-{d}+3+70)%7)*34,42+(((({w}-{d}+71)%7)+2)/7)*14,'3')
+TEXT(8+(({w}-{d}+4+70)%7)*34,42+(((({w}-{d}+71)%7)+3)/7)*14,'4')
+TEXT(8+(({w}-{d}+5+70)%7)*34,42+(((({w}-{d}+71)%7)+4)/7)*14,'5')
+TEXT(8+(({w}-{d}+6+70)%7)*34,42+(((({w}-{d}+71)%7)+5)/7)*14,'6')
+TEXT(8+(({w}-{d}+7+70)%7)*34,42+(((({w}-{d}+71)%7)+6)/7)*14,'7')
+TEXT(8+(({w}-{d}+8+70)%7)*34,42+(((({w}-{d}+71)%7)+7)/7)*14,'8')
+TEXT(8+(({w}-{d}+9+70)%7)*34,42+(((({w}-{d}+71)%7)+8)/7)*14,'9')
+TEXT(8+(({w}-{d}+10+70)%7)*34,42+(((({w}-{d}+71)%7)+9)/7)*14,'10')
+TEXT(8+(({w}-{d}+11+70)%7)*34,42+(((({w}-{d}+71)%7)+10)/7)*14,'11')
+TEXT(8+(({w}-{d}+12+70)%7)*34,42+(((({w}-{d}+71)%7)+11)/7)*14,'12')
+TEXT(8+(({w}-{d}+13+70)%7)*34,42+(((({w}-{d}+71)%7)+12)/7)*14,'13')
+TEXT(8+(({w}-{d}+14+70)%7)*34,42+(((({w}-{d}+71)%7)+13)/7)*14,'14')
+TEXT(8+(({w}-{d}+15+70)%7)*34,42+(((({w}-{d}+71)%7)+14)/7)*14,'15')
+TEXT(8+(({w}-{d}+16+70)%7)*34,42+(((({w}-{d}+71)%7)+15)/7)*14,'16')
+TEXT(8+(({w}-{d}+17+70)%7)*34,42+(((({w}-{d}+71)%7)+16)/7)*14,'17')
+TEXT(8+(({w}-{d}+18+70)%7)*34,42+(((({w}-{d}+71)%7)+17)/7)*14,'18')
+TEXT(8+(({w}-{d}+19+70)%7)*34,42+(((({w}-{d}+71)%7)+18)/7)*14,'19')
+TEXT(8+(({w}-{d}+20+70)%7)*34,42+(((({w}-{d}+71)%7)+19)/7)*14,'20')
+TEXT(8+(({w}-{d}+21+70)%7)*34,42+(((({w}-{d}+71)%7)+20)/7)*14,'21')
+TEXT(8+(({w}-{d}+22+70)%7)*34,42+(((({w}-{d}+71)%7)+21)/7)*14,'22')
+TEXT(8+(({w}-{d}+23+70)%7)*34,42+(((({w}-{d}+71)%7)+22)/7)*14,'23')
+TEXT(8+(({w}-{d}+24+70)%7)*34,42+(((({w}-{d}+71)%7)+23)/7)*14,'24')
+TEXT(8+(({w}-{d}+25+70)%7)*34,42+(((({w}-{d}+71)%7)+24)/7)*14,'25')
+TEXT(8+(({w}-{d}+26+70)%7)*34,42+(((({w}-{d}+71)%7)+25)/7)*14,'26')
+TEXT(8+(({w}-{d}+27+70)%7)*34,42+(((({w}-{d}+71)%7)+26)/7)*14,'27')
+TEXT(8+(({w}-{d}+28+70)%7)*34,42+(((({w}-{d}+71)%7)+27)/7)*14,'28')
+TEXT(8+(({w}-{d}+29+70)%7)*34,42+(((({w}-{d}+71)%7)+28)/7)*14+(29/({D}+1))*200,'29')
+TEXT(8+(({w}-{d}+30+70)%7)*34,42+(((({w}-{d}+71)%7)+29)/7)*14+(30/({D}+1))*200,'30')
+TEXT(8+(({w}-{d}+31+70)%7)*34,42+(((({w}-{d}+71)%7)+30)/7)*14+(31/({D}+1))*200,'31')
+INVERT(4+{w}*34,39+(((({w}-{d}+71)%7)+{d}-1)/7)*14,20,13)
+
+# --- panel: low
+# 7 columns of 29 px span 203 of the 212, leaving a 4 px margin each side.
+# Rows are 11 px rather than 14, which is what keeps six of them inside a
+# 104 px frame: 38 + 5*11 + 7 = 100.
+ROTATE(270)
+CLEAR(1)
+EVERY(1440)
+TEXT(106,4,'{M} {y}',scale=2,align=1)
+TEXT(16,25,'S')
+TEXT(45,25,'M')
+TEXT(74,25,'T')
+TEXT(103,25,'W')
+TEXT(132,25,'T')
+TEXT(161,25,'F')
+TEXT(190,25,'S')
+LINE(4,34,207,34)
+TEXT(8+(({w}-{d}+1+70)%7)*29,38+(((({w}-{d}+71)%7)+0)/7)*11,'1')
+TEXT(8+(({w}-{d}+2+70)%7)*29,38+(((({w}-{d}+71)%7)+1)/7)*11,'2')
+TEXT(8+(({w}-{d}+3+70)%7)*29,38+(((({w}-{d}+71)%7)+2)/7)*11,'3')
+TEXT(8+(({w}-{d}+4+70)%7)*29,38+(((({w}-{d}+71)%7)+3)/7)*11,'4')
+TEXT(8+(({w}-{d}+5+70)%7)*29,38+(((({w}-{d}+71)%7)+4)/7)*11,'5')
+TEXT(8+(({w}-{d}+6+70)%7)*29,38+(((({w}-{d}+71)%7)+5)/7)*11,'6')
+TEXT(8+(({w}-{d}+7+70)%7)*29,38+(((({w}-{d}+71)%7)+6)/7)*11,'7')
+TEXT(8+(({w}-{d}+8+70)%7)*29,38+(((({w}-{d}+71)%7)+7)/7)*11,'8')
+TEXT(8+(({w}-{d}+9+70)%7)*29,38+(((({w}-{d}+71)%7)+8)/7)*11,'9')
+TEXT(8+(({w}-{d}+10+70)%7)*29,38+(((({w}-{d}+71)%7)+9)/7)*11,'10')
+TEXT(8+(({w}-{d}+11+70)%7)*29,38+(((({w}-{d}+71)%7)+10)/7)*11,'11')
+TEXT(8+(({w}-{d}+12+70)%7)*29,38+(((({w}-{d}+71)%7)+11)/7)*11,'12')
+TEXT(8+(({w}-{d}+13+70)%7)*29,38+(((({w}-{d}+71)%7)+12)/7)*11,'13')
+TEXT(8+(({w}-{d}+14+70)%7)*29,38+(((({w}-{d}+71)%7)+13)/7)*11,'14')
+TEXT(8+(({w}-{d}+15+70)%7)*29,38+(((({w}-{d}+71)%7)+14)/7)*11,'15')
+TEXT(8+(({w}-{d}+16+70)%7)*29,38+(((({w}-{d}+71)%7)+15)/7)*11,'16')
+TEXT(8+(({w}-{d}+17+70)%7)*29,38+(((({w}-{d}+71)%7)+16)/7)*11,'17')
+TEXT(8+(({w}-{d}+18+70)%7)*29,38+(((({w}-{d}+71)%7)+17)/7)*11,'18')
+TEXT(8+(({w}-{d}+19+70)%7)*29,38+(((({w}-{d}+71)%7)+18)/7)*11,'19')
+TEXT(8+(({w}-{d}+20+70)%7)*29,38+(((({w}-{d}+71)%7)+19)/7)*11,'20')
+TEXT(8+(({w}-{d}+21+70)%7)*29,38+(((({w}-{d}+71)%7)+20)/7)*11,'21')
+TEXT(8+(({w}-{d}+22+70)%7)*29,38+(((({w}-{d}+71)%7)+21)/7)*11,'22')
+TEXT(8+(({w}-{d}+23+70)%7)*29,38+(((({w}-{d}+71)%7)+22)/7)*11,'23')
+TEXT(8+(({w}-{d}+24+70)%7)*29,38+(((({w}-{d}+71)%7)+23)/7)*11,'24')
+TEXT(8+(({w}-{d}+25+70)%7)*29,38+(((({w}-{d}+71)%7)+24)/7)*11,'25')
+TEXT(8+(({w}-{d}+26+70)%7)*29,38+(((({w}-{d}+71)%7)+25)/7)*11,'26')
+TEXT(8+(({w}-{d}+27+70)%7)*29,38+(((({w}-{d}+71)%7)+26)/7)*11,'27')
+TEXT(8+(({w}-{d}+28+70)%7)*29,38+(((({w}-{d}+71)%7)+27)/7)*11,'28')
+TEXT(8+(({w}-{d}+29+70)%7)*29,38+(((({w}-{d}+71)%7)+28)/7)*11+(29/({D}+1))*200,'29')
+TEXT(8+(({w}-{d}+30+70)%7)*29,38+(((({w}-{d}+71)%7)+29)/7)*11+(30/({D}+1))*200,'30')
+TEXT(8+(({w}-{d}+31+70)%7)*29,38+(((({w}-{d}+71)%7)+30)/7)*11+(31/({D}+1))*200,'31')
+INVERT(4+{w}*29,37+(((({w}-{d}+71)%7)+{d}-1)/7)*11,18,10)

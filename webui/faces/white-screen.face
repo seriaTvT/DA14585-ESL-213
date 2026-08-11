@@ -1,0 +1,13 @@
+# name: White screen
+# category: Utility
+# order: 160
+
+# --- panel: high
+ROTATE(270)
+CLEAR(1)
+EVERY(1440)
+
+# --- panel: low
+ROTATE(270)
+CLEAR(1)
+EVERY(1440)

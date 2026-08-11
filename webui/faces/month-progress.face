@@ -1,0 +1,38 @@
+# name: Month progress
+# category: Calendars
+# order: 100
+#
+# Draws itself rather than just labelling itself: the fill is an expression
+# over {d} and {D}, so it grows across the month and resets on the 1st.
+#
+# The frame is fixed at x 4..245 - a 4 px margin at both ends of the 250 px
+# landscape frame, whose last column is 249. Scaling the frame by the month
+# length instead (4+{D}*8) both overran the right edge in a 31-day month and
+# made the bar itself change size between February and July, which is the
+# opposite of what a progress bar should do.
+#
+# {d}*241/{D} multiplies before dividing on purpose: the arithmetic is
+# integer, so dividing first would collapse the fraction to 0 or 1 and the
+# bar would jump rather than creep.
+
+# --- panel: high
+ROTATE(270)
+CLEAR(1)
+TEXT(12,12,'{H:02d}:{N:02d}',scale=3)
+TEXT(12,46,'{W} {d} {M} {y}',scale=2)
+RECT(4,70,245,82)
+RECT(4,70,4+{d}*241/{D},82,fill=1)
+TEXT(12,94,'DAY {j} OF {J}   WEEK {V}')
+
+# --- panel: low
+# Same idea as the high-res bar, re-fitted: the frame is x 4..207 - a 4 px
+# margin against a last column of 211 - so the fill spans 203 px and the
+# multiply still comes before the divide, or integer arithmetic would
+# collapse the fraction and the bar would jump rather than creep.
+ROTATE(270)
+CLEAR(1)
+TEXT(10,10,'{H:02d}:{N:02d}',scale=3)
+TEXT(10,38,'{W} {d} {M}',scale=2)
+RECT(4,60,207,72)
+RECT(4,60,4+{d}*203/{D},72,fill=1)
+TEXT(10,80,'DAY {j} OF {J}   WEEK {V}')

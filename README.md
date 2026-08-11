@@ -503,6 +503,47 @@ bake, and `--emit` lists every character where that choice was real. Glyphs come
 from Noto Sans CJK (SIL OFL); do not repoint the generator at SimSun or MS YaHei,
 which are Microsoft-licensed.
 
+### Faces
+
+The built-in faces are files, one per face, in `webui/faces/`. Every line that is
+not a command is a `#` comment — which the language already ignores and the web
+UI already strips before sending, so the prose costs the tag nothing:
+
+```
+# name: Calendar 中文
+# category: Localised
+# order: 80
+#
+# Calendar's skeleton with the header in the local language.
+
+# --- panel: high
+ROTATE(270)
+CLEAR(1)
+LOCALE(zh)
+...
+
+# --- panel: low
+...
+```
+
+Both panels are required, and they are written separately rather than scaled: the
+104×212 panel is not a smaller version of the same layout, and a line that fits
+across 250 px often does not fit across 212.
+
+`tools/genfaces.py --emit` bundles them into `webui/faces_data.js`, which is what
+the editor imports — a static server cannot list a directory, so bundling avoids
+a manifest that could drift from the files it lists. `webui/serve.py` regenerates
+on startup, so editing a face is edit-and-refresh, and a test runs `--check` so a
+stale bundle fails rather than silently serving the old face.
+
+A `.face` file's panel section is a face on its own, so it feeds the renderer
+directly:
+
+```sh
+sed -n '/panel: high/,/panel: low/p' webui/faces/calendar-zh.face \
+  | firmware/hema_epd_clock/test/render 838944000 --temp 25 > fb.bin
+```
+
 ---
 
 ## The BLE interface
@@ -563,9 +604,12 @@ firmware/hema_epd_clock/
   e2studio/             generated project files (tracked)
   test/                 host tests, and `render` — the firmware renderer on the host
 webui/                  browser control panel: editor, live preview, image upload
+  faces/                the built-in faces, one .face file each
+  faces_data.js         generated from faces/ - do not edit
 tools/                  build, flash, SUOTA/boot image wrapping, project generation
   glyphs.txt            the characters font=2 carries - edit here, then --emit
   genfont.py            builds all three fonts into the firmware and the preview
+  genfaces.py           builds webui/faces/ into the bundle the editor loads
 out/                    built images, named by type (gitignored)
 ```
 
@@ -588,7 +632,7 @@ byte-identity check silently skips.
 `webui/epd.js` carries the same Bresenham, rotation transform, glyph tables and
 `{}` expansion as the firmware. **Change a primitive in one and change it in the
 other** — the preview's whole value is that it shows what the panel will. Several
-pairs are pinned by tests: the default face against `presets.js` byte for byte, the
+pairs are pinned by tests: the default face against its face file byte for byte, the
 option tables, and the buffer limits read out of the C source. The 16×24 font is
 generated into both from ASCII art in `tools/font16.py`; edit the art and re-emit
 rather than hand-patching either copy.

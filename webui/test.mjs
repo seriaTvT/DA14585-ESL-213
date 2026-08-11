@@ -18,7 +18,7 @@ import { dirname, join } from 'node:path';
 import { Panel, runScript, expandVars, tagTime, tagSecondsNow, textWidth, evalArg,
          OPTIONS, EVERY_MAX, PANELS }
   from './epd.js';
-import { PRESETS } from './presets.js';
+import { PRESETS } from './faces_data.js';
 import { dither, toPanel, surface, DITHERS } from './image.js';
 import { imageBytes, RENDER_ERRORS, CMD_SERVICE, CMD_CHAR,
          IMG_SERVICE, IMG_CHAR, STATUS_CHAR } from './ble.js';
@@ -139,7 +139,7 @@ test('drawing clips instead of wrapping', () => {
   assert.equal(dark, 0, 'out-of-bounds pixels leaked into the framebuffer');
 });
 
-/* Presets that are meant to be one flat colour - see SOLID in presets.js. Named
+/* Presets that are meant to be one flat colour - see webui/faces/. Named
  * rather than detected from the script, so adding a face that renders blank by
  * accident still fails rather than being taken for housekeeping. */
 const SOLID_FACES = new Set(['White screen', 'Black screen']);
@@ -1116,6 +1116,18 @@ test('the generated font tables match their sources', { skip:
    * --check regenerates from the sources and compares against what is on
    * disk, so this fails on a stale copy as well as on an edited one. */
   execFileSync('python3', [FONT_TOOL, '--check'], { encoding: 'utf8' });
+});
+
+const FACE_TOOL = join(HERE, '../tools/genfaces.py');
+
+test('the generated face bundle matches webui/faces/', { skip:
+      existsSync(FACE_TOOL) ? false : 'tools/genfaces.py is missing'
+    }, () => {
+  /* Same guard as the fonts above. faces_data.js is committed so the editor
+   * works without anyone running a generator, which is exactly the situation
+   * where a stale copy would go unnoticed - the page loads and shows the old
+   * face. --check regenerates from webui/faces/ and compares. */
+  execFileSync('python3', [FACE_TOOL, '--check'], { encoding: 'utf8' });
 });
 
 const STORE_C = join(HERE,

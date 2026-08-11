@@ -1,0 +1,30 @@
+# name: Calendar
+# category: Calendars
+# order: 70
+#
+# Shows off the calendar variables. The two bottom labels are anchored to
+# the margins rather than centred - align=0 on the left, align=2 on the
+# right - so they stay put as the numbers change width.
+
+# --- panel: high
+ROTATE(270)
+CLEAR(1)
+TEXT(8,8,'{W} {d:02d} {M} {y}',scale=2)
+LINE(8,30,239,30)
+TEXT(125,38,'{H:02d}:{N:02d}',font=1,scale=2,align=1)
+TEXT(10,102,'WEEK {V:02d} OF {G}')
+TEXT(235,102,'DAY {j:03d}/{J}',align=2)
+
+# --- panel: low
+# The high-res calendar puts weekday, day, month and year on one scale-2 line
+# (250 px worth). That is 21 glyphs and will not go here, so the header
+# splits: weekday on the left margin, day and month on the right, both
+# anchored so they stay put as the numbers change width.
+ROTATE(270)
+CLEAR(1)
+TEXT(8,6,'{W}',scale=2)
+TEXT(203,6,'{d:02d} {M}',scale=2,align=2)
+LINE(8,26,203,26)
+TEXT(106,32,'{H:02d}:{N:02d}',font=1,scale=2,align=1)
+TEXT(8,88,'WEEK {V:02d} OF {G}')
+TEXT(203,88,'DAY {j:03d}/{J}',align=2)

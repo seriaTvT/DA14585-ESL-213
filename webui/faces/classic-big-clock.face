@@ -1,0 +1,23 @@
+# name: Classic big clock
+# category: Clocks
+# order: 40
+#
+# The old big clock: 5x7 at scale 7 is 203 px wide against font=1 scale 2's
+# 168, so this is still the widest HH:MM available - just a coarser one.
+# Original offsets again, for the same reason as Classic above.
+
+# --- panel: high
+ROTATE(270)
+CLEAR(1)
+TEXT(23,22,'{H:02d}:{N:02d}',scale=7)
+TEXT(42,88,'{W} {y}-{m:02d}-{d:02d}',scale=2)
+
+# --- panel: low
+# 5x7 at scale 7 is 203 px against a 212 px frame - a 4 px margin each side,
+# and still the widest HH:MM available. What does not survive is the date
+# line under it: '{W} {y}-{m:02d}-{d:02d}' would be 238 px, so it becomes
+# day and month instead of the full date.
+ROTATE(270)
+CLEAR(1)
+TEXT(106,16,'{H:02d}:{N:02d}',scale=7,align=1)
+TEXT(106,76,'{W} {d} {M}',scale=2,align=1)

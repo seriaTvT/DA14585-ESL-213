@@ -1,0 +1,15 @@
+# name: Inverted
+# category: Utility
+# order: 150
+
+# --- panel: high
+ROTATE(270)
+CLEAR(0)
+TEXT(125,20,'{H:02d}:{N:02d}',font=1,scale=2,color=1,bg=0,align=1)
+TEXT(125,86,'{y}-{m:02d}-{d:02d}',color=1,bg=0,scale=2,align=1)
+
+# --- panel: low
+ROTATE(270)
+CLEAR(0)
+TEXT(106,16,'{H:02d}:{N:02d}',font=1,scale=2,color=1,bg=0,align=1)
+TEXT(106,76,'{y}-{m:02d}-{d:02d}',color=1,bg=0,scale=2,align=1)

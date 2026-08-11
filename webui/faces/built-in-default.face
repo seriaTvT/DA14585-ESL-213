@@ -1,0 +1,23 @@
+# name: Built-in default
+# category: Basics
+# order: 10
+#
+# Byte-identical to DEFAULT_FACE[] in epd_cmdparser.c, so "what the tag
+# ships with" is always one click away - and, since a test diffs the two,
+# stays that way if either side is edited.
+
+# --- panel: high
+ROTATE(270)
+CLEAR(1)
+TEXT(125,18,'{H:02d}:{N:02d}',font=1,scale=2,align=1)
+TEXT(125,78,'{y}-{m:02d}-{d:02d}',scale=2,align=1)
+TEXT(125,100,'{W}',scale=2,align=1)
+
+# --- panel: low
+# Byte-identical to DEFAULT_FACE[] built with EPD_PANEL_LOW_RES, the same
+# way the high-res one is - and diffed against it by the same test.
+ROTATE(270)
+CLEAR(1)
+TEXT(106,8,'{H:02d}:{N:02d}',font=1,scale=2,align=1)
+TEXT(106,64,'{y}-{m:02d}-{d:02d}',scale=2,align=1)
+TEXT(106,84,'{W}',scale=2,align=1)

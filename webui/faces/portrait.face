@@ -1,0 +1,25 @@
+# name: Portrait
+# category: Clocks
+# order: 60
+#
+# Portrait, so the frame is 122x250 and MID does not apply - 61 is the
+# middle here. Hours and minutes stack because HH:MM will not fit across
+# 122 px at a size worth having.
+
+# --- panel: high
+ROTATE(0)
+CLEAR(1)
+TEXT(61,56,'{H:02d}',font=1,scale=2,align=1)
+TEXT(61,108,'{N:02d}',font=1,scale=2,align=1)
+TEXT(61,170,'{y}-{m:02d}-{d:02d}',align=1)
+TEXT(61,186,'{W}',align=1)
+
+# --- panel: low
+# Portrait: the frame is 104x212 and the middle is x=52. The date drops to
+# scale 1 - at scale 2 it would be 118 px against a 104 px frame.
+ROTATE(0)
+CLEAR(1)
+TEXT(52,36,'{H:02d}',font=1,scale=2,align=1)
+TEXT(52,92,'{N:02d}',font=1,scale=2,align=1)
+TEXT(52,156,'{y}-{m:02d}-{d:02d}',align=1)
+TEXT(52,169,'{W}',align=1)

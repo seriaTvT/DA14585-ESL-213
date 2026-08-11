@@ -1,0 +1,48 @@
+# name: Thermometer
+# category: Sensors
+# order: 120
+#
+# Thermometer. The tag can report its own panel temperature ({T}, whole
+# degrees Celsius), so this face makes that the headline and keeps the clock
+# underneath it.
+#
+# The thermometer itself is drawn rather than typed - no font here has one -
+# as a filled bulb, an outlined stem with a filled column inside it, and
+# three ticks: one shape at a glance, five commands.
+#
+# The degree sign is typed, though. It used to be drawn too, back when the
+# 5x7 table was uppercase ASCII and had no such glyph; it is U+00B0 now and
+# arrives as two UTF-8 bytes. "25°C" at scale 4 is 92 px against the 68 px
+# that "25C" measured, which the centred layout absorbs.
+#
+# {T} renders literally as "{T}" on a build with no temperature reading -
+# see EPD_TEMP_READ - which is deliberate: it says "this tag cannot measure
+# that" rather than showing a confident 0.
+
+# --- panel: high
+ROTATE(270)
+CLEAR(1)
+CIRCLE(32,98,12,color=0,fill=1)
+RECT(26,26,38,92,color=0,width=2,fill=0)
+RECT(29,55,35,92,color=0,fill=1)
+LINE(44,40,56,40,color=0,width=2)
+LINE(44,58,56,58,color=0,width=2)
+LINE(44,76,56,76,color=0,width=2)
+TEXT(165,22,'{T}°C',scale=4,align=1)
+TEXT(165,62,'{H:02d}:{N:02d}',scale=3,align=1)
+TEXT(165,95,'{y}-{m:02d}-{d:02d}',scale=2,align=1)
+
+# --- panel: low
+# Thermometer, same idea in 212x104. The glyph shrinks and the date drops to
+# make room: 10 characters at scale 2 is 120 px, which still goes beside a
+# narrower thermometer, but only just.
+ROTATE(270)
+CLEAR(1)
+CIRCLE(26,84,10,color=0,fill=1)
+RECT(21,22,31,78,color=0,width=2,fill=0)
+RECT(23,48,29,78,color=0,fill=1)
+LINE(36,34,46,34,color=0,width=2)
+LINE(36,50,46,50,color=0,width=2)
+TEXT(135,18,'{T}°C',scale=3,align=1)
+TEXT(135,48,'{H:02d}:{N:02d}',scale=3,align=1)
+TEXT(135,80,'{y}-{m:02d}-{d:02d}',scale=2,align=1)

@@ -1,0 +1,45 @@
+# name: Calendar 中文
+# category: Localised
+# order: 80
+#
+# ---- the localised pair -------------------------------------------------
+# Calendar's skeleton - header, rule, big clock, two footer corners - with
+# the header in the local language and the footer carrying the readings the
+# tag can take of itself. The two differ only by LOCALE(), which is the
+# point: the layout is the same because the metrics are.
+#
+# The header is font=2, where ASCII is 8 px and CJK 16, so
+# "2026年8月10日 星期日" measures 36+17+9+17+18+17+9+51-1 = 173 px from x=8.
+# That is why the weekday sits on the header line here and gets its own
+# right-aligned slot on the narrower panel below.
+#
+# {T} and {VCC} render as their own names until the tag has taken a reading,
+# so on a preview with the fields blank this face says "{T}°C" rather than
+# a confident zero - see the note on epd_cmd_set_batt().
+
+# --- panel: high
+ROTATE(270)
+CLEAR(1)
+LOCALE(zh)
+TEXT(8,8,'{y}年{m}月{d}日 {W}',font=2)
+LINE(8,30,239,30)
+TEXT(125,38,'{H:02d}:{N:02d}',font=1,scale=2,align=1)
+TEXT(10,102,'{T}°C')
+TEXT(235,102,'{VCC}mV',align=2)
+
+# --- panel: low
+# The same three faces re-fitted, not rescaled. The 212 px frame cannot hold
+# the date and the weekday on one header line - "2026年8月10日 星期日" is
+# 173 px and would leave 30 px of margin for both ends - so the weekday
+# takes the right-hand slot, the way this panel's Calendar already splits
+# its header. The date measures 113 px from x=8 and the weekday 50 px back
+# from 203, so they meet no closer than 121 against 153.
+ROTATE(270)
+CLEAR(1)
+LOCALE(zh)
+TEXT(8,6,'{y}年{m}月{d}日',font=2)
+TEXT(203,6,'{W}',font=2,align=2)
+LINE(8,26,203,26)
+TEXT(106,32,'{H:02d}:{N:02d}',font=1,scale=2,align=1)
+TEXT(8,88,'{T}°C')
+TEXT(203,88,'{VCC}mV',align=2)

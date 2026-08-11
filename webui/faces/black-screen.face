@@ -1,0 +1,13 @@
+# name: Black screen
+# category: Utility
+# order: 170
+
+# --- panel: high
+ROTATE(270)
+CLEAR(0)
+EVERY(1440)
+
+# --- panel: low
+ROTATE(270)
+CLEAR(0)
+EVERY(1440)

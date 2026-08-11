@@ -1,0 +1,20 @@
+# name: With seconds
+# category: Clocks
+# order: 50
+#
+# Seconds rule out the large font - it has no 'S' problem, but eight glyphs
+# at font=1 would be 271 px wide. The 5x7 font at scale 4 fits.
+
+# --- panel: high
+ROTATE(270)
+CLEAR(1)
+TEXT(125,30,'{H:02d}:{N:02d}:{S:02d}',scale=4,align=1)
+TEXT(125,80,'{y}-{m:02d}-{d:02d}',scale=2,align=1)
+
+# --- panel: low
+# HH:MM:SS at 5x7 scale 4 is 188 px, so seconds still fit across this frame.
+# The pair is centred as a block: (104 - 28 - 12 - 14) / 2 = 25.
+ROTATE(270)
+CLEAR(1)
+TEXT(106,25,'{H:02d}:{N:02d}:{S:02d}',scale=4,align=1)
+TEXT(106,65,'{y}-{m:02d}-{d:02d}',scale=2,align=1)

@@ -3,7 +3,7 @@
  */
 import { Panel, runScript, paint, tagSecondsNow, tagTime, EPOCH_2000,
          PANELS, activePanel, setActivePanel } from './epd.js';
-import { PRESETS } from './presets.js';
+import { PRESETS } from './faces_data.js';
 import { Tag, bluetoothProblem, FLUSH_DELAY_MS } from './ble.js';
 import * as Img from './image.js';
 

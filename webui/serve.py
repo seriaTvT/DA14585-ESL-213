@@ -81,9 +81,32 @@ def make_cert(hosts: list[str]) -> None:
     os.chmod(KEY, 0o600)
 
 
+def rebuild_faces() -> None:
+    """Regenerate faces_data.js from webui/faces/ before serving.
+
+    The bundle is committed so the editor works for anyone who has not run a
+    generator, which is exactly the arrangement where a stale copy goes
+    unnoticed: the page loads and quietly shows the previous face. Rebuilding
+    here keeps editing a .face file to edit-and-refresh.
+
+    Failure is reported and not fatal - a syntax error in one face should not
+    stop the server coming up, since the committed bundle is still servable and
+    the message says what to fix."""
+    tool = HERE.parent / 'tools' / 'genfaces.py'
+    if not tool.exists():
+        return
+    r = subprocess.run([sys.executable, str(tool), '--emit'],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f'warning: could not rebuild faces_data.js\n{r.stderr.strip()}')
+        print('serving the committed bundle instead.')
+
+
 def main() -> int:
     port = int(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_PORT
     hosts = lan_addresses()
+
+    rebuild_faces()
 
     if not CERT.exists() or not KEY.exists():
         try:

@@ -1,0 +1,23 @@
+# name: Framed card
+# category: Utility
+# order: 140
+
+# --- panel: high
+ROTATE(270)
+CLEAR(1)
+RECT(3,3,246,118,width=2)
+LINE(3,74,246,74)
+TEXT(125,14,'{H:02d}:{N:02d}',font=1,scale=2,align=1)
+TEXT(125,81,'{W}',scale=2,align=1)
+TEXT(125,99,'{y}-{m:02d}-{d:02d}',scale=2,align=1)
+
+# --- panel: low
+# Frame inset 3 px like the high-res card, against a last column of 211 and
+# a last row of 103.
+ROTATE(270)
+CLEAR(1)
+RECT(3,3,208,100,width=2)
+LINE(3,60,208,60)
+TEXT(106,6,'{H:02d}:{N:02d}',font=1,scale=2,align=1)
+TEXT(106,66,'{W}',scale=2,align=1)
+TEXT(106,82,'{y}-{m:02d}-{d:02d}',scale=2,align=1)

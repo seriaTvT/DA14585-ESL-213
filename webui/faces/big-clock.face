@@ -1,0 +1,19 @@
+# name: Big clock
+# category: Clocks
+# order: 30
+#
+# Nothing but the time, as large as the panel takes. font=1 at scale 2 is
+# 168x48 for HH:MM; scale 3 would be 252 wide against a 250 px frame, so
+# this is the ceiling rather than a preference. Centred on both axes:
+# (122 - 48) / 2 = 37.
+
+# --- panel: high
+ROTATE(270)
+CLEAR(1)
+TEXT(125,34,'{H:02d}:{N:02d}',font=1,scale=2,align=1)
+
+# --- panel: low
+# Nothing but the time. Centred on both axes: (104 - 48) / 2 = 28.
+ROTATE(270)
+CLEAR(1)
+TEXT(106,28,'{H:02d}:{N:02d}',font=1,scale=2,align=1)

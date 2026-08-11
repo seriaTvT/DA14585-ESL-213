@@ -1,0 +1,24 @@
+# name: Calendar 日本語
+# category: Localised
+# order: 90
+
+# --- panel: high
+ROTATE(270)
+CLEAR(1)
+LOCALE(ja)
+TEXT(8,8,'{y}年{m}月{d}日 {W}',font=2)
+LINE(8,30,239,30)
+TEXT(125,38,'{H:02d}:{N:02d}',font=1,scale=2,align=1)
+TEXT(10,102,'{T}°C')
+TEXT(235,102,'{VCC}mV',align=2)
+
+# --- panel: low
+ROTATE(270)
+CLEAR(1)
+LOCALE(ja)
+TEXT(8,6,'{y}年{m}月{d}日',font=2)
+TEXT(203,6,'{W}',font=2,align=2)
+LINE(8,26,203,26)
+TEXT(106,32,'{H:02d}:{N:02d}',font=1,scale=2,align=1)
+TEXT(8,88,'{T}°C')
+TEXT(203,88,'{VCC}mV',align=2)

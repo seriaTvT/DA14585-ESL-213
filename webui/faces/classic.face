@@ -1,0 +1,28 @@
+# name: Classic
+# category: Clocks
+# order: 20
+#
+# The face this shipped with before the 16x24 font existed, kept because
+# the blocky 5x7 digits are a look and not only a limitation.
+#
+# Coordinates are the original hand-computed ones rather than align=1,
+# which would land a pixel to the right: the old faces centred with
+# floor((250 - 145) / 2) = 52, while align=1 at x=125 computes
+# 125 - 145/2 = 53. Invisible in use, but this preset exists to be the old
+# face, so it is the old face.
+
+# --- panel: high
+ROTATE(270)
+CLEAR(1)
+TEXT(52,25,'{H:02d}:{N:02d}',scale=5)
+TEXT(66,72,'{y}-{m:02d}-{d:02d}',scale=2)
+TEXT(108,94,'{W}',scale=2)
+
+# --- panel: low
+# The 5x7 face. scale=5 gives a 145x35 HH:MM, which still has 33 px of slack
+# across this frame - the coarse digits were never the width problem.
+ROTATE(270)
+CLEAR(1)
+TEXT(106,14,'{H:02d}:{N:02d}',scale=5,align=1)
+TEXT(106,60,'{y}-{m:02d}-{d:02d}',scale=2,align=1)
+TEXT(106,80,'{W}',scale=2,align=1)
