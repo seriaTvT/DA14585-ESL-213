@@ -147,6 +147,70 @@
 
   /* --- diagnostics -------------------------------------------------- */
   .notes { margin-top: 12px; display: grid; gap: 6px; }
+
+  /* ---- face gallery ------------------------------------------------------ */
+  dialog#gallery {
+    width: min(920px, 92vw); max-height: 86vh; padding: 0;
+    border: 1px solid var(--edge); border-radius: 12px;
+    background: var(--panel); color: var(--ink);
+  }
+  dialog#gallery::backdrop { background: rgb(0 0 0 / .55); }
+  .gal-head {
+    display: flex; gap: 8px; align-items: center;
+    padding: 12px 14px; border-bottom: 1px solid var(--edge);
+    position: sticky; top: 0; background: var(--panel); border-radius: 12px 12px 0 0;
+  }
+  .gal-head strong { margin-right: auto; font-size: 15px; }
+  .gal-head input[type=search] {
+    font: inherit; font-size: 13px; padding: 6px 9px; border-radius: 8px;
+    border: 1px solid var(--edge); background: var(--bg); color: var(--ink);
+    min-width: 8em;
+  }
+  .gal-body { padding: 6px 14px 14px; overflow: auto; max-height: calc(86vh - 104px); }
+  .gal-foot {
+    margin: 0; padding: 8px 14px; border-top: 1px solid var(--edge);
+    font-size: 12px; color: var(--dim); min-height: 1em;
+  }
+  .face-group {
+    margin: 16px 0 8px; font-size: 12px; font-weight: 600; letter-spacing: .04em;
+    text-transform: uppercase; color: var(--dim);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .face-group span {
+    font-weight: 400; letter-spacing: 0; text-transform: none;
+    border: 1px solid var(--edge); border-radius: 999px; padding: 0 6px;
+  }
+  .face-grid {
+    display: grid; gap: 10px;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  }
+  .face {
+    position: relative; display: flex; flex-direction: column; gap: 6px;
+    padding: 8px; text-align: left; cursor: pointer;
+    border: 1px solid var(--edge); border-radius: 10px;
+    background: var(--bg); color: var(--ink); font: inherit;
+  }
+  .face:hover { border-color: var(--accent); }
+  .face:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  /* The panel is wider than it is tall, so the thumbnail sets the card's
+     height and the grid stays even whichever panel is selected. */
+  .face .thumb {
+    width: 100%; height: auto; display: block; border-radius: 5px;
+    image-rendering: pixelated; background: #f4f2ea;
+  }
+  .face-name {
+    font-size: 12px; color: var(--dim);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .face-del {
+    position: absolute; top: 4px; right: 4px; width: 20px; height: 20px;
+    display: grid; place-items: center; border-radius: 6px; cursor: pointer;
+    background: color-mix(in srgb, var(--panel) 82%, transparent);
+    border: 1px solid var(--edge); color: var(--dim);
+    font-size: 15px; line-height: 1;
+  }
+  .face-del:hover { color: var(--err); border-color: var(--err); }
+  .face-empty { color: var(--dim); font-size: 13px; padding: 18px 2px; }
   .note {
     font: 12px/1.5 var(--mono); padding: 7px 10px; border-radius: 6px;
     border-left: 3px solid var(--warn);
@@ -275,9 +339,8 @@
 
     <div id="paneTemplate">
     <div class="row">
-      <select id="preset">
-        <option value="">Load a preset…</option>
-      </select>
+      <button id="browse">Faces…</button>
+      <button id="saveFace">Save…</button>
       <button id="revert">Revert</button>
       <span class="counter" id="counter">0 / 3072 B</span>
     </div>
@@ -286,6 +349,22 @@
     </div>
     <div class="notes" id="notes"></div>
     </div>
+
+    <!-- Face gallery. A dialog rather than an inline panel: it wants the room
+         for a grid of thumbnails, and picking a face is a moment's errand you
+         come straight back from. -->
+    <dialog id="gallery">
+      <div class="gal-head">
+        <strong>Faces</strong>
+        <input type="search" id="galFilter" placeholder="Filter…" autocomplete="off">
+        <button id="galImport">Import…</button>
+        <button id="galExport">Export</button>
+        <button id="galClose">Close</button>
+        <input type="file" id="galFile" accept="application/json,.json" hidden>
+      </div>
+      <div class="gal-body" id="galBody"></div>
+      <p class="gal-foot" id="galFoot"></p>
+    </dialog>
 
     <div id="paneImage" hidden>
       <label class="drop" id="drop">

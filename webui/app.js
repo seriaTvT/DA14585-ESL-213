@@ -3,7 +3,9 @@
  */
 import { Panel, runScript, paint, tagSecondsNow, tagTime, EPOCH_2000,
          PANELS, activePanel, setActivePanel } from './epd.js';
-import { PRESETS } from './faces_data.js';
+import { FACES, CATEGORIES } from './faces_data.js';
+import * as Store from './store.js';
+import { renderGallery, filterFaces } from './gallery.js';
 import { Tag, bluetoothProblem, FLUSH_DELAY_MS } from './ble.js';
 import * as Img from './image.js';
 
@@ -155,6 +157,15 @@ function showClock() {
   $('tagClock').textContent = stamp(previewSeconds(), clockSkew !== 0) + note;
 }
 
+/* A preview field as a number, or undefined when it is blank - which is how
+ * you see what a build that takes no such reading shows. Shared with the
+ * gallery, whose thumbnails have to render from the same values or a card
+ * would disagree with the preview it came from. */
+const num = (id) => {
+  const raw = $(id).value;
+  return raw === '' ? undefined : parseInt(raw, 10);
+};
+
 function render() {
   showClock();
   if (mode === 'image') { renderImage(); return; }
@@ -168,10 +179,6 @@ function render() {
    * two-digit reading and a negative one are different widths, which is
    * exactly the kind of thing a preview is for. Blank the field to see what a
    * build with no temperature reading shows, which is the literal "{T}". */
-  const num = (id) => {
-    const raw = $(id).value;
-    return raw === '' ? undefined : parseInt(raw, 10);
-  };
   /* Battery reads the same way and for the same reasons: the tag measures its
    * own cell, and a blank field is how you see what a face shows on a build
    * that takes no reading - the literal "{BAT}". Percent and millivolts are
@@ -463,19 +470,17 @@ for (const p of Object.values(PANELS)) {
   panelSelect.append(new Option(p.label, p.key));
 }
 
-const presetSelect = $('preset');
 let lastLoaded;
 
-/* The preset list belongs to the panel - the faces are written per panel rather
- * than scaled - so it is rebuilt rather than filtered. */
+/** The built-in face of that name for the active panel. */
+function builtin(name) {
+  const f = FACES.find((x) => x.name === name);
+  return f && f.scripts[activePanel().key];
+}
+
+/* The faces belong to the panel - they are written per panel rather than
+ * scaled - so switching panels re-reads them rather than filtering. */
 function loadPanelPresets({ replaceEditor }) {
-  const faces = PRESETS[activePanel().key];
-
-  presetSelect.replaceChildren(new Option('Load a preset…', ''));
-  for (const name of Object.keys(faces)) {
-    presetSelect.append(new Option(name, name));
-  }
-
   /* Only replace what the author is looking at when the *panel* changed and the
    * editor still holds the other panel's default. Anything they have edited or
    * deliberately loaded is theirs, and silently swapping it out on a panel
@@ -483,7 +488,7 @@ function loadPanelPresets({ replaceEditor }) {
   const untouched = replaceEditor
     && (!lastLoaded || $('editor').value === lastLoaded);
 
-  lastLoaded = faces['Built-in default'];
+  lastLoaded = builtin('Built-in default');
   if (untouched) $('editor').value = lastLoaded;
 }
 
@@ -494,6 +499,10 @@ panelSelect.addEventListener('change', () => {
   panel = new Panel();
   imagePanel = null;      /* stale geometry; renderImage() rebuilds it */
   loadPanelPresets({ replaceEditor: true });
+  /* Re-stamp the draft with the panel now on screen. Without this the buffer
+   * would keep the old panel's label and be refused on the next reload, which
+   * looks exactly like the autosave having failed. */
+  Store.saveDraft(activePanel().key, $('editor').value);
   log(`Panel set to ${activePanel().label}.`, 'ok');
   render();
 });
@@ -508,13 +517,122 @@ panelSelect.value = activePanel().key;
 
 loadPanelPresets({ replaceEditor: false });
 
-presetSelect.addEventListener('change', () => {
-  const name = presetSelect.value;
-  if (!name) return;
-  lastLoaded = PRESETS[activePanel().key][name];
-  $('editor').value = lastLoaded;
-  presetSelect.value = '';
-  render();
+/* Restore whatever was being written, but only for this panel: a draft is a
+ * layout for one geometry, and dropping a 250 px face into a 212 px session
+ * would show the author something that does not fit with nothing saying why.
+ * The built-in default stays the starting point otherwise. */
+const draft = Store.loadDraft(activePanel().key);
+if (draft && draft.script.trim() && draft.script !== lastLoaded) {
+  $('editor').value = draft.script;
+}
+
+/* ------------------------------------------------------------------ */
+/* The face gallery                                                    */
+/* ------------------------------------------------------------------ */
+
+const gallery = $('gallery');
+
+/** Saved faces for the active panel, newest first. */
+function savedFaces() {
+  return Store.listFaces().filter((f) => f.panel === activePanel().key);
+}
+
+function galleryGroups(query) {
+  const key = activePanel().key;
+  const groups = [{
+    title: 'Saved',
+    deletable: true,
+    faces: filterFaces(savedFaces(), query),
+  }];
+  for (const cat of CATEGORIES) {
+    groups.push({
+      title: cat,
+      deletable: false,
+      faces: filterFaces(
+        FACES.filter((f) => f.category === cat)
+             .map((f) => ({ name: f.name, script: f.scripts[key] })),
+        query),
+    });
+  }
+  return groups;
+}
+
+function drawGallery() {
+  const key = activePanel().key;
+  /* Thumbnails render at the instant the preview is showing, and with the same
+   * readings, so a card is what pushing that face right now would put on the
+   * glass - not a picture of it at some other time. */
+  const env = {
+    secs: previewSeconds(),
+    temp: num('previewTemp'),
+    battPct: num('previewBatt'),
+    battMv: num('previewVcc'),
+  };
+  const shown = renderGallery($('galBody'), galleryGroups($('galFilter').value),
+                              key, env, {
+    onPick: (face) => {
+      lastLoaded = face.script;
+      $('editor').value = face.script;
+      gallery.close();
+      render();
+      log(`Loaded “${face.name}”.`, 'ok');
+    },
+    onDelete: (face) => {
+      if (!confirm(`Delete the saved face “${face.name}”?`)) return;
+      Store.deleteFace(face.name, key);
+      drawGallery();
+      log(`Deleted “${face.name}”.`);
+    },
+  });
+  const saved = savedFaces().length;
+  $('galFoot').textContent =
+    `${shown} shown · ${saved} saved · thumbnails are rendered live at the `
+    + `previewed time, on the ${activePanel().label} panel.`;
+}
+
+$('browse').addEventListener('click', () => {
+  $('galFilter').value = '';
+  drawGallery();
+  gallery.showModal();
+  $('galFilter').focus();
+});
+$('galClose').addEventListener('click', () => gallery.close());
+$('galFilter').addEventListener('input', drawGallery);
+
+$('saveFace').addEventListener('click', () => {
+  const key = activePanel().key;
+  const suggested = Store.freeName('My face', key);
+  const name = prompt('Save this face as:', suggested);
+  if (name === null) return;
+
+  const res = Store.saveFace(name, key, $('editor').value);
+  if (!res.ok) { log(res.reason, 'err'); return; }
+  lastLoaded = $('editor').value;
+  log(`${res.replaced ? 'Replaced' : 'Saved'} “${name.trim()}”.`, 'ok');
+});
+
+$('galExport').addEventListener('click', () => {
+  const faces = Store.listFaces();
+  if (!faces.length) { log('No saved faces to export.', 'warn'); return; }
+  const blob = new Blob([Store.exportFaces(faces)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'hema-faces.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  log(`Exported ${faces.length} saved face(s).`, 'ok');
+});
+
+$('galImport').addEventListener('click', () => $('galFile').click());
+$('galFile').addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = '';                 /* so the same file can be re-chosen */
+  if (!file) return;
+
+  const res = Store.importFaces(await file.text());
+  if (!res.ok) { log(res.reason, 'err'); return; }
+  drawGallery();
+  log(`Imported ${res.added} new and replaced ${res.replaced} face(s).`, 'ok');
 });
 
 $('revert').addEventListener('click', () => {
@@ -522,7 +640,24 @@ $('revert').addEventListener('click', () => {
   render();
 });
 
-$('editor').addEventListener('input', render);
+/* Autosave, so a reload does not cost the face you were writing.
+ *
+ * Debounced only lightly: a localStorage write of a few kilobytes is cheap,
+ * and the failure this guards against is the tab going away without warning,
+ * which no amount of batching gets to negotiate with. */
+let draftTimer = null;
+function saveDraftSoon() {
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(
+    () => Store.saveDraft(activePanel().key, $('editor').value), 400);
+}
+
+$('editor').addEventListener('input', () => { saveDraftSoon(); render(); });
+/* Belt and braces for the case the timer never fires. */
+addEventListener('pagehide', () => {
+  clearTimeout(draftTimer);
+  Store.saveDraft(activePanel().key, $('editor').value);
+});
 /* Same re-render path as the editor: changing what {T} stands for changes the
  * drawing, and a face using it should reflow as you type a different reading. */
 for (const id of ['previewTemp', 'previewBatt', 'previewVcc']) {

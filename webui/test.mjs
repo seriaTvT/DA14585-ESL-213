@@ -19,6 +19,8 @@ import { Panel, runScript, expandVars, tagTime, tagSecondsNow, textWidth, evalAr
          OPTIONS, EVERY_MAX, PANELS }
   from './epd.js';
 import { PRESETS } from './faces_data.js';
+import * as Store from './store.js';
+import { filterFaces } from './gallery.js';
 import { dither, toPanel, surface, DITHERS } from './image.js';
 import { imageBytes, RENDER_ERRORS, CMD_SERVICE, CMD_CHAR,
          IMG_SERVICE, IMG_CHAR, STATUS_CHAR } from './ble.js';
@@ -1116,6 +1118,138 @@ test('the generated font tables match their sources', { skip:
    * --check regenerates from the sources and compares against what is on
    * disk, so this fails on a stale copy as well as on an edited one. */
   execFileSync('python3', [FONT_TOOL, '--check'], { encoding: 'utf8' });
+});
+
+/* ------------------------------------------------------------------ */
+/* store.js - what survives a reload                                   */
+/* ------------------------------------------------------------------ */
+
+/* A fresh in-memory store per test, so ordering between them cannot matter
+ * and nothing here depends on a browser. */
+function freshStore() {
+  const m = new Map();
+  Store.useStore({
+    getItem: (k) => (m.has(k) ? m.get(k) : null),
+    setItem: (k, v) => m.set(k, String(v)),
+    removeItem: (k) => m.delete(k),
+  });
+  return m;
+}
+
+test('a draft comes back only for the panel it was written on', () => {
+  freshStore();
+  Store.saveDraft('high', 'CLEAR(1)\n');
+
+  assert.equal(Store.loadDraft('high').script, 'CLEAR(1)\n');
+  /* The whole point: a 250 px layout restored into a 212 px session would put
+   * the author in front of a face that does not fit and no note saying why. */
+  assert.equal(Store.loadDraft('low'), null);
+
+  Store.clearDraft();
+  assert.equal(Store.loadDraft('high'), null);
+});
+
+test('saved faces are keyed by name and panel together', () => {
+  freshStore();
+  Store.saveFace('Kitchen', 'high', 'A');
+  Store.saveFace('Kitchen', 'low', 'B');
+  assert.equal(Store.listFaces().length, 2, 'same name, different panels');
+
+  const again = Store.saveFace('Kitchen', 'high', 'C');
+  assert.equal(again.replaced, true);
+  assert.equal(Store.listFaces().length, 2);
+  assert.equal(Store.listFaces().find((f) => f.panel === 'high').script, 'C');
+
+  Store.deleteFace('Kitchen', 'high');
+  assert.deepEqual(Store.listFaces().map((f) => f.panel), ['low']);
+});
+
+test('a face needs a name, and free names do not collide', () => {
+  freshStore();
+  assert.equal(Store.saveFace('   ', 'high', 'A').ok, false);
+
+  assert.equal(Store.freeName('My face', 'high'), 'My face');
+  Store.saveFace('My face', 'high', 'A');
+  assert.equal(Store.freeName('My face', 'high'), 'My face 2');
+  Store.saveFace('My face 2', 'high', 'A');
+  assert.equal(Store.freeName('My face', 'high'), 'My face 3');
+  /* Names are per panel, so the other one starts clean. */
+  assert.equal(Store.freeName('My face', 'low'), 'My face');
+});
+
+test('export round-trips through import', () => {
+  freshStore();
+  Store.saveFace('One', 'high', 'A');
+  Store.saveFace('Two', 'low', 'B');
+  const bundle = Store.exportFaces();
+
+  freshStore();
+  const res = Store.importFaces(bundle);
+  assert.equal(res.ok, true);
+  assert.equal(res.added, 2);
+  assert.equal(res.replaced, 0);
+  assert.deepEqual(Store.listFaces().map((f) => f.name).sort(), ['One', 'Two']);
+
+  /* Importing the same bundle again replaces rather than duplicating. */
+  const twice = Store.importFaces(bundle);
+  assert.equal(twice.replaced, 2);
+  assert.equal(Store.listFaces().length, 2);
+});
+
+test('import refuses what it does not recognise', () => {
+  freshStore();
+  assert.equal(Store.importFaces('not json').ok, false);
+  assert.equal(Store.importFaces('{"format":"something-else"}').ok, false);
+  assert.equal(Store.importFaces(JSON.stringify(
+    { format: 'hema-faces', version: 99, faces: [] })).ok, false);
+  /* A bundle whose entries are all malformed is refused rather than silently
+   * importing nothing and reporting success. */
+  assert.equal(Store.importFaces(JSON.stringify(
+    { format: 'hema-faces', version: 1, faces: [{ name: 'x' }] })).ok, false);
+  assert.equal(Store.listFaces().length, 0);
+});
+
+test('storage that throws does not take the page with it', () => {
+  Store.useStore({
+    getItem() { throw new Error('private mode'); },
+    setItem() { throw new Error('private mode'); },
+    removeItem() { throw new Error('private mode'); },
+  });
+  /* Reads fall back, writes report failure, and nothing propagates - losing a
+   * draft is survivable, an editor that will not load is not. */
+  assert.deepEqual(Store.listFaces(), []);
+  assert.equal(Store.loadDraft('high'), null);
+  assert.equal(Store.saveDraft('high', 'A'), false);
+  assert.equal(Store.saveFace('X', 'high', 'A').ok, false);
+});
+
+test('the gallery filter matches on name, case-insensitively', () => {
+  const faces = [{ name: 'Big clock' }, { name: 'Calendar 中文' },
+                 { name: 'Status' }];
+  assert.deepEqual(filterFaces(faces, '').map((f) => f.name),
+                   ['Big clock', 'Calendar 中文', 'Status'], 'empty shows all');
+  assert.deepEqual(filterFaces(faces, 'CLOCK').map((f) => f.name), ['Big clock']);
+  assert.deepEqual(filterFaces(faces, '  中文 ').map((f) => f.name),
+                   ['Calendar 中文'], 'trimmed, and CJK matches');
+  assert.deepEqual(filterFaces(faces, 'zzz'), []);
+});
+
+test('every element app.js reaches for exists in the page', () => {
+  /* The gallery added a dozen new ids. A typo in one is a TypeError at load
+   * with no test to catch it, because nothing else here touches the DOM - so
+   * this checks the two files against each other statically.
+   *
+   * One direction only: ids built at runtime (`${id}Val`) and ids looked up
+   * from a list would show up as false positives going the other way. */
+  const app = readFileSync(join(HERE, 'app.js'), 'utf8');
+  const html = readFileSync(join(HERE, 'index.html'), 'utf8');
+
+  const used = new Set([...app.matchAll(/\$\('([^']+)'\)/g)].map((m) => m[1]));
+  const have = new Set([...html.matchAll(/id="([^"]+)"/g)].map((m) => m[1]));
+
+  const missing = [...used].filter((id) => !have.has(id));
+  assert.deepEqual(missing, [],
+    `app.js looks up ids the page does not define: ${missing.join(', ')}`);
 });
 
 const FACE_TOOL = join(HERE, '../tools/genfaces.py');
