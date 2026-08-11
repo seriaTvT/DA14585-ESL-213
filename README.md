@@ -64,7 +64,9 @@ which is what makes it a clock rather than a picture.
   already running. See [firmware update over BLE](#firmware-update-over-ble).
 
 The web UI previews a face pixel-for-pixel before you push it, dithers and uploads
-arbitrary images, and sets the clock.
+arbitrary images, and sets the clock. Faces are browsed as thumbnails rendered by
+that same previewer, can be saved and exported, and the editor's contents survive
+a reload.
 
 ---
 

@@ -21,6 +21,7 @@ import { Panel, runScript, expandVars, tagTime, tagSecondsNow, textWidth, evalAr
 import { PRESETS } from './faces_data.js';
 import * as Store from './store.js';
 import { filterFaces } from './gallery.js';
+import * as Crop from './crop.js';
 import { dither, toPanel, surface, DITHERS } from './image.js';
 import { imageBytes, RENDER_ERRORS, CMD_SERVICE, CMD_CHAR,
          IMG_SERVICE, IMG_CHAR, STATUS_CHAR } from './ble.js';
@@ -1221,6 +1222,81 @@ test('storage that throws does not take the page with it', () => {
   assert.equal(Store.loadDraft('high'), null);
   assert.equal(Store.saveDraft('high', 'A'), false);
   assert.equal(Store.saveFace('X', 'high', 'A').ok, false);
+});
+
+/* ------------------------------------------------------------------ */
+/* crop.js - which part of a picture reaches the panel                 */
+/* ------------------------------------------------------------------ */
+
+/* 212x104 landscape, the low panel: a hair over 2:1, which is what makes
+ * cropping matter here rather than being a nicety. */
+const ASPECT = 212 / 104;
+const near = (a, b, what) =>
+  assert.ok(Math.abs(a - b) < 0.001, `${what}: ${a} vs ${b}`);
+
+test('the crop rectangle keeps the frame aspect and fits the image', () => {
+  /* A tall picture: width is the limit, so the rectangle spans it. */
+  let r = Crop.maxRect(1000, 2000, ASPECT);
+  near(r.w / r.h, ASPECT, 'aspect');
+  assert.equal(r.w, 1000);
+  near(r.y, (2000 - 1000 / ASPECT) / 2, 'centred vertically');
+
+  /* A wide one: height is the limit instead. */
+  r = Crop.maxRect(4000, 500, ASPECT);
+  near(r.w / r.h, ASPECT, 'aspect');
+  assert.equal(r.h, 500);
+  near(r.x, (4000 - 500 * ASPECT) / 2, 'centred horizontally');
+});
+
+test('a crop rectangle cannot be dragged off the image', () => {
+  const W = 1000, H = 800;
+  const r = Crop.rectFor(W, H, ASPECT, 2, W / 2, H / 2);
+
+  /* Miles in every direction, one at a time. */
+  let moved = Crop.move(r, -99999, 0, W, H);
+  assert.equal(moved.x, 0);
+  moved = Crop.move(r, 99999, 0, W, H);
+  near(moved.x, W - r.w, 'right edge');
+  moved = Crop.move(r, 0, -99999, W, H);
+  assert.equal(moved.y, 0);
+  moved = Crop.move(r, 0, 99999, W, H);
+  near(moved.y, H - r.h, 'bottom edge');
+
+  /* Size is untouched by any of it. */
+  near(moved.w, r.w, 'width held');
+  near(moved.h, r.h, 'height held');
+});
+
+test('zooming holds the framing still', () => {
+  const W = 1200, H = 900;
+  let r = Crop.rectFor(W, H, ASPECT, 1, W / 2, H / 2);
+  const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+
+  r = Crop.zoomTo(r, W, H, ASPECT, 3);
+  near(r.x + r.w / 2, cx, 'centre x held');
+  near(r.y + r.h / 2, cy, 'centre y held');
+  near(r.w / r.h, ASPECT, 'aspect held');
+  near(Crop.zoomOf(r, W, H, ASPECT), 3, 'round trip');
+});
+
+test('zoom below 1 is refused rather than padding the frame', () => {
+  const W = 1000, H = 800;
+  /* Zoom 1 is already the largest rectangle that fits; anything less would
+   * have to hang off the image, which is what `contain` is for. */
+  const at1 = Crop.rectFor(W, H, ASPECT, 1, W / 2, H / 2);
+  const below = Crop.rectFor(W, H, ASPECT, 0.25, W / 2, H / 2);
+  near(below.w, at1.w, 'clamped to 1');
+  assert.ok(at1.w <= W && at1.h <= H, 'and it fits');
+});
+
+test('a rectangle bigger than the image is shrunk, not just shoved', () => {
+  /* Reachable when the orientation flips under a rectangle drawn for the
+   * other aspect. Clamping position alone would leave it hanging off two
+   * edges at once. */
+  const r = Crop.clamp({ x: -50, y: -50, w: 5000, h: 4000 }, 400, 300);
+  assert.ok(r.w <= 400 && r.h <= 300, 'fits');
+  assert.ok(r.x >= 0 && r.y >= 0, 'inside');
+  near(r.w / r.h, 5000 / 4000, 'shrunk proportionally');
 });
 
 test('the gallery filter matches on name, case-insensitively', () => {

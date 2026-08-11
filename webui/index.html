@@ -211,6 +211,16 @@
   }
   .face-del:hover { color: var(--err); border-color: var(--err); }
   .face-empty { color: var(--dim); font-size: 13px; padding: 18px 2px; }
+
+  /* ---- crop stage -------------------------------------------------------- */
+  #cropStage { margin: 12px 0 4px; }
+  #cropCanvas {
+    display: block; max-width: 100%; height: auto; margin: 0 auto 10px;
+    border-radius: 8px; border: 1px solid var(--edge);
+    touch-action: none;            /* or a drag scrolls the page on touch */
+    cursor: grab;
+  }
+  #cropCanvas.dragging { cursor: grabbing; }
   .note {
     font: 12px/1.5 var(--mono); padding: 7px 10px; border-radius: 6px;
     border-left: 3px solid var(--warn);
@@ -372,6 +382,19 @@
         <span>or click to choose — you can also paste one</span>
         <input type="file" id="file" accept="image/*" hidden>
       </label>
+
+      <!-- The crop stage. Hidden unless Fit is "Crop", because it is only
+           meaningful then and an inert picture of the source would otherwise
+           sit between the drop zone and the controls. -->
+      <div id="cropStage" hidden>
+        <canvas id="cropCanvas"></canvas>
+        <div class="row">
+          <label for="cropZoom">Zoom</label>
+          <input type="range" id="cropZoom" min="100" max="400" value="100">
+          <span class="val" id="cropZoomVal">1.0×</span>
+          <button id="cropReset">Recentre</button>
+        </div>
+      </div>
 
       <div class="ctl" id="imgCtl" disabled>
         <label for="fit">Fit</label>

@@ -8,6 +8,7 @@ import * as Store from './store.js';
 import { renderGallery, filterFaces } from './gallery.js';
 import { Tag, bluetoothProblem, FLUSH_DELAY_MS } from './ble.js';
 import * as Img from './image.js';
+import * as Crop from './crop.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -253,9 +254,22 @@ function showNotes(script, warnings, every = 1) {
 /* Image                                                               */
 /* ------------------------------------------------------------------ */
 
+/* The chosen source rectangle, in image pixels, or null while the crop stage
+ * has not been touched. Reset whenever the image or the frame changes, since a
+ * rectangle is only meaningful against the picture and aspect it was drawn
+ * for - keeping it across either would silently reframe the new one. */
+let cropRect = null;
+
+/** Aspect of the surface the image lands on, for the crop stage. */
+function cropAspect() {
+  const { w, h } = Img.surface($('landscape').checked);
+  return w / h;
+}
+
 /** Current settings, read straight from the controls. */
 function imageOpts() {
   return {
+    crop: cropRect,
     fit: $('fit').value,
     dither: $('ditherSel').value,
     landscape: $('landscape').checked,
@@ -266,10 +280,33 @@ function imageOpts() {
   };
 }
 
+/* Fit the source into the pane, never magnified past 1:1 - a small image
+ * blown up would suggest detail the panel is not going to get. */
+function cropScale() {
+  if (!image) return 1;
+  const avail = $('cropCanvas').parentElement.clientWidth || 420;
+  return Math.min(1, avail / image.width);
+}
+
+function drawCrop() {
+  const on = !!image && $('fit').value === 'crop';
+  $('cropStage').hidden = !on;
+  if (!on) return;
+
+  if (!cropRect) {
+    cropRect = Crop.maxRect(image.width, image.height, cropAspect());
+  }
+  const zoom = Crop.zoomOf(cropRect, image.width, image.height, cropAspect());
+  $('cropZoom').value = String(Math.round(zoom * 100));
+  $('cropZoomVal').textContent = `${zoom.toFixed(1)}×`;
+  Crop.drawStage($('cropCanvas'), image, cropRect, cropScale());
+}
+
 function renderImage() {
   for (const id of ['brightness', 'contrast', 'threshold']) {
     $(`${id}Val`).textContent = $(id).value;
   }
+  drawCrop();
   if (!image) {
     /* Show the frame the image will land in rather than a stale template, so
      * switching tabs makes it obvious the preview now belongs to this pane. */
@@ -289,6 +326,7 @@ function renderImage() {
 async function setImage(blob, name) {
   try {
     image = await Img.loadImage(blob);
+    cropRect = null;                 /* a rectangle belongs to one picture */
     $('imgCtl').removeAttribute('disabled');
     $('drop').classList.add('loaded');
     $('drop').querySelector('b').textContent = name || 'Image loaded';
@@ -689,12 +727,37 @@ function applyImageDefaults() {
 }
 applyImageDefaults();
 
+/* Dragging the selection, and the zoom that resizes it about its own centre.
+ * Both re-run the whole pipeline: it is a few thousand pixels, and the point
+ * of the stage is watching the dithered result follow the frame. */
+Crop.attachDrag($('cropCanvas'),
+  () => ({ rect: cropRect, img: image, scale: cropScale() }),
+  (rect) => { cropRect = rect; renderImage(); });
+
+$('cropZoom').addEventListener('input', () => {
+  if (!image) return;
+  if (!cropRect) cropRect = Crop.maxRect(image.width, image.height, cropAspect());
+  cropRect = Crop.zoomTo(cropRect, image.width, image.height, cropAspect(),
+                         +$('cropZoom').value / 100);
+  renderImage();
+});
+
+$('cropReset').addEventListener('click', () => {
+  cropRect = null;                   /* drawCrop() rebuilds it centred */
+  renderImage();
+});
+
+/* The frame's aspect changes with the orientation, so a rectangle drawn for
+ * the other one no longer means what it did. Same reasoning as a new image. */
+$('landscape').addEventListener('change', () => { cropRect = null; });
+
 for (const id of ['fit', 'ditherSel', 'landscape', 'invert',
                   'brightness', 'contrast', 'threshold']) {
   $(id).addEventListener('input', renderImage);
 }
 $('imgReset').addEventListener('click', () => {
   applyImageDefaults();
+  cropRect = null;                   /* Reset means reset, crop included */
   renderImage();
 });
 

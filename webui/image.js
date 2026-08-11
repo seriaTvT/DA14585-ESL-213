@@ -13,7 +13,8 @@ import { Panel, activePanel } from './epd.js';
 
 export const FITS = {
   contain: 'Contain — whole image, padded',
-  cover:   'Cover — fill the frame, cropped',
+  cover:   'Cover — fill the frame, centre-cropped',
+  crop:    'Crop — drag to choose',
   stretch: 'Stretch — fill, ignore aspect',
 };
 
@@ -33,6 +34,10 @@ export const DEFAULTS = {
   brightness: 0,     /* -100..100, added to the 0..255 tone  */
   contrast: 0,       /* -100..100, pivoted about mid grey    */
   threshold: 128,    /* 0..255, the black/white split point  */
+  /* Source rectangle for fit: 'crop', in image pixels. Null until the crop
+   * stage has been touched, which is why 'crop' falls back to the centred
+   * behaviour rather than drawing nothing. */
+  crop: null,
 };
 
 /* ------------------------------------------------------------------ */
@@ -77,7 +82,8 @@ export async function loadImage(blob) {
  * rounding it at every step is exactly the banding dithering exists to avoid.
  */
 export function rasterize(img, w, h, { fit = 'contain', invert = false,
-                                       brightness = 0, contrast = 0 } = {}) {
+                                       brightness = 0, contrast = 0,
+                                       crop = null } = {}) {
   const cv = document.createElement('canvas');
   cv.width = w;
   cv.height = h;
@@ -90,12 +96,23 @@ export function rasterize(img, w, h, { fit = 'contain', invert = false,
   ctx.imageSmoothingQuality = 'high';
 
   const iw = img.width, ih = img.height;
-  if (fit === 'stretch') {
+  if (fit === 'crop' && crop) {
+    /* An explicit source rectangle, chosen in the crop stage. It is already
+     * the frame's aspect and already inside the image - see crop.js, which
+     * clamps both - so this is a straight blit with no fitting to do. */
+    ctx.drawImage(img, crop.x, crop.y, crop.w, crop.h, 0, 0, w, h);
+  } else if (fit === 'stretch') {
     ctx.drawImage(img, 0, 0, w, h);
   } else {
     /* contain takes the smaller scale so everything fits; cover takes the
-     * larger so nothing is left blank, and the overflow is centre-cropped. */
-    const pick = fit === 'cover' ? Math.max : Math.min;
+     * larger so nothing is left blank, and the overflow is centre-cropped.
+     *
+     * 'crop' with no rectangle yet lands here too, and takes cover's scale on
+     * purpose: the crop stage opens at zoom 1, which is the largest rectangle
+     * of the frame's aspect that fits, and that is the same framing. Falling
+     * back to contain instead would make the preview jump the instant the
+     * stage was touched, without anything having been dragged. */
+    const pick = (fit === 'cover' || fit === 'crop') ? Math.max : Math.min;
     const s = pick(w / iw, h / ih);
     const dw = iw * s, dh = ih * s;
     ctx.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh);
