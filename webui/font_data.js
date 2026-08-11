@@ -292,3 +292,16 @@ export const EPD_FONT_16X24 = 1;
 export const EPD_FONT_CJK16 = 2;
 
 export const FONTS = [F0, F1, F2];
+
+// The character list from tools/glyphs.txt, grouped as that file
+// groups it. The editor shows this so an author can see what the
+// 16x16 font carries before typing something it does not.
+export const GLYPH_SECTIONS = [
+  { title: "weekday - Chinese", chars: "星期" },
+  { title: "weekday - Japanese", chars: "曜火水木金土" },
+  { title: "numerals", chars: "一二三四五六七八九十〇" },
+  { title: "date units", chars: "年月日" },
+  { title: "time units", chars: "时時分秒" },
+  { title: "morning and afternoon - Chinese", chars: "上下午" },
+  { title: "morning and afternoon - Japanese", chars: "前後" },
+];

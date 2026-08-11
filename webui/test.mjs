@@ -22,6 +22,7 @@ import { PRESETS } from './faces_data.js';
 import * as Store from './store.js';
 import { filterFaces } from './gallery.js';
 import * as Crop from './crop.js';
+import { GLYPH_SECTIONS, FONTS, EPD_FONT_CJK16 } from './font_data.js';
 import { dither, toPanel, surface, DITHERS } from './image.js';
 import { imageBytes, RENDER_ERRORS, CMD_SERVICE, CMD_CHAR,
          IMG_SERVICE, IMG_CHAR, STATUS_CHAR } from './ble.js';
@@ -1297,6 +1298,24 @@ test('a rectangle bigger than the image is shrunk, not just shoved', () => {
   assert.ok(r.w <= 400 && r.h <= 300, 'fits');
   assert.ok(r.x >= 0 && r.y >= 0, 'inside');
   near(r.w / r.h, 5000 / 4000, 'shrunk proportionally');
+});
+
+test('every character the reference offers is actually in the font', () => {
+  /* The character panel exists so an author can see what font=2 carries
+   * before typing something it does not. If it listed a character the font
+   * lacked it would be worse than not existing - so this pins the two to
+   * each other rather than to a copy of the list. */
+  const cjk = FONTS[EPD_FONT_CJK16];
+  const has = new Set(cjk.index.map((g) => g[0]));
+
+  assert.ok(GLYPH_SECTIONS.length > 0, 'sections were emitted');
+  for (const { title, chars } of GLYPH_SECTIONS) {
+    assert.ok(chars.length > 0, `${title} is empty`);
+    for (const ch of chars) {
+      assert.ok(has.has(ch.codePointAt(0)),
+        `the reference lists ${ch} under "${title}" but font=2 has no glyph`);
+    }
+  }
 });
 
 test('the gallery filter matches on name, case-insensitively', () => {

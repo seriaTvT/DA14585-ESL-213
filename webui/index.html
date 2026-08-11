@@ -65,7 +65,40 @@
     display: grid; grid-template-columns: minmax(320px, 1fr) minmax(380px, 1.1fr);
     gap: 18px; padding: 18px 20px; max-width: 1220px; margin: 0 auto;
   }
-  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  /* Column one is preview, controls, notes; the editor spans all of it. */
+  #secPreview, #secControls, #secInfo { grid-column: 1; }
+  #secEditor { grid-column: 2; grid-row: 1 / span 3; align-self: start; }
+
+  /* On a phone the columns stack, and the preview would then be a screenful
+     above the sliders that change it - so adjusting a dither meant scrolling
+     up to see what it did and back down to change it again.
+     
+     The preview is pinned instead. That needs `main` out of grid layout: a
+     grid item's containing block is its own track, so a sticky section would
+     unstick the moment its row scrolled past. In flow layout the containing
+     block is `main`, which spans the page, so it stays put the whole way
+     down. It is also why the panel and {T}/{BAT}/{VCC} inputs moved out of
+     this section - what stays pinned should be the picture, not the settings
+     that produced it. */
+  @media (max-width: 860px) {
+    main { display: block; grid-template-columns: none; padding: 12px; }
+    main > section + section { margin-top: 14px; }
+    #secPreview, #secControls, #secInfo, #secEditor {
+      grid-column: auto; grid-row: auto;
+    }
+    #secPreview {
+      position: sticky; top: 0; z-index: 20;
+      padding: 10px;
+      box-shadow: 0 6px 18px rgb(0 0 0 / .28);
+    }
+    #secPreview h2 { display: none; }
+    #secPreview .screen { padding: 8px; }
+    /* Cap it so the pinned picture cannot take the screen. max-width and
+       max-height together keep the aspect, since the canvas carries its own
+       intrinsic size. */
+    #secPreview canvas { max-height: 32vh; }
+    #secPreview .meta { margin-top: 8px; font-size: 12px; gap: 12px; }
+  }
 
   section {
     background: var(--panel); border: 1px solid var(--edge);
@@ -212,6 +245,55 @@
   .face-del:hover { color: var(--err); border-color: var(--err); }
   .face-empty { color: var(--dim); font-size: 13px; padding: 18px 2px; }
 
+  /* ---- character reference ----------------------------------------------- */
+  dialog#saveDlg {
+    width: min(420px, 92vw); padding: 0; border: 1px solid var(--edge);
+    border-radius: 12px; background: var(--panel); color: var(--ink);
+  }
+  dialog#saveDlg::backdrop { background: rgb(0 0 0 / .55); }
+  dialog#saveDlg .gal-body { max-height: none; }
+  dialog#saveDlg input[type=text] {
+    font: inherit; font-size: 13px; padding: 7px 10px; border-radius: 8px;
+    border: 1px solid var(--edge); background: var(--bg); color: var(--ink);
+  }
+
+  dialog#charsDlg {
+    width: min(560px, 92vw); max-height: 86vh; padding: 0;
+    border: 1px solid var(--edge); border-radius: 12px;
+    background: var(--panel); color: var(--ink);
+  }
+  dialog#charsDlg::backdrop { background: rgb(0 0 0 / .55); }
+  .glyph-row { display: flex; flex-wrap: wrap; gap: 6px; }
+  .glyph {
+    font-size: 20px; line-height: 1; min-width: 38px; padding: 7px 4px;
+    border: 1px solid var(--edge); border-radius: 8px; cursor: pointer;
+    background: var(--bg); color: var(--ink); text-align: center;
+  }
+  .glyph:hover { border-color: var(--accent); }
+  .glyph-note { color: var(--dim); font-size: 12px; margin: 4px 0 0; }
+
+  /* ---- editor gutter ------------------------------------------------------ */
+  .editor-wrap {
+    display: flex; width: 100%; border-radius: 8px; overflow: hidden;
+    border: 1px solid var(--edge); background: var(--bg);
+  }
+  .editor-wrap:focus-within { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .gutter {
+    /* Must match the textarea's font and line height exactly, or the numbers
+       drift away from the rows they count - which is worse than no gutter. */
+    font: 13px/1.55 var(--mono); tab-size: 2;
+    padding: 11px 8px 11px 10px; margin: 0; border: 0;   /* 11px = the textarea's */
+    text-align: right; color: var(--dim); background: var(--bg);
+    user-select: none; overflow: hidden; white-space: pre;
+    min-width: 2.5em; flex: none;
+  }
+  .editor-wrap textarea {
+    border: 0; border-radius: 0; flex: 1; min-width: 0;
+  }
+  .editor-wrap textarea:focus { outline: none; }
+  .note-jump { cursor: pointer; }
+  .note-jump:hover { border-color: var(--accent); }
+
   /* ---- crop stage -------------------------------------------------------- */
   #cropStage { margin: 12px 0 4px; }
   #cropCanvas {
@@ -269,9 +351,19 @@
 </header>
 
 <main>
-  <section>
+  <section id="secPreview">
     <h2>Preview</h2>
 
+    <div class="screen"><canvas id="canvas"></canvas></div>
+
+    <div class="meta">
+      <span>Tag time <b id="tagClock">--:--:--</b></span>
+      <span>Rotation <b id="rotOut">–</b></span>
+      <span>Frame <b id="dims">–</b></span>
+    </div>
+  </section>
+
+  <section id="secControls">
     <div class="row" style="margin-bottom:12px">
       <label for="panel">Panel</label>
       <select id="panel"></select>
@@ -283,15 +375,7 @@
       <input type="number" id="previewVcc" min="0" max="3600" step="10" value="2900" style="width:6em">
     </div>
 
-    <div class="screen"><canvas id="canvas"></canvas></div>
-
-    <div class="meta">
-      <span>Tag time <b id="tagClock">--:--:--</b></span>
-      <span>Rotation <b id="rotOut">–</b></span>
-      <span>Frame <b id="dims">–</b></span>
-    </div>
-
-    <div class="row" style="margin-top:14px">
+    <div class="row" style="margin-bottom:12px">
       <button id="push" class="primary" disabled>Push to tag</button>
       <button id="sync" disabled>Sync time</button>
       <label class="check">
@@ -313,6 +397,9 @@
              min="2000-01-01T00:00:01" max="2068-01-19T03:14:07" disabled>
     </div>
 
+  </section>
+
+  <section id="secInfo">
     <p class="hint">
       The tag has no RTC, so it starts at <code>00:00</code> after every power
       cut and needs a fresh <code>TIME()</code>. The face itself is kept in
@@ -341,7 +428,7 @@
     <div id="log"></div>
   </section>
 
-  <section>
+  <section id="secEditor">
     <div class="tabs">
       <button class="tab on" id="tabTemplate">Template</button>
       <button class="tab" id="tabImage">Image</button>
@@ -351,11 +438,18 @@
     <div class="row">
       <button id="browse">Faces…</button>
       <button id="saveFace">Save…</button>
+      <button id="chars">Characters…</button>
       <button id="revert">Revert</button>
       <span class="counter" id="counter">0 / 3072 B</span>
     </div>
     <div class="row">
-      <textarea id="editor" spellcheck="false"></textarea>
+      <!-- The gutter is a sibling that mirrors the textarea's scroll rather
+           than anything clever: a textarea cannot hold markup, and every
+           error this page reports is already phrased as a line number. -->
+      <div class="editor-wrap">
+        <div class="gutter" id="gutter" aria-hidden="true">1</div>
+        <textarea id="editor" spellcheck="false"></textarea>
+      </div>
     </div>
     <div class="notes" id="notes"></div>
     </div>
@@ -374,6 +468,40 @@
       </div>
       <div class="gal-body" id="galBody"></div>
       <p class="gal-foot" id="galFoot"></p>
+    </dialog>
+
+    <!-- What font=2 actually carries. The 16x16 font is a curated list rather
+         than a whole font, so without this the only way to find out whether a
+         character is in it is to type it and read the warning. -->
+    <dialog id="saveDlg">
+      <form method="dialog" id="saveForm">
+        <div class="gal-head">
+          <strong>Save face</strong>
+        </div>
+        <div class="gal-body">
+          <label for="saveName">Name</label>
+          <input type="text" id="saveName" required maxlength="60"
+                 autocomplete="off" style="width:100%;margin-top:6px">
+          <p class="glyph-note" id="saveHint"></p>
+        </div>
+        <div class="gal-head" style="border-top:1px solid var(--edge);border-bottom:0;justify-content:flex-end">
+          <button value="cancel" formnovalidate>Cancel</button>
+          <button value="save" class="primary" id="saveGo">Save</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="charsDlg">
+      <div class="gal-head">
+        <strong>Characters</strong>
+        <button id="charsClose">Close</button>
+      </div>
+      <div class="gal-body" id="charsBody"></div>
+      <p class="gal-foot">
+        Click a character to insert it. The 16×16 font is a list, not a whole
+        font — add to <code>tools/glyphs.txt</code> and re-run
+        <code>tools/genfont.py --emit</code> for anything missing.
+      </p>
     </dialog>
 
     <div id="paneImage" hidden>

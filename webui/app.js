@@ -4,6 +4,7 @@
 import { Panel, runScript, paint, tagSecondsNow, tagTime, EPOCH_2000,
          PANELS, activePanel, setActivePanel } from './epd.js';
 import { FACES, CATEGORIES } from './faces_data.js';
+import { GLYPH_SECTIONS } from './font_data.js';
 import * as Store from './store.js';
 import { renderGallery, filterFaces } from './gallery.js';
 import { Tag, bluetoothProblem, FLUSH_DELAY_MS } from './ble.js';
@@ -169,6 +170,7 @@ const num = (id) => {
 
 function render() {
   showClock();
+  syncGutter();
   if (mode === 'image') { renderImage(); return; }
 
   const script = $('editor').value;
@@ -228,13 +230,14 @@ function showNotes(script, warnings, every = 1) {
     if (l.length >= LINE_MAX) {
       problems.push({
         err: true,
-        msg: `Line ${i + 1} is ${l.length} chars; the tag splits at ${LINE_MAX} `
+        line: i + 1,
+      msg: `Line ${i + 1} is ${l.length} chars; the tag splits at ${LINE_MAX} `
            + 'and the remainder becomes a broken command.',
       });
     }
   });
   for (const w of warnings) {
-    problems.push({ err: false, msg: `Line ${w.line}: ${w.msg}` });
+    problems.push({ err: false, line: w.line, msg: `Line ${w.line}: ${w.msg}` });
   }
 
   const note = everyNote(every);
@@ -246,8 +249,58 @@ function showNotes(script, warnings, every = 1) {
     const div = document.createElement('div');
     div.className = p.err ? 'note err' : 'note';
     div.textContent = p.msg;
+    /* Every note that names a line becomes a way to get to it. The numbers
+     * were already the only handle on a long face, and counting rows in a
+     * textarea by eye is exactly the chore the gutter and this remove. */
+    if (p.line) {
+      div.classList.add('note-jump');
+      div.title = `Go to line ${p.line}`;
+      div.addEventListener('click', () => selectLine(p.line));
+    }
     notes.append(div);
   }
+}
+
+/* Line numbers beside the editor.
+ *
+ * Rebuilt from the line count rather than diffed: a face is a few dozen lines
+ * and rewriting a short string beats tracking which rows changed.
+ *
+ * Wrapped lines are the known limitation - a line past the textarea's width
+ * occupies two rows and the gutter still counts it once, so the numbers slip
+ * below it. The alternative is measuring wrapped rows on every keystroke, and
+ * the language already warns at 128 characters, which is well past the width
+ * this box gets. */
+function syncGutter() {
+  const ed = $('editor');
+  const g = $('gutter');
+  const n = ed.value.split('\n').length;
+  const want = Array.from({ length: n }, (_, i) => i + 1).join('\n');
+  if (g.textContent !== want) g.textContent = want;
+  g.scrollTop = ed.scrollTop;
+}
+
+$('editor').addEventListener('scroll', () => {
+  $('gutter').scrollTop = $('editor').scrollTop;
+});
+
+/** Put the caret on `line` (1-based) and select it, scrolled into view. */
+function selectLine(line) {
+  const ed = $('editor');
+  const lines = ed.value.split('\n');
+  if (line < 1 || line > lines.length) return;
+
+  let from = 0;
+  for (let i = 0; i < line - 1; i++) from += lines[i].length + 1;
+
+  ed.focus();
+  ed.setSelectionRange(from, from + lines[line - 1].length);
+  /* Textareas do not scroll to a programmatic selection on their own. One
+   * line height per row, less a third of the box, puts the target a little
+   * above centre rather than jammed against the top edge. */
+  const lh = parseFloat(getComputedStyle(ed).lineHeight) || 18;
+  ed.scrollTop = Math.max(0, (line - 1) * lh - ed.clientHeight / 3);
+  syncGutter();
 }
 
 /* ------------------------------------------------------------------ */
@@ -628,6 +681,79 @@ function drawGallery() {
     + `previewed time, on the ${activePanel().label} panel.`;
 }
 
+/* ------------------------------------------------------------------ */
+/* What the fonts carry                                                */
+/* ------------------------------------------------------------------ */
+
+/** Put `text` where the caret is, and leave it after what was inserted. */
+function insertAtCaret(text) {
+  const ed = $('editor');
+  const { selectionStart: a, selectionEnd: b, value } = ed;
+  ed.value = value.slice(0, a) + text + value.slice(b);
+  ed.selectionStart = ed.selectionEnd = a + text.length;
+  ed.focus();
+  saveDraftSoon();
+  render();
+}
+
+function buildChars() {
+  const body = $('charsBody');
+  body.replaceChildren();
+
+  const section = (title, chars, note) => {
+    const head = document.createElement('h4');
+    head.className = 'face-group';
+    head.textContent = title;
+    const count = document.createElement('span');
+    count.textContent = String([...chars].length);
+    head.append(count);
+    body.append(head);
+
+    const row = document.createElement('div');
+    row.className = 'glyph-row';
+    for (const ch of chars) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'glyph';
+      b.textContent = ch;
+      b.title = `U+${ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`;
+      b.addEventListener('click', () => insertAtCaret(ch));
+      row.append(b);
+    }
+    body.append(row);
+    if (note) {
+      const p = document.createElement('p');
+      p.className = 'glyph-note';
+      p.textContent = note;
+      body.append(p);
+    }
+  };
+
+  /* Said per font rather than once, because the coverage genuinely differs:
+   * font=1 is digits and a colon, and a face that reaches for a letter there
+   * gets a blank cell. */
+  section('font=0 · 5×7', ' !"#$%&\'()*+,-./0123456789:;<=>?@'
+    + 'ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~°',
+    'Every printable ASCII character, plus the degree sign.');
+  section('font=1 · 16×24', '0123456789:',
+    'Digits and the colon only — anything else draws blank.');
+
+  const note = document.createElement('p');
+  note.className = 'glyph-note';
+  note.style.marginTop = '14px';
+  note.textContent = 'font=2 · 16×16 carries every ASCII character above at '
+    + 'half width, plus these — grouped as tools/glyphs.txt groups them:';
+  body.append(note);
+
+  for (const g of GLYPH_SECTIONS) section(g.title, g.chars);
+}
+
+$('chars').addEventListener('click', () => {
+  buildChars();
+  $('charsDlg').showModal();
+});
+$('charsClose').addEventListener('click', () => $('charsDlg').close());
+
 $('browse').addEventListener('click', () => {
   $('galFilter').value = '';
   drawGallery();
@@ -639,10 +765,37 @@ $('galFilter').addEventListener('input', drawGallery);
 
 $('saveFace').addEventListener('click', () => {
   const key = activePanel().key;
-  const suggested = Store.freeName('My face', key);
-  const name = prompt('Save this face as:', suggested);
-  if (name === null) return;
+  $('saveName').value = Store.freeName('My face', key);
+  updateSaveHint();
+  $('saveDlg').showModal();
+  $('saveName').select();
+});
 
+/* Say up front whether this will replace something, rather than after the
+ * fact: saving over a face is the one action here that loses work, and the
+ * name field is where the user can still change their mind. */
+function updateSaveHint() {
+  const key = activePanel().key;
+  const name = $('saveName').value.trim();
+  const clash = Store.listFaces()
+    .some((f) => f.name === name && f.panel === key);
+  $('saveHint').textContent = !name
+    ? 'A face needs a name.'
+    : clash
+      ? `Replaces the saved “${name}” for this panel.`
+      : `Saved for the ${activePanel().label} panel.`;
+  $('saveGo').textContent = clash ? 'Replace' : 'Save';
+}
+
+$('saveName').addEventListener('input', updateSaveHint);
+
+$('saveForm').addEventListener('submit', (e) => {
+  /* method="dialog" closes on either button, so the value distinguishes them
+   * and Cancel needs no handler of its own. */
+  if (e.submitter && e.submitter.value !== 'save') return;
+
+  const key = activePanel().key;
+  const name = $('saveName').value;
   const res = Store.saveFace(name, key, $('editor').value);
   if (!res.ok) { log(res.reason, 'err'); return; }
   lastLoaded = $('editor').value;

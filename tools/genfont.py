@@ -48,6 +48,7 @@ LICENCE
     hand-drawn fonts stay hand-drawn for the same reason.
 """
 import argparse
+import json
 import sys
 import unicodedata
 from pathlib import Path
@@ -335,7 +336,22 @@ extern const epd_font_t EPD_FONTS[EPD_FONT_COUNT];
 '''
 
 
-def emit_js(fonts):
+def glyph_sections(entries):
+    """The manifest's own grouping, in file order, for the web UI's character
+    reference. Emitted because glyphs.txt is the only place that says *why* a
+    character is in the font, and a bare list of codepoints does not help
+    anyone decide whether the one they want is there."""
+    out, seen = [], {}
+    for ch, _lang, section in entries:
+        if section not in seen:
+            seen[section] = []
+            out.append((section, seen[section]))
+        if ch not in seen[section]:
+            seen[section].append(ch)
+    return [(name, ''.join(chars)) for name, chars in out if chars]
+
+
+def emit_js(fonts, sections=()):
     parts = ['// ' + BANNER.replace('\n', '\n// '),
              '//\n// Mirrors epd_font_data.c. The preview and the panel have to'
              ' agree about what\n// a character looks like, so both come from '
@@ -351,6 +367,16 @@ def emit_js(fonts):
         names.append(f'F{i}')
     ids = '\n'.join(f'export const {f.cid} = {i};' for i, f in enumerate(fonts))
     parts.append(f'{ids}\n\nexport const FONTS = [{", ".join(names)}];\n')
+
+    rows = ',\n'.join(
+        f'  {{ title: {json.dumps(t, ensure_ascii=False)}, '
+        f'chars: {json.dumps(c, ensure_ascii=False)} }}'
+        for t, c in sections)
+    parts.append(
+        '// The character list from tools/glyphs.txt, grouped as that file\n'
+        '// groups it. The editor shows this so an author can see what the\n'
+        '// 16x16 font carries before typing something it does not.\n'
+        f'export const GLYPH_SECTIONS = [\n{rows},\n];\n')
     return '\n'.join(parts)
 
 
@@ -391,6 +417,7 @@ def main():
         sys.exit('a codepoint is stored once - settle it in glyphs.txt')
 
     fonts = build_all(chosen)
+    sections_js = glyph_sections(entries)
 
     if args.show:
         show(args.show, chosen, fonts)
@@ -402,7 +429,7 @@ def main():
         stale = [p.relative_to(ROOT)
                  for p, text in ((C_OUT, emit_c(fonts)),
                                  (H_OUT, emit_h(fonts)),
-                                 (JS_OUT, emit_js(fonts)))
+                                 (JS_OUT, emit_js(fonts, sections_js)))
                  if not p.exists() or p.read_text(encoding='utf-8') != text]
         if stale:
             for p in stale:
@@ -436,7 +463,7 @@ def main():
     if args.emit:
         C_OUT.write_text(emit_c(fonts), encoding='utf-8')
         H_OUT.write_text(emit_h(fonts), encoding='utf-8')
-        JS_OUT.write_text(emit_js(fonts), encoding='utf-8')
+        JS_OUT.write_text(emit_js(fonts, sections_js), encoding='utf-8')
         for p in (C_OUT, H_OUT, JS_OUT):
             print(f'wrote {p.relative_to(ROOT)}')
     else:
