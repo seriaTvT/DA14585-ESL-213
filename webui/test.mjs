@@ -22,6 +22,7 @@ import { PRESETS } from './faces_data.js';
 import * as Store from './store.js';
 import { filterFaces } from './gallery.js';
 import * as Crop from './crop.js';
+import { nextValue } from './wheel.js';
 import { GLYPH_SECTIONS, FONTS, EPD_FONT_CJK16 } from './font_data.js';
 import { dither, toPanel, surface, DITHERS } from './image.js';
 import { imageBytes, RENDER_ERRORS, CMD_SERVICE, CMD_CHAR,
@@ -1316,6 +1317,65 @@ test('every character the reference offers is actually in the font', () => {
         `the reference lists ${ch} under "${title}" but font=2 has no glyph`);
     }
   }
+});
+
+test('wheel stepping respects the slider it is on', () => {
+  const b = { min: 0, max: 100, step: 1 };
+  /* Up is more, the way it is everywhere else - and deltaY is negative up. */
+  assert.equal(nextValue(50, b, -1), 51);
+  assert.equal(nextValue(50, b, 1), 49);
+  assert.equal(nextValue(50, b, -1, true), 60, 'shift takes ten');
+
+  /* Both ends hold, which is also what tells attachWheel to give the scroll
+   * back to the page rather than swallow it. */
+  assert.equal(nextValue(100, b, -1), 100);
+  assert.equal(nextValue(0, b, 1), 0);
+  assert.equal(nextValue(97, b, -1, true), 100, 'coarse clamps too');
+
+  /* A value off the step grid lands on it rather than carrying the offset. */
+  assert.equal(nextValue(7, { min: 0, max: 100, step: 5 }, -1), 10);
+  assert.equal(nextValue(7, { min: 0, max: 100, step: 5 }, 1), 5);
+
+  /* Ranges that do not start at zero measure the grid from min. */
+  assert.equal(nextValue(0, { min: -100, max: 100, step: 3 }, -1), 2);
+
+  /* Fractional steps must not leak binary error into the label. */
+  assert.equal(nextValue(0.3, { min: 0, max: 1, step: 0.1 }, -1), 0.4);
+});
+
+test('wheel zoom keeps the point under the pointer', () => {
+  const W = 1000, H = 800, A = 212 / 104;
+  const start = Crop.maxRect(W, H, A);
+
+  /* Somewhere off-centre, but far enough from the edges that the result is
+   * not clamped - clamping legitimately moves the anchor, so a test that hit
+   * it would be checking the wrong thing. */
+  const ax = 600, ay = 300;
+  const tx = (ax - start.x) / start.w;
+  const ty = (ay - start.y) / start.h;
+
+  const zoomed = Crop.zoomAt(start, W, H, A, 2, ax, ay);
+  near(Crop.zoomOf(zoomed, W, H, A), 2, 'zoom applied');
+  near((ax - zoomed.x) / zoomed.w, tx, 'anchor held horizontally');
+  near((ay - zoomed.y) / zoomed.h, ty, 'anchor held vertically');
+  near(zoomed.w / zoomed.h, A, 'aspect held');
+
+  /* Anchored on the centre is the same thing as zooming about the centre. */
+  const cx = start.x + start.w / 2, cy = start.y + start.h / 2;
+  const byCentre = Crop.zoomTo(start, W, H, A, 3);
+  const byAnchor = Crop.zoomAt(start, W, H, A, 3, cx, cy);
+  near(byAnchor.x, byCentre.x, 'centre anchor matches zoomTo');
+  near(byAnchor.y, byCentre.y, 'centre anchor matches zoomTo');
+});
+
+test('wheel zoom near an edge stays inside the image', () => {
+  const W = 1000, H = 800, A = 212 / 104;
+  const start = Crop.maxRect(W, H, A);
+  /* The corner: the anchor cannot be held here, and staying inside wins. */
+  const r = Crop.zoomAt(start, W, H, A, 4, 0, 0);
+  assert.ok(r.x >= -0.001 && r.y >= -0.001, 'not off the top left');
+  assert.ok(r.x + r.w <= W + 0.001 && r.y + r.h <= H + 0.001, 'nor the far side');
+  near(r.w / r.h, A, 'aspect held');
 });
 
 test('the gallery filter matches on name, case-insensitively', () => {

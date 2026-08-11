@@ -70,6 +70,28 @@ export function zoomTo(rect, imgW, imgH, aspect, zoom) {
                  zoom, rect.x + rect.w / 2, rect.y + rect.h / 2);
 }
 
+/**
+ * Re-zoom keeping the image point (ax, ay) where it is on screen.
+ *
+ * What the wheel wants: zooming about the rectangle's centre pulls whatever
+ * you were pointing at away from the pointer, so following a detail means
+ * zoom, drag, zoom, drag. Holding the anchor at the same fraction of the
+ * rectangle keeps it under the cursor instead.
+ *
+ * Clamping can still shift it - an anchor near an edge cannot stay put once
+ * the rectangle hits the boundary - and that is the correct trade: staying
+ * inside the image matters more than holding the point exactly.
+ */
+export function zoomAt(rect, imgW, imgH, aspect, zoom, ax, ay) {
+  const base = maxRect(imgW, imgH, aspect);
+  const z = Math.max(1, zoom);
+  const w = base.w / z;
+  const h = base.h / z;
+  const tx = rect.w ? (ax - rect.x) / rect.w : 0.5;
+  const ty = rect.h ? (ay - rect.y) / rect.h : 0.5;
+  return clamp({ x: ax - tx * w, y: ay - ty * h, w, h }, imgW, imgH);
+}
+
 /** How far `rect` is zoomed in, the inverse of rectFor's `zoom`. */
 export function zoomOf(rect, imgW, imgH, aspect) {
   const base = maxRect(imgW, imgH, aspect);

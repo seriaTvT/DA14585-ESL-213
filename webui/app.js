@@ -10,6 +10,7 @@ import { renderGallery, filterFaces } from './gallery.js';
 import { Tag, bluetoothProblem, FLUSH_DELAY_MS } from './ble.js';
 import * as Img from './image.js';
 import * as Crop from './crop.js';
+import { attachWheel } from './wheel.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -886,6 +887,46 @@ applyImageDefaults();
 Crop.attachDrag($('cropCanvas'),
   () => ({ rect: cropRect, img: image, scale: cropScale() }),
   (rect) => { cropRect = rect; renderImage(); });
+
+/* Where a pointer event lands, in source-image pixels.
+ *
+ * Two scales, and both are needed: drawStage() sizes the bitmap at
+ * cropScale(), and CSS then shrinks the element to fit the column
+ * (max-width: 100%). Using the bitmap scale alone puts the anchor wrong on
+ * any narrow window, which is exactly where it would go unnoticed. */
+function imagePointAt(e) {
+  const c = $('cropCanvas');
+  const box = c.getBoundingClientRect();
+  if (!box.width || !box.height) return null;
+  const bitmapX = (e.clientX - box.left) * (c.width / box.width);
+  const bitmapY = (e.clientY - box.top) * (c.height / box.height);
+  const s = cropScale();
+  return { x: bitmapX / s, y: bitmapY / s };
+}
+
+/* Wheel over the crop stage zooms about the pointer. A notch is 1.15x, which
+ * is a dozen or so notches across the useful range - fine enough to stop on
+ * what you wanted, coarse enough to cross it without spinning. */
+$('cropCanvas').addEventListener('wheel', (e) => {
+  if (!image || $('fit').value !== 'crop') return;
+  const at = imagePointAt(e);
+  if (!at) return;
+  e.preventDefault();
+
+  if (!cropRect) cropRect = Crop.maxRect(image.width, image.height, cropAspect());
+  const zoom = Crop.zoomOf(cropRect, image.width, image.height, cropAspect())
+             * (e.deltaY < 0 ? 1.15 : 1 / 1.15);
+  cropRect = Crop.zoomAt(cropRect, image.width, image.height, cropAspect(),
+                         zoom, at.x, at.y);
+  renderImage();
+}, { passive: false });
+
+/* Every slider takes the wheel too. Shift for ten steps at a time, and a
+ * scroll that has hit either end is handed back to the page rather than
+ * swallowed - see attachWheel(). */
+for (const id of ['cropZoom', 'brightness', 'contrast', 'threshold']) {
+  attachWheel($(id));
+}
 
 $('cropZoom').addEventListener('input', () => {
   if (!image) return;
