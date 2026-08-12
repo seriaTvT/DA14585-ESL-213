@@ -16,6 +16,7 @@
 #include "epd_cmdparser.h"
 #include "epd_gfx.h"
 #include "epd_ssd1680.h"
+#include "epd_board.h"      /* epd_board_last() - which tag this is, for the name */
 #include "app_easy_timer.h"
 #include "epd_time.h"
 #include "epd_store.h"
@@ -566,6 +567,26 @@ static void user_dev_name_init(void)
     char *p = &s_dev_name[USER_DEVICE_NAME_LEN - 6];
 
     s_dev_name_ready = true;
+
+    /* Say what this TAG is, not what the image was built for - the two are no
+     * longer the same thing, and the name is the only place a person sees it
+     * before connecting. Derived from the board record: the variant is whether
+     * it carries a pin map (only variant A does), the resolution is the panel
+     * the driver settled on, and the type number is the pairing of the two,
+     * which is exactly the table in config/tag_types.h.
+     *
+     * A tag whose record could not be read never gets here with a panel to
+     * describe - periph_init() stops before the driver starts - so the
+     * placeholder's "?xx" surviving in a scanner is itself a diagnosis. */
+    {
+        const bool low = (epd_width < 122u);
+        const bool var_a = epd_board_last()->have_pinmap;
+
+        s_dev_name[1] = var_a ? (low ? '3' : '2') : (low ? '4' : '1');
+        s_dev_name[2] = var_a ? 'A' : 'B';
+        s_dev_name[3] = low ? 'L' : 'H';
+    }
+
     if (bd == NULL) {
         return;                 /* leave the placeholder's zeroes visible */
     }

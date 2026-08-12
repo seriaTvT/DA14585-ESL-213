@@ -163,7 +163,7 @@ typedef enum {
 } epd_err_t;
 
 /** Length of the status report written by epd_cmd_status(). */
-#define EPD_STATUS_LEN  10
+#define EPD_STATUS_LEN  14
 
 /** Fill `out` with the status of the most recent epd_cmd_run():
  *
@@ -184,6 +184,16 @@ typedef enum {
  *   [7] stored script length, high byte
  *   [8] repaint interval in minutes, low byte   (format 2 and later)
  *   [9] repaint interval, high byte
+ *  [10] panel width in pixels, low byte        (format 3 and later)
+ *  [11] panel width, high byte
+ *  [12] panel height in pixels, low byte
+ *  [13] panel height, high byte
+ *
+ * The geometry is here because it is no longer knowable from the firmware
+ * revision string: one image drives both panels and learns which at boot, so
+ * the build cannot state it. A client needs it - the image service takes a raw
+ * 1bpp framebuffer, and the wrong size is not a rendering error but an
+ * unusable transfer.
  *
  * Only the first problem is located, not all of them: an author fixes one and
  * pushes again, and carrying a list would cost buffer the script needs more.

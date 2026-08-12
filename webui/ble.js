@@ -52,6 +52,14 @@ export function decodeStatus(view) {
      * opinion" rather than a confident 0 read off the end of the buffer - the
      * exact mistake the format byte exists to prevent. */
     every: view.byteLength >= 10 ? b(8) | (b(9) << 8) : null,
+    /* Format 3 appended the tag's REAL panel geometry, and it is worth more
+     * than it looks: one firmware image now drives both panels and learns
+     * which at boot, so the firmware revision string no longer states it and
+     * nothing else here can. imageBytes() below still takes the panel from the
+     * chooser - if these are non-null they are the tag's own answer and should
+     * win over whatever was picked by hand. */
+    width:  view.byteLength >= 14 ? b(10) | (b(11) << 8) : null,
+    height: view.byteLength >= 14 ? b(12) | (b(13) << 8) : null,
   };
 }
 

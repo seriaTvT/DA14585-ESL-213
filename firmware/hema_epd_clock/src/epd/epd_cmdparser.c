@@ -1088,39 +1088,53 @@ void epd_cmd_begin_batch(void)
  * sizes, since the fonts do not scale with the frame. Both are mirrored in
  * webui/presets.js as 'Built-in default' and a test diffs them, so the preset
  * and the tag cannot drift apart. */
-#if defined(EPD_PANEL_LOW_RES)
+/* BOTH are carried, and the panel picks one at boot.
+ *
+ * This was a #if on EPD_PANEL_LOW_RES, which was right while an image knew
+ * which panel it would meet. It does not any more - the geometry comes off the
+ * tag (epd_geometry_init()) - and a compile-time face is the one thing left
+ * that a tag cannot correct. The symptom is precise and was seen on hardware:
+ * an A41-built image drove an A53 panel with the right pins, the right window
+ * and 4000-byte frames, and drew its clock into the top-left 212x104 of it.
+ *
+ * Costs the length of the unused string, ~200 bytes, which is the going rate
+ * for the last compile-time panel assumption in the drawing path. */
 
 /* 212 x 104 landscape, middle x=106. HH:MM at font=1 scale=2 is 168x48, which
  * leaves 56 px for the two 14 px lines under it: 8 above, 8 between, 6 and 6
  * around the pair, 6 below. */
-static const char DEFAULT_FACE[] =
+static const char DEFAULT_FACE_LOW[] =
     "ROTATE(270)\n"
     "CLEAR(1)\n"
     "TEXT(106,8,'{H:02d}:{N:02d}',font=1,scale=2,align=1)\n"
     "TEXT(106,64,'{y}-{m:02d}-{d:02d}',scale=2,align=1)\n"
     "TEXT(106,84,'{W}',scale=2,align=1)\n";
 
-#else
-
 /* 250 x 122 landscape, middle x=125. */
-static const char DEFAULT_FACE[] =
+static const char DEFAULT_FACE_HIGH[] =
     "ROTATE(270)\n"
     "CLEAR(1)\n"
     "TEXT(125,18,'{H:02d}:{N:02d}',font=1,scale=2,align=1)\n"
     "TEXT(125,78,'{y}-{m:02d}-{d:02d}',scale=2,align=1)\n"
     "TEXT(125,100,'{W}',scale=2,align=1)\n";
 
-#endif
-
 void epd_cmd_load_default(void)
 {
-    uint16_t n = (uint16_t)(sizeof(DEFAULT_FACE) - 1);   /* drop the NUL */
+    /* Keyed on the width the driver is actually using. The two panels this
+     * firmware knows are 104 and 122 wide, so anything narrower than the large
+     * one is the small one; written as a threshold rather than == 104 so an
+     * unrecognised geometry gets the face that fits inside it rather than one
+     * that overhangs. */
+    const char *face = (epd_width < 122u) ? DEFAULT_FACE_LOW : DEFAULT_FACE_HIGH;
+    uint16_t n = (uint16_t)((face == DEFAULT_FACE_LOW
+                             ? sizeof(DEFAULT_FACE_LOW)
+                             : sizeof(DEFAULT_FACE_HIGH)) - 1);  /* drop NUL */
 
     if (n > CMD_SCRIPT_MAX - 1) {
         return;                      /* cannot happen; keeps the copy honest */
     }
     for (uint16_t i = 0; i < n; i++) {
-        s_script[i] = DEFAULT_FACE[i];
+        s_script[i] = face[i];
     }
     s_script_len = n;
     s_script_full = false;
@@ -1391,7 +1405,7 @@ void epd_cmd_run(void)
 
 void epd_cmd_status(uint8_t out[EPD_STATUS_LEN])
 {
-    out[0] = 2;                                     /* report format version */
+    out[0] = 3;                                     /* report format version */
     out[1] = s_err_code;
     out[2] = (uint8_t)(s_err_line & 0xFF);
     out[3] = (uint8_t)(s_err_line >> 8);
@@ -1405,4 +1419,17 @@ void epd_cmd_status(uint8_t out[EPD_STATUS_LEN])
      * the tag never parsed, short of watching the panel for an hour. */
     out[8] = (uint8_t)(s_every_min & 0xFF);
     out[9] = (uint8_t)(s_every_min >> 8);
+    /* The panel this tag actually has, in pixels (format 3 and later).
+     *
+     * It used to be discoverable only from HEMA_COMPAT_STR in the Device
+     * Information Service, which described the BUILD. That stopped being the
+     * same thing when the geometry started coming off the tag, and the gap
+     * matters: the image service takes a raw 1bpp framebuffer, so a client that
+     * guesses the size wrong sends a picture that cannot be laid out. Reported
+     * here because this characteristic is already the tag's own account of
+     * itself, and already runtime. */
+    out[10] = (uint8_t)(epd_width & 0xFF);
+    out[11] = (uint8_t)(epd_width >> 8);
+    out[12] = (uint8_t)(epd_height & 0xFF);
+    out[13] = (uint8_t)(epd_height >> 8);
 }
