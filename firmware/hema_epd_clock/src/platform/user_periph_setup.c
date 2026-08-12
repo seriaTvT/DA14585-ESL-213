@@ -81,41 +81,56 @@ void GPIO_reservations(void)
     RESERVE_GPIO(SPI_MOSI, SPI_DO_PORT,  SPI_DO_PIN,  PID_SPI_DO);
     RESERVE_GPIO(SPI_MISO, SPI_DI_PORT,  SPI_DI_PIN,  PID_SPI_DI);
 
-#if EPD_BITBANG && !EPD_PANEL_PADS_SHARED
-    /* The panel's clock and data, as plain GPIOs, where they are pads of their
-     * own. Both variants bit-bang, but variant B does it on the three pads
-     * already reserved above, and reserving a pin twice is not harmless here:
-     * RESERVE_GPIO sets the slot to -1 on the second call and then shifts that
-     * into the mask, which turns GPIO_status into a smear of set bits and
-     * disarms the monitor for pins that really were never reserved. GPIO_init()
-     * catches it with its own __BKPT(0) ("this pin has been previously
-     * reserved!"), which presents as a hang at boot - the same symptom the note
-     * above warns about, from the opposite cause. */
-    RESERVE_GPIO(EPD_SCK, EPD_SCK_PORT, EPD_SCK_PIN, PID_GPIO);
-    RESERVE_GPIO(EPD_SDA, EPD_SDA_PORT, EPD_SDA_PIN, PID_GPIO);
-#endif
-
-    /* Variant A's spare enable line. Named only on that board - see
-     * epd_gpio_init(). */
-#ifdef EPD_AUX_PORT
-    RESERVE_GPIO(EPD_AUX, EPD_AUX_PORT, EPD_AUX_PIN, PID_GPIO);
-#endif
-
-    /* EPD control lines - all plain GPIO (see epd_ssd1680.h)
+    /* The panel's pins - the UNION of every map this image might load, not the
+     * ones it will actually use.
      *
-     * These are compile-time, and they have to stay that way: GPIO_init() runs
-     * this before periph_init(), so before the boot flash has been read and
-     * therefore before the board could have said what it is. When the driver's
-     * pin table starts coming from flash, THIS list must widen to the union of
-     * every map an image might load - a pin configured without being reserved
-     * here is __BKPT(0) at boot, which presents as a hang inside
-     * GPIO_ConfigurePin. Reserving a pin that then goes unused is harmless;
-     * failing to reserve one that gets used is not. */
-    RESERVE_GPIO(EPD_CS,   EPD_CS_PORT,   EPD_CS_PIN,   PID_GPIO);
-    RESERVE_GPIO(EPD_DC,   EPD_DC_PORT,   EPD_DC_PIN,   PID_GPIO);
-    RESERVE_GPIO(EPD_RST,  EPD_RST_PORT,  EPD_RST_PIN,  PID_GPIO);
-    RESERVE_GPIO(EPD_BUSY, EPD_BUSY_PORT, EPD_BUSY_PIN, PID_GPIO);
-    RESERVE_GPIO(EPD_PWR,  EPD_PWR_PORT,  EPD_PWR_PIN,  PID_GPIO);
+     * It has to be the union, and it has to be written out literally, because
+     * this function runs from GPIO_init() long before periph_init() and so long
+     * before the boot flash could say which board this is. The map is chosen at
+     * runtime now (epd_pins_init() in epd/epd_ssd1680.c); the reservations
+     * cannot be.
+     *
+     * The asymmetry is what makes this safe. Reserving a pin that goes unused
+     * costs nothing - the monitor only ever asks "was this reserved?" - while
+     * configuring one that was not reserved is __BKPT(0), which halts the core
+     * inside GPIO_ConfigurePin and presents as a boot hang rather than as a
+     * missing line here. So this list is deliberately generous.
+     *
+     *   pin    variant A        variant B
+     *   ----   --------------   --------------
+     *   P0_0   (SPI_CLK)        SCK            reserved above, both
+     *   P0_1   SCK              -
+     *   P0_5   (SPI_DI)         DC             above on A only; see below
+     *   P0_6   (SPI_DO)         SDA            reserved above, both
+     *   P0_7   DC               RST
+     *   P1_0   RST              -
+     *   P1_1   BUSY             aux (unused by us)
+     *   P2_0   SDA              BUSY
+     *   P2_1   CS               CS
+     *   P2_2   aux              -
+     *   P2_3   PWR              PWR
+     *
+     * Duplicates matter: RESERVE_GPIO sets its slot to -1 on a second call and
+     * shifts that into GPIO_status, smearing set bits across the mask and
+     * disarming the monitor for pins that really were never reserved.
+     * GPIO_init() catches it with its own __BKPT(0) ("this pin has been
+     * previously reserved!") - the same boot hang, from the opposite cause. So
+     * the three pads already taken as SPI above are not repeated here. */
+    RESERVE_GPIO(EPD_SCK_A,  GPIO_PORT_0, GPIO_PIN_1, PID_GPIO);
+    RESERVE_GPIO(EPD_DC_A,   GPIO_PORT_0, GPIO_PIN_7, PID_GPIO);
+    RESERVE_GPIO(EPD_RST_A,  GPIO_PORT_1, GPIO_PIN_0, PID_GPIO);
+    RESERVE_GPIO(EPD_BUSY_A, GPIO_PORT_1, GPIO_PIN_1, PID_GPIO);
+    RESERVE_GPIO(EPD_SDA_A,  GPIO_PORT_2, GPIO_PIN_0, PID_GPIO);
+    RESERVE_GPIO(EPD_CS,     GPIO_PORT_2, GPIO_PIN_1, PID_GPIO);
+    RESERVE_GPIO(EPD_AUX_A,  GPIO_PORT_2, GPIO_PIN_2, PID_GPIO);
+    RESERVE_GPIO(EPD_PWR,    GPIO_PORT_2, GPIO_PIN_3, PID_GPIO);
+
+#if !defined(EPD_BOARD_VARIANT_A)
+    /* Variant B's D/C. On variant A this same pad is the flash's MISO and was
+     * reserved as SPI_DI above, so claiming it again would trip the check the
+     * comment above describes. */
+    RESERVE_GPIO(EPD_DC_B, GPIO_PORT_0, GPIO_PIN_5, PID_GPIO);
+#endif
 
     /* Boot-flash chip select, driven by epd_store.c when it borrows the bus to
      * persist the template. Every pin passed to GPIO_ConfigurePin() has to be
@@ -147,9 +162,10 @@ void set_pad_functions(void)
     GPIO_ConfigurePin(SPI_DO_PORT,  SPI_DO_PIN,  OUTPUT, PID_SPI_DO,  false);
     GPIO_ConfigurePin(SPI_DI_PORT,  SPI_DI_PIN,  INPUT,  PID_SPI_DI,  false);
 
-    // Configure the EPD's CS/DC/RST/BUSY/PWR pins (recovered from the stock
-    // firmware and continuity-confirmed — see epd_ssd1680.h).
-    epd_gpio_init();
+    // NOT epd_gpio_init() - see periph_init(). The panel's pins cannot be
+    // configured here any more, because which pins they are is now a question
+    // the boot flash answers, and the flash is not readable until the pads
+    // above exist and the latch is on.
 }
 
 // Configuration struct for the SPI master driving the EPD panel.
@@ -196,10 +212,40 @@ void periph_init(void)
     GPIO_set_pad_latch_en(true);
 
     /* Ask the board what it is, before anything drives a panel pin. Reads the
-     * record at flash 0x039000 and only records what it found; see
-     * epd/epd_board.h. Must come before epd_spi_claim(), because it takes the
-     * flash bus - and hands it back via epd_spi_claim() itself. */
+     * record at flash 0x039000; see epd/epd_board.h. Must come before
+     * epd_spi_claim(), because it takes the flash bus - and hands it back via
+     * epd_spi_claim() itself.
+     *
+     * "Before anything drives a panel pin" is now load-bearing rather than
+     * tidy: the pin map comes out of this read, so epd_gpio_init() cannot run
+     * until it has. Note the one pin this order cannot protect - flash_bus_
+     * acquire() has to park the panel's chip select before it takes the bus,
+     * and at this instant the map is still unknown, so it parks the one the
+     * BUILD names. That is correct on every board we have (CS is P2_1 in both
+     * maps and in both records) and is re-established from the real map by
+     * epd_gpio_init() a few lines below. A board that moved CS would need this
+     * read done through a bus the panel cannot hear at all. */
     epd_board_check();
+
+    /* A tag whose flash will not answer has not told us which board it is, and
+     * there is no safe guess: the two maps overlap on P1_1 with OPPOSITE
+     * directions, so driving the wrong one puts an output onto the panel's BUSY
+     * line. Better a dark panel that still keeps time and answers over BLE -
+     * and says EPD_BOARD_UNREADABLE when asked - than a tag that looks fine and
+     * is fighting its own screen.
+     *
+     * Deliberately NOT a fallback to the compiled-in map. That version was
+     * written and then removed: the build's map is right on the tag the build
+     * was made for, so it would pass every bench test and hide the failure
+     * until an image met a board it was not built for, which is the only case
+     * any of this exists for. */
+    if (epd_board_verdict() == EPD_BOARD_UNREADABLE) {
+        return;
+    }
+
+    /* Now the panel's pins, from the map the tag gave us. Everything
+     * downstream goes through the table this fills. */
+    epd_gpio_init();
 
     // Bring up the SPI bus and run the EPD's SSD1680 init sequence.
     // NOTE: harmless to call before pairing/advertising is set up - the

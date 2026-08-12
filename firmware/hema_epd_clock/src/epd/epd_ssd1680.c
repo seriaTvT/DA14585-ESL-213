@@ -120,25 +120,49 @@ const char hema_compat_tag[] = HEMA_COMPAT_TAG;
  * Indexed by epd_board_signal_t so the two describe the same eight signals in
  * the same order, and a record decoded from flash can be dropped straight in.
  *
- * WHAT THIS COSTS TODAY: nothing, and not for a flattering reason. Because
- * epd_pins_init() writes only compile-time constants, -flto propagates them
- * through every read and folds the table out of existence - on a Type 4 build
- * s_sda_set is a uint32_t that llvm-nm reports as one byte and that reads back
- * as 1 on the tag, because nothing loads it any more.
+ * MEASURED COST, on a Type 3 whose record carries an explicit map: +196 bytes
+ * of image, and nothing in the frame - the bit loop reads the cached addresses
+ * below and never indexes this.
  *
- * So this arrangement is NOT yet evidence that a runtime map works. It cannot
- * be: the compiler removes the runtime part. What it is worth is that the 41
- * call sites no longer name their pins, which makes seeding the table from
- * flash a change to one function instead of a rewrite. The real cost - and a
- * real measurement - arrives with that change, when the values stop being
- * knowable at compile time. Expect both the size and the frame time to move
- * then, and do not treat today's numbers as the baseline. */
+ * Both halves of that are worth stating, because an earlier revision seeded
+ * this table from the macros alone and appeared to cost nothing at all. It was
+ * not runtime: -flto proved the writes were constants, propagated them, and
+ * folded the table away - llvm-nm reported s_sda_set, a uint32_t, as one byte.
+ * A map that comes off the flash cannot be folded, so these are real now, and
+ * checking that they are is a one-line check worth repeating after any change
+ * here: `llvm-nm -S <elf> | grep s_pin` should say 16 bytes, not fragments.
+ *
+ * Initialised statically rather than by a function, so it holds this build's
+ * map from reset. That is what lets epd_cs_park() be safe before the board has
+ * been read - which it must be, since the read that fetches the map is itself
+ * a flash transaction that has to park CS first. */
 typedef struct {
     uint8_t port;
     uint8_t pin;
 } epd_pin_t;
 
-static epd_pin_t s_pin[EPD_BOARD_NPINS];
+static epd_pin_t s_pin[EPD_BOARD_NPINS] = {
+    [EPD_BOARD_CS]   = { EPD_CS_PORT,   EPD_CS_PIN   },
+    [EPD_BOARD_RST]  = { EPD_RST_PORT,  EPD_RST_PIN  },
+    [EPD_BOARD_SCK]  = { EPD_SCK_PORT,  EPD_SCK_PIN  },
+    [EPD_BOARD_SDA]  = { EPD_SDA_PORT,  EPD_SDA_PIN  },
+    [EPD_BOARD_DC]   = { EPD_DC_PORT,   EPD_DC_PIN   },
+    [EPD_BOARD_BUSY] = { EPD_BUSY_PORT, EPD_BUSY_PIN },
+    [EPD_BOARD_PWR]  = { EPD_PWR_PORT,  EPD_PWR_PIN  },
+#ifdef EPD_AUX_PORT
+    [EPD_BOARD_AUX]  = { EPD_AUX_PORT,  EPD_AUX_PIN  },
+#endif
+};
+
+/* Whether the table above came off the tag or out of the build. Nothing reads
+ * it; it is volatile so it can be read over SWD, which is the only way to tell
+ * "the record drove this" from "the record was absent and the build's own map
+ * happened to be right" - two states that look identical from the panel, and
+ * only one of which proves the new path ran.
+ *
+ *     hema-local/tools/tagread.py <image.elf> epd_pins_from_board */
+volatile bool epd_pins_from_board;
+#define s_pins_from_board epd_pins_from_board
 
 /* Both halves of a signal's identity, as the two arguments every GPIO_* call
  * wants. Spelled as one macro so a call site reads about as well as it did
@@ -146,27 +170,65 @@ static epd_pin_t s_pin[EPD_BOARD_NPINS];
 #define EPD_PIN(sig) \
     (GPIO_PORT)s_pin[EPD_BOARD_##sig].port, (GPIO_PIN)s_pin[EPD_BOARD_##sig].pin
 
-/* Seed the table from the compile-time map. Deliberately the only place that
- * mentions the EPD_*_PORT/PIN macros for these eight signals, so that pointing
- * the driver at a board record later is a change to one function.
+/* Take the tag's map. An ERASED record is an answer; an UNREADABLE one is not.
  *
- * AUX is the exception and stays conditional: only variant A names one, and
- * only variant A drives it. The vendor's variant-B table does name a pin there
- * (P1_1) and drives it, but this firmware never has, and quietly starting to
- * during a refactor would be a behaviour change smuggled in under "no
- * behaviour change". It is a question for when the map comes off the tag. */
+ * There is no fall back to the compiled-in map, and that is deliberate. Such a
+ * fallback was written first and then removed: it made a failed flash read look
+ * exactly like a healthy tag, because the build's own map is right on the tag
+ * the build was made for, which is the tag you are usually holding. It would
+ * have worked on the bench every time and hidden the failure until an image
+ * met a board it was not built for - which is the entire case this code exists
+ * to handle. A silent wrong answer is worth less than a loud absent one.
+ *
+ * So the three cases are distinct and stay distinct:
+ *
+ *   record carries a map  -> use it. This is a variant-A board.
+ *   record erased         -> use the decoder's built-in map. NOT a failure:
+ *                            it is how a variant-B board identifies itself,
+ *                            and epd_board_decode() fills the defaults.
+ *   read failed           -> we do not know what this board is. Say so
+ *                            (EPD_BOARD_UNREADABLE) and drive nothing.
+ *
+ * The last case leaves the panel dark on purpose. The tag still keeps time and
+ * stays reachable over BLE, so it can be asked what went wrong rather than
+ * having to be guessed at.
+ *
+ * AUX stays out of it. Only variant A names one and only variant A drives it.
+ * The vendor's variant-B table does name P1_1 there and does drive it, and the
+ * record carries it, but this firmware never has - so it is still not driven,
+ * and that stays a separate decision with its own test rather than a side
+ * effect of reading the map. */
 static void epd_pins_init(void)
 {
-    s_pin[EPD_BOARD_CS]   = (epd_pin_t){ EPD_CS_PORT,   EPD_CS_PIN   };
-    s_pin[EPD_BOARD_RST]  = (epd_pin_t){ EPD_RST_PORT,  EPD_RST_PIN  };
-    s_pin[EPD_BOARD_SCK]  = (epd_pin_t){ EPD_SCK_PORT,  EPD_SCK_PIN  };
-    s_pin[EPD_BOARD_SDA]  = (epd_pin_t){ EPD_SDA_PORT,  EPD_SDA_PIN  };
-    s_pin[EPD_BOARD_DC]   = (epd_pin_t){ EPD_DC_PORT,   EPD_DC_PIN   };
-    s_pin[EPD_BOARD_BUSY] = (epd_pin_t){ EPD_BUSY_PORT, EPD_BUSY_PIN };
-    s_pin[EPD_BOARD_PWR]  = (epd_pin_t){ EPD_PWR_PORT,  EPD_PWR_PIN  };
-#ifdef EPD_AUX_PORT
-    s_pin[EPD_BOARD_AUX]  = (epd_pin_t){ EPD_AUX_PORT,  EPD_AUX_PIN  };
+    const epd_board_t *b = epd_board_last();
+
+    /* Unreadable: we do not know what this board is, so we do not guess.
+     * periph_init() checks the same verdict and leaves the panel alone
+     * entirely. s_pin keeps the statically-initialised map so that anything
+     * which does still run finds a coherent table rather than eight zeros -
+     * which would all be P0_0. */
+    if (epd_board_verdict() == EPD_BOARD_UNREADABLE) {
+        s_pins_from_board = false;
+        return;
+    }
+
+    /* Readable, so take its answer whether or not it carries an explicit map -
+     * epd_board_decode() has already turned an erased record into the built-in
+     * variant-B map, which is what an erased record MEANS. Note this is now the
+     * only source: on a board that disagrees with the build, the board wins. */
+    for (uint8_t i = 0; i < EPD_BOARD_NPINS; i++) {
+#ifndef EPD_AUX_PORT
+        /* Not ours to drive on this build - see above. Skipped rather than
+         * stored, so nothing downstream can start using it by accident. */
+        if (i == EPD_BOARD_AUX) {
+            continue;
+        }
 #endif
+        s_pin[i].port = b->port[i];
+        s_pin[i].pin  = b->pin[i];
+    }
+
+    s_pins_from_board = true;
 }
 
 #if EPD_BITBANG && EPD_TX_FAST
@@ -240,6 +302,12 @@ volatile uint32_t epd_tx_us;
 volatile uint32_t epd_tx_bytes;
 static   uint32_t epd_tx_t0;
 #endif
+
+/* Park CS inactive for someone about to take the bus. See epd_ssd1680.h. */
+void epd_cs_park(void)
+{
+    GPIO_ConfigurePin(EPD_PIN(CS), OUTPUT, PID_GPIO, true);
+}
 
 /* CS is a plain GPIO (see epd_ssd1680.h) — active low. */
 static void epd_cs_low(void)  { GPIO_SetInactive(EPD_PIN(CS)); }

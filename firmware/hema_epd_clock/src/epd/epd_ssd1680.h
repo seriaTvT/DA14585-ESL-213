@@ -762,8 +762,26 @@ typedef char epd_compat_lut_steps_agree[
  * API
  * ---------------------------------------------------------------------- */
 
-/** Configure DC/RST/BUSY GPIOs. Call once from set_pad_functions(). */
+/** Configure the panel's pins, using whichever map won - the tag's record if it
+ *  carries one, this build's compiled-in map if not.
+ *
+ *  Call once from periph_init(), and only AFTER epd_board_check(): the map is
+ *  what that read produces, so calling this earlier configures the pins of
+ *  whichever tag the image was built for rather than the one it is running on. */
 void epd_gpio_init(void);
+
+/** Park the panel's chip select inactive (output, high).
+ *
+ *  For whoever is about to take the SPI bus away from the panel - epd_store.c,
+ *  before it talks to the boot flash. It exists because that caller must not
+ *  name the pin itself: CS moves with the board now, and a second copy of the
+ *  map that quietly disagreed would leave the panel SELECTED for the whole
+ *  flash transaction, listening to flash traffic as commands. Nothing would
+ *  report that; it would surface as a panel that occasionally garbles.
+ *
+ *  Safe before epd_gpio_init() - it falls back to the compiled-in CS, which is
+ *  what the very first flash read (the one that fetches the map) needs. */
+void epd_cs_park(void);
 
 /** Take the SPI bus back for the panel: restore D/C as a GPIO output and
  *  re-init the SPI master with the panel's settings. Call after anything else

@@ -237,7 +237,43 @@ def build_header(payload: bytes, imageid: int) -> bytes:
     return bytes(h)
 
 
-def synth_flash(size: int, boot: bytes, otp_boot: bool) -> bytearray:
+def board_record(compat: bytes) -> bytes | None:
+    """The 16-byte record at 0x039000, derived from the image's own identity.
+
+    Reproduces exactly what a factory tag carries, which is worth stating
+    because it is not the obvious layout. The panel byte is written on EVERY
+    board; it is the SELECTOR that distinguishes the variants, and an erased
+    selector is variant B's positive answer rather than an absence:
+
+        Type 1  14 ff ff...              A53, built-in map  -> variant B
+        Type 4  09 ff ff...              A41, built-in map  -> variant B
+        Type 3  09 01 ff*6 21 22 10 01 20 07 11 23          -> variant A
+
+    Returns None if the identity cannot be read, in which case the caller
+    should leave the sector erased rather than guess - a wrong record is worse
+    than none, because the firmware trusts it.
+    """
+    if not compat:
+        return None
+    s = compat.decode(errors='replace')          # e.g. "T3A-104x212-W7"
+    try:
+        variant = s[2]
+        geom = s.split('-')[1]
+    except (IndexError, ValueError):
+        return None
+    if variant not in 'AB' or geom not in ('104x212', '122x250'):
+        return None
+
+    rec = bytearray(b'\xFF' * 16)
+    rec[0] = 0x09 if geom == '104x212' else 0x14
+    if variant == 'A':
+        rec[1] = 0x01
+        rec[8:16] = bytes((0x21, 0x22, 0x10, 0x01, 0x20, 0x07, 0x11, 0x23))
+    return bytes(rec)
+
+
+def synth_flash(size: int, boot: bytes, otp_boot: bool,
+                compat: bytes = b'') -> bytearray:
     """A blank retail-layout flash image: erased, plus bootloader and header."""
     flash = bytearray(b'\xFF' * size)
     if boot:
@@ -249,15 +285,25 @@ def synth_flash(size: int, boot: bytes, otp_boot: bool) -> bytearray:
     flash[PROD_HDR_OFF + 2:PROD_HDR_OFF + 4] = PROD_HDR_MAGIC
     print(f"synthesised flash: product header @ 0x{PROD_HDR_OFF:06x}, banks "
           f"0x{RETAIL_BANK1:06x}/0x{RETAIL_BANK2:06x}")
-    # A synthesised image leaves 0x039000 erased, and that record is not inert:
-    # it is how a board says it is variant A (see src/epd/epd_board.h). Erased
-    # means "variant B, built-in pin map". Harmless while the firmware picks its
-    # wiring at build time, but it destroys the board's own identity - so on a
-    # variant-A tag this image would be indistinguishable from a variant-B one,
-    # and a later build that trusts the record would drive the wrong pins.
-    print(f"  WARNING: board record @ 0x{BOARD_REC_OFF:06x} left erased. On a "
-          f"variant-A tag\n           that discards how the board identifies "
-          f"itself. Use --fallback to\n           keep it.")
+    # The board record. This used to be left erased with a warning, on the
+    # grounds that the firmware picked its wiring at build time anyway. The
+    # firmware now READS this record to decide which eight pins to drive, so an
+    # erased sector on a variant-A tag is no longer a lost annotation - it is
+    # that tag being told it is variant B, and driving variant B's pins into a
+    # dead panel. Written from the image's own identity instead.
+    rec = board_record(compat)
+    if rec:
+        flash[BOARD_REC_OFF:BOARD_REC_OFF + len(rec)] = rec
+        print(f"  board record @ 0x{BOARD_REC_OFF:06x}: "
+              + ' '.join(f'{b:02x}' for b in rec[:2]) + " ... "
+              + ' '.join(f'{b:02x}' for b in rec[8:]))
+    else:
+        # Guessing here would be worse than not writing: the firmware trusts
+        # this, so a wrong record is a wrong pin map.
+        print(f"  WARNING: board record @ 0x{BOARD_REC_OFF:06x} left erased - "
+              f"could not read the\n           image's HEMA-COMPAT stamp. The "
+              f"firmware will read this tag as\n           variant B. Use "
+              f"--fallback to keep the tag's own record.")
     print(f"  bootloader @ 0x000000: "
           + (f"{len(boot)} bytes" if boot
              else "NONE - relying on the OTP boot chain (--otp-boot)"))
@@ -327,7 +373,10 @@ def main() -> int:
                   "and which ignores\n  offset 0. Or --fallback <dump> to base "
                   "the image on a stock one.", file=sys.stderr)
             return 2
-        flash = synth_flash(0x80000, boot, otp_boot)
+        # compat_of() again here rather than reusing the value computed further
+        # down: the board record has to be written while the image is being
+        # laid out, and that happens before the header work.
+        flash = synth_flash(0x80000, boot, otp_boot, compat_of(payload))
         ph, b1, b2 = PROD_HDR_OFF, RETAIL_BANK1, RETAIL_BANK2
 
     if ota:
