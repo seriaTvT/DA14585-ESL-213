@@ -14,7 +14,7 @@
 #include <stdint.h>
 #include "epd_ssd1680.h"
 
-extern uint8_t epd_framebuffer[EPD_BUF_SIZE];
+extern uint8_t epd_framebuffer[EPD_BUF_SIZE_MAX];
 
 /* ---- screen rotation -------------------------------------------------------
  * Quarter-turns clockwise: 0 = native portrait, 1 = 90 deg, 2 = 180, 3 = 270.
@@ -28,7 +28,7 @@ extern uint8_t epd_framebuffer[EPD_BUF_SIZE];
  * RAM byte is always 8 pixels along the panel's own X axis.)
  *
  * All drawing coordinates are in the ROTATED frame, so bounds come from
- * epd_gfx_width()/epd_gfx_height(), never EPD_WIDTH/EPD_HEIGHT. */
+ * epd_gfx_width()/epd_gfx_height(), never epd_width/epd_height. */
 void epd_gfx_set_rotation(uint8_t r);
 uint8_t epd_gfx_get_rotation(void);
 int16_t epd_gfx_width(void);
@@ -50,7 +50,7 @@ int16_t epd_gfx_height(void);
  * glass also cannot drift out of step with reality the way a dirty flag can.
  *
  * **Rows here are PHYSICAL rows, i.e. panel gate lines** - the one place in this
- * header that means EPD_HEIGHT rather than epd_gfx_height(). Rotation is applied
+ * header that means epd_height rather than epd_gfx_height(). Rotation is applied
  * when pixels are written, so by the time a byte is in the framebuffer its row
  * index is already the panel's own Y and a band needs no transforming. Whatever
  * ROTATE() a face asked for, this returns a window the driver can use directly.

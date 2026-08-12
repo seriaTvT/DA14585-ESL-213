@@ -98,8 +98,13 @@ bool epd_board_decode(const uint8_t *rec, epd_board_t *out);
 /**
  * @brief Read the record off the boot flash and decode it.
  *
- * Takes and releases the flash bus itself. Returns false and leaves @p out at
- * its defaults if the read fails.
+ * Takes and releases the flash bus itself.
+ *
+ * @return whether the READ succeeded - NOT whether a pin map was found. An
+ *         erased record is a successful read of a board saying "the built-in
+ *         map suits me", and returns true with have_pinmap = false. Conflating
+ *         the two made every variant-B tag look unreadable; see the note in
+ *         epd_board_flash.c before changing this.
  */
 bool epd_board_read(epd_board_t *out);
 

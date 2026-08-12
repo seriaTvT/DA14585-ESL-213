@@ -106,6 +106,42 @@ const char hema_compat_tag[] = HEMA_COMPAT_TAG;
 #define EPD_INVERT_OUTPUT 0
 #endif
 
+/* ---- the geometry, at runtime -------------------------------------------- */
+
+/* Started at this build's panel so they are coherent from reset, then replaced
+ * by whatever the tag says. See epd_geometry_init(). */
+uint16_t epd_width       = EPD_WIDTH_BUILD;
+uint16_t epd_height      = EPD_HEIGHT_BUILD;
+uint16_t epd_width_bytes = (EPD_WIDTH_BUILD + 7) / 8;
+uint16_t epd_buf_size    = ((EPD_WIDTH_BUILD + 7) / 8) * EPD_HEIGHT_BUILD;
+
+void epd_geometry_init(void)
+{
+    const epd_board_t *b = epd_board_last();
+
+    switch (b->panel) {
+    case EPD_BOARD_PANEL_A53:
+        epd_width  = 122;
+        epd_height = 250;
+        break;
+    case EPD_BOARD_PANEL_A41:
+        epd_width  = 104;
+        epd_height = 212;
+        break;
+    default:
+        /* The record did not name a panel. Every tag we have names one - the
+         * byte is written even on the boards that leave the pin map erased -
+         * so this is a record we do not understand rather than a board without
+         * an opinion. Keep the build's geometry: it is at least self-
+         * consistent, and epd_board_verdict() has already recorded the state
+         * for anyone asking why the screen looks wrong. */
+        break;
+    }
+
+    epd_width_bytes = (uint16_t)((epd_width + 7u) / 8u);
+    epd_buf_size    = (uint16_t)(epd_width_bytes * epd_height);
+}
+
 /* ---- the pin map, at runtime -------------------------------------------- */
 
 /* Which pin each panel signal is on, held in RAM rather than compiled in.
@@ -1054,7 +1090,7 @@ void epd_temp_sweep(void)
          * to do and the panel visibly counts through the sweep. A full update
          * runs the whole waveform regardless of content, but identical frames
          * would make it impossible to tell progress from a wedge. */
-        for (b = 0; b < EPD_BUF_SIZE; b++) {
+        for (b = 0; b < epd_buf_size; b++) {
             epd_framebuffer[b] = (uint8_t)~epd_framebuffer[b];
         }
 
@@ -1276,7 +1312,7 @@ void epd_init(bool full_lut)
      * for its 104x212 and its 122x250 descriptors (both call the constructor at
      * 0x07FC3BF6), and the routine takes width and height as arguments, so this
      * one sequence is what the vendor uses to drive either panel. Everything
-     * below reads its size from EPD_WIDTH/EPD_HEIGHT for the same reason.
+     * below reads its size from epd_width/epd_height for the same reason.
      *
      * The decisive difference from the variant-B path below is that it writes
      * NO waveform. There is no cmd 0x32 anywhere on this path (nor cmd 0x2C /
@@ -1315,8 +1351,8 @@ void epd_init(bool full_lut)
     epd_write_data(0x0F);
 
     epd_write_cmd(0x01);    /* Driver Output Control */
-    epd_write_data((EPD_HEIGHT - 1) & 0xFF);
-    epd_write_data(((EPD_HEIGHT - 1) >> 8) & 0xFF);
+    epd_write_data((epd_height - 1) & 0xFF);
+    epd_write_data(((epd_height - 1) >> 8) & 0xFF);
     epd_write_data(0x00);
 
     /* Data Entry Mode and the RAM Y window deliberately keep OUR orientation
@@ -1331,13 +1367,13 @@ void epd_init(bool full_lut)
 
     epd_write_cmd(0x44);    /* RAM X window */
     epd_write_data(0x00);
-    epd_write_data((EPD_WIDTH_BYTES - 1) & 0xFF);
+    epd_write_data((epd_width_bytes - 1) & 0xFF);
 
     epd_write_cmd(0x45);    /* RAM Y window */
     epd_write_data(0x00);
     epd_write_data(0x00);
-    epd_write_data((EPD_HEIGHT - 1) & 0xFF);
-    epd_write_data(((EPD_HEIGHT - 1) >> 8) & 0xFF);
+    epd_write_data((epd_height - 1) & 0xFF);
+    epd_write_data(((epd_height - 1) >> 8) & 0xFF);
 
     epd_write_cmd(0x3C);    /* Border Waveform Control */
     epd_write_data(0x01);
@@ -1368,8 +1404,8 @@ void epd_init(bool full_lut)
         epd_write_data(0x3B);
 
         epd_write_cmd(0x01); /* Driver Output Control */
-        epd_write_data((EPD_HEIGHT - 1) & 0xFF);
-        epd_write_data(((EPD_HEIGHT - 1) >> 8) & 0xFF);
+        epd_write_data((epd_height - 1) & 0xFF);
+        epd_write_data(((epd_height - 1) >> 8) & 0xFF);
         epd_write_data(0x00);
 
         /* Data Entry Mode. Bits [1:0] = ID (Y dir, X dir), bit [2] = AM.
@@ -1385,14 +1421,14 @@ void epd_init(bool full_lut)
 
         epd_write_cmd(0x44); /* Set RAM X address start/end */
         epd_write_data(0x00);
-        epd_write_data((EPD_WIDTH_BYTES - 1) & 0xFF);
+        epd_write_data((epd_width_bytes - 1) & 0xFF);
 
         /* RAM Y window: start at 0 and count UP to H-1, to match Y-increment. */
         epd_write_cmd(0x45);
         epd_write_data(0x00);
         epd_write_data(0x00);
-        epd_write_data((EPD_HEIGHT - 1) & 0xFF);
-        epd_write_data(((EPD_HEIGHT - 1) >> 8) & 0xFF);
+        epd_write_data((epd_height - 1) & 0xFF);
+        epd_write_data(((epd_height - 1) >> 8) & 0xFF);
 
         epd_write_cmd(0x3C); /* Border Waveform Control */
         epd_write_data(0x03);
@@ -1512,7 +1548,7 @@ bool epd_display_busy(void)
 
 /* What the panel is believed to be showing, and how much has been done to it
  * since the last clean sweep. A belief, not a fact - see epd_display_forget(). */
-static uint8_t   s_shadow[EPD_BUF_SIZE];
+static uint8_t   s_shadow[EPD_BUF_SIZE_MAX];
 static bool      s_shadow_valid;
 volatile uint8_t epd_partial_run;
 volatile uint8_t epd_last_paint;
@@ -1570,7 +1606,7 @@ static void epd_set_window(uint16_t first, uint16_t last)
 {
     epd_write_cmd(0x44);    /* RAM X window */
     epd_write_data(0x00);
-    epd_write_data((EPD_WIDTH_BYTES - 1) & 0xFF);
+    epd_write_data((epd_width_bytes - 1) & 0xFF);
 
     epd_write_cmd(0x45);    /* RAM Y window - the band */
     epd_write_data(first & 0xFF);
@@ -1591,8 +1627,8 @@ static void epd_write_rows(const uint8_t *fb, uint16_t first, uint16_t last,
                            uint8_t ram_cmd)
 {
     uint32_t i;
-    uint32_t from = (uint32_t)first * EPD_WIDTH_BYTES;
-    uint32_t to   = ((uint32_t)last + 1u) * EPD_WIDTH_BYTES;
+    uint32_t from = (uint32_t)first * epd_width_bytes;
+    uint32_t to   = ((uint32_t)last + 1u) * epd_width_bytes;
 
     epd_set_window(first, last);
 
@@ -1638,7 +1674,7 @@ epd_paint_t epd_display_start(const uint8_t *framebuffer)
 {
     epd_paint_t did = EPD_PAINT_FULL;
     uint16_t first  = 0;
-    uint16_t last   = EPD_HEIGHT - 1;
+    uint16_t last   = epd_height - 1;
 
 #if EPD_PARTIAL
     if (s_shadow_valid) {
@@ -1654,7 +1690,7 @@ epd_paint_t epd_display_start(const uint8_t *framebuffer)
             did = EPD_PAINT_PARTIAL;
         } else {
             first = 0;
-            last  = EPD_HEIGHT - 1;
+            last  = epd_height - 1;
         }
     }
 
@@ -1722,13 +1758,13 @@ epd_paint_t epd_display_start(const uint8_t *framebuffer)
      * every pixel regardless (its LUT drives all four transition groups, not just
      * the two that change), so it needs no base at all. */
     if (did == EPD_PAINT_PARTIAL) {
-        epd_write_rows(s_shadow, 0, EPD_HEIGHT - 1, 0x26);
+        epd_write_rows(s_shadow, 0, epd_height - 1, 0x26);
     }
 #endif
 
     epd_write_rows(framebuffer,
 #if EPD_PARTIAL
-                   0, EPD_HEIGHT - 1,
+                   0, epd_height - 1,
 #else
                    first, last,
 #endif
@@ -1755,7 +1791,7 @@ epd_paint_t epd_display_start(const uint8_t *framebuffer)
      * later diff would be against a frame that was never displayed - stale rows
      * silently never repainted. So the caller calls epd_display_forget() on
      * timeout. Do not remove that without moving this. */
-    memcpy(s_shadow, framebuffer, EPD_BUF_SIZE);
+    memcpy(s_shadow, framebuffer, epd_buf_size);
     s_shadow_valid = true;
     epd_partial_run = (did == EPD_PAINT_PARTIAL)
                     ? (uint8_t)(epd_partial_run + 1u) : 0u;

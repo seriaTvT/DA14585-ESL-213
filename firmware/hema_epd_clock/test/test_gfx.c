@@ -47,11 +47,11 @@ static int ink(void)
             switch (epd_gfx_get_rotation()) {
             default:
             case 0: px = x;                  py = y;                   break;
-            case 1: px = EPD_WIDTH - 1 - y;  py = x;                    break;
-            case 2: px = EPD_WIDTH - 1 - x;  py = EPD_HEIGHT - 1 - y;   break;
-            case 3: px = y;                  py = EPD_HEIGHT - 1 - x;   break;
+            case 1: px = epd_width - 1 - y;  py = x;                    break;
+            case 2: px = epd_width - 1 - x;  py = epd_height - 1 - y;   break;
+            case 3: px = y;                  py = epd_height - 1 - x;   break;
             }
-            idx = (uint32_t)py * EPD_WIDTH_BYTES + (px >> 3);
+            idx = (uint32_t)py * epd_width_bytes + (px >> 3);
             if (!(epd_framebuffer[idx] & (0x80 >> (px & 7)))) {
                 n++;
             }
@@ -62,13 +62,22 @@ static int ink(void)
 
 /* True if two strings draw different pixels in the same font. Stronger than
  * comparing ink(): distinct glyphs collide on pixel counts all the time. */
+/* The geometry lives in epd_ssd1680.c, which this test does not link - it
+ * compiles the drawing code against stubs, on purpose, so that a font or
+ * rotation bug is caught without a panel. Defined here at the build's own
+ * geometry, which is what the expectations below are written against. */
+uint16_t epd_width       = EPD_WIDTH_BUILD;
+uint16_t epd_height      = EPD_HEIGHT_BUILD;
+uint16_t epd_width_bytes = (EPD_WIDTH_BUILD + 7) / 8;
+uint16_t epd_buf_size    = ((EPD_WIDTH_BUILD + 7) / 8) * EPD_HEIGHT_BUILD;
+
 static int differs(const char *a, const char *b, uint8_t font)
 {
-    static uint8_t first[EPD_BUF_SIZE];
+    static uint8_t first[EPD_BUF_SIZE_MAX];
 
     epd_gfx_clear(1);
     epd_gfx_text(0, 0, a, 0, 1, 1, font);
-    memcpy(first, epd_framebuffer, EPD_BUF_SIZE);
+    memcpy(first, epd_framebuffer, EPD_BUF_SIZE_MAX);
     int inked = ink();
 
     epd_gfx_clear(1);
@@ -77,7 +86,7 @@ static int differs(const char *a, const char *b, uint8_t font)
     /* Both must actually draw something, or "different" would be satisfied by
      * one of them being a missing glyph. */
     return inked > 0 && ink() > 0 &&
-           memcmp(first, epd_framebuffer, EPD_BUF_SIZE) != 0;
+           memcmp(first, epd_framebuffer, EPD_BUF_SIZE_MAX) != 0;
 }
 
 int main(void)
@@ -272,7 +281,7 @@ int main(void)
      * saving (too large). Row indices are physical - panel gate lines - which
      * the rotation case at the end is what actually pins. */
     {
-        static uint8_t a[EPD_BUF_SIZE], b[EPD_BUF_SIZE];
+        static uint8_t a[EPD_BUF_SIZE_MAX], b[EPD_BUF_SIZE_MAX];
         uint16_t first, last;
 
         memset(a, 0xFF, sizeof a);
@@ -285,7 +294,7 @@ int main(void)
            "and leave the outputs untouched");
 
         /* A single changed byte in the middle. */
-        b[40 * EPD_WIDTH_BYTES + 2] ^= 0x08;
+        b[40 * epd_width_bytes + 2] ^= 0x08;
         eq(epd_gfx_dirty_rows(a, b, &first, &last), 1, "one changed byte is dirty");
         eq(first, 40, "  band starts at that row");
         eq(last, 40, "  and ends there");
@@ -300,16 +309,16 @@ int main(void)
 
         /* The last row, the other boundary. */
         memset(b, 0xFF, sizeof b);
-        b[EPD_BUF_SIZE - 1] ^= 0x80;
+        b[EPD_BUF_SIZE_MAX - 1] ^= 0x80;
         eq(epd_gfx_dirty_rows(a, b, &first, &last), 1, "the last row is dirty");
-        eq(first == EPD_HEIGHT - 1 && last == EPD_HEIGHT - 1, 1,
+        eq(first == epd_height - 1 && last == epd_height - 1, 1,
            "  and is not read past the end");
 
         /* Two distant rows: one band spanning both, not two bands. A clock face
          * with a changed digit and a changed date is exactly this. */
         memset(b, 0xFF, sizeof b);
-        b[10 * EPD_WIDTH_BYTES] ^= 0x01;
-        b[90 * EPD_WIDTH_BYTES] ^= 0x01;
+        b[10 * epd_width_bytes] ^= 0x01;
+        b[90 * epd_width_bytes] ^= 0x01;
         eq(epd_gfx_dirty_rows(a, b, &first, &last), 1, "two distant rows");
         eq(first, 10, "  band covers the union, from the first");
         eq(last, 90, "  to the last");
@@ -317,7 +326,7 @@ int main(void)
         /* Everything. */
         memset(b, 0x00, sizeof b);
         eq(epd_gfx_dirty_rows(a, b, &first, &last), 1, "a full-frame change");
-        eq(first == 0 && last == EPD_HEIGHT - 1, 1, "  spans every row");
+        eq(first == 0 && last == epd_height - 1, 1, "  spans every row");
 
         /* Rotation independence. Under an odd rotation the logical X axis runs
          * down the panel, so a short horizontal line in face coordinates must

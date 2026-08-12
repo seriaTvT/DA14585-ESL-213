@@ -758,7 +758,7 @@ static void handle_cmd_write(struct custs1_val_write_ind const *msg)
 
 static void handle_img_write(struct custs1_val_write_ind const *msg)
 {
-    uint32_t remaining = EPD_BUF_SIZE - s_img_write_offset;
+    uint32_t remaining = epd_buf_size - s_img_write_offset;
     uint32_t n = (msg->length < remaining) ? msg->length : remaining;
 
     for (uint32_t i = 0; i < n; i++) {
@@ -766,7 +766,7 @@ static void handle_img_write(struct custs1_val_write_ind const *msg)
     }
     s_img_write_offset += n;
 
-    if (s_img_write_offset >= EPD_BUF_SIZE) {
+    if (s_img_write_offset >= epd_buf_size) {
         /* Only a *complete* image takes the panel. A partial upload has left
          * the top of the framebuffer overwritten and the rest stale, so if the
          * client vanishes mid-transfer the right thing is to stay a clock and

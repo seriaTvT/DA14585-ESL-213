@@ -47,7 +47,24 @@ bool epd_board_read(epd_board_t *out)
         return false;
     }
 
-    return epd_board_decode(rec, out);
+    /* The READ is what this function reports, not what the record contained.
+     *
+     * epd_board_decode() answers a different question - "did I find an explicit
+     * pin map?" - and says false for an ERASED record, which is not a failure
+     * at all: it is how a variant-B board states that the built-in map suits
+     * it. Returning that here conflated the two, and epd_board_check() turned
+     * it into EPD_BOARD_UNREADABLE.
+     *
+     * That was invisible while nothing acted on the verdict. The moment an
+     * unreadable board stopped being driven, it meant EVERY variant-B tag
+     * refused its own panel - Types 1 and 4 both carry 0xFF in the selector
+     * byte - while variant A worked, because only variant A carries a map.
+     * Caught on a Type 1; it would have shipped otherwise.
+     *
+     * Whether a map was found is still available, and is the honest place to
+     * ask: out->have_pinmap. */
+    (void)epd_board_decode(rec, out);
+    return true;
 }
 
 void epd_board_check(void)

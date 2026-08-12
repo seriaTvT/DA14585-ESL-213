@@ -42,16 +42,50 @@
  * A41 and A07 are 104x212.
  * ---------------------------------------------------------------------- */
 #if defined(EPD_PANEL_LOW_RES)
-    #define EPD_WIDTH   104
-    #define EPD_HEIGHT  212
+    #define EPD_WIDTH_BUILD   104
+    #define EPD_HEIGHT_BUILD  212
 #else
-    #define EPD_WIDTH   122
-    #define EPD_HEIGHT  250
+    #define EPD_WIDTH_BUILD   122
+    #define EPD_HEIGHT_BUILD  250
 #endif
 
-/* Bytes per row in the 1bpp framebuffer (width rounded up to a byte). */
-#define EPD_WIDTH_BYTES  ((EPD_WIDTH + 7) / 8)
-#define EPD_BUF_SIZE     (EPD_WIDTH_BYTES * EPD_HEIGHT)
+/* ---- the geometry, at runtime -------------------------------------------
+ *
+ * Read off the tag (the panel byte of the record at flash 0x039000) rather
+ * than compiled in, the same way and for the same reason as the pin map - see
+ * epd/epd_board.h. The values above are only what these start as, and only
+ * matter for a tag whose record cannot be read, which does not drive its panel
+ * at all.
+ *
+ * These are variables, so EPD_WIDTH is no longer usable where a constant is
+ * required - array bounds, GATT attribute sizes, #if. Use the _MAX forms
+ * below in those places, deliberately, rather than reaching for the _BUILD
+ * ones: a buffer sized for the tag this image was built for is exactly the bug
+ * a runtime geometry is meant to remove.
+ */
+extern uint16_t epd_width;
+extern uint16_t epd_height;
+extern uint16_t epd_width_bytes;   /**< width rounded up to whole bytes */
+extern uint16_t epd_buf_size;      /**< epd_width_bytes * epd_height    */
+
+/* The largest panel this firmware knows, for anything that must be sized at
+ * compile time. Every buffer is this big regardless of the tag it lands on -
+ * an A41 therefore carries 1244 bytes it never uses, and 2488 with EPD_PARTIAL.
+ *
+ * That is the price of one image and it is not avoidable by being clever: the
+ * vendor ships a single byte-identical binary for both panels, so any static
+ * buffer in it must be A53-sized too. Their descriptor at 0x07FD4320 carries
+ * the frame size (0x0FA0 or 0x0AC4) as runtime data for exactly this reason.
+ */
+#define EPD_WIDTH_MAX        122
+#define EPD_HEIGHT_MAX       250
+#define EPD_WIDTH_BYTES_MAX  ((EPD_WIDTH_MAX + 7) / 8)
+#define EPD_BUF_SIZE_MAX     (EPD_WIDTH_BYTES_MAX * EPD_HEIGHT_MAX)
+
+/** Set the geometry from a decoded board record. Called once, at boot, before
+ *  anything draws. Falls back to this build's panel if the record does not name
+ *  one - an erased panel byte is not a thing any tag we have carries. */
+void epd_geometry_init(void);
 
 /* ------------------------------------------------------------------------
  * Which init sequence the panel gets.
@@ -491,8 +525,11 @@
  * covering most of the panel is a new image rather than an update, and a partial
  * waveform would leave the old one faintly underneath it. Three quarters is a
  * guess in the "prefer quality" direction. */
+/* A proportion of the panel rather than a row count, so it follows the runtime
+ * geometry - three quarters of 250 and of 212 are different numbers, and the
+ * threshold means the same thing on both. Overridable as a constant still. */
 #if !defined(EPD_PARTIAL_MAX_ROWS)
-    #define EPD_PARTIAL_MAX_ROWS ((EPD_HEIGHT * 3) / 4)
+    #define EPD_PARTIAL_MAX_ROWS ((epd_height * 3) / 4)
 #endif
 
 /* ------------------------------------------------------------------------
@@ -705,8 +742,11 @@
  * stop. Built from EPD_WIDTH/EPD_HEIGHT so it cannot disagree with them. */
 #define EPD__STR2(x)            #x
 #define EPD__STR(x)             EPD__STR2(x)
-#define EPD_PANEL_TAG           "HEMA-PANEL-" EPD__STR(EPD_WIDTH) "x" \
-                                EPD__STR(EPD_HEIGHT)
+/* _BUILD, not the runtime geometry: this stamp is what tools/flash.sh reads out
+ * of the .bin before programming, so it has to describe the image on disk. The
+ * panel the image ends up driving is the tag's business and is decided at boot. */
+#define EPD_PANEL_TAG           "HEMA-PANEL-" EPD__STR(EPD_WIDTH_BUILD) "x" \
+                                EPD__STR(EPD_HEIGHT_BUILD)
 
 /* And the type number itself, which is what a person actually says out loud
  * and what tools/flash.sh takes. It comes from config/tag_types.h, force-
@@ -751,7 +791,8 @@
  * where a mismatch could reach a tag. */
 #if defined(HEMA_COMPAT_W)
 typedef char epd_compat_geometry_agrees[
-    (HEMA_COMPAT_W == EPD_WIDTH && HEMA_COMPAT_H == EPD_HEIGHT) ? 1 : -1];
+    (HEMA_COMPAT_W == EPD_WIDTH_BUILD
+     && HEMA_COMPAT_H == EPD_HEIGHT_BUILD) ? 1 : -1];
 #if !EPD_INIT_FROM_OTP
 typedef char epd_compat_lut_steps_agree[
     (HEMA_COMPAT_STEPS == EPD_LUT_STEPS) ? 1 : -1];

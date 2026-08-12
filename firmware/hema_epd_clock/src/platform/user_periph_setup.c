@@ -243,6 +243,12 @@ void periph_init(void)
         return;
     }
 
+    /* How big the panel is, from the same record. Before epd_gpio_init() only
+     * for tidiness - nothing here drives a pin - but firmly before epd_init(),
+     * which programs the controller's RAM window from it, and before anything
+     * draws. */
+    epd_geometry_init();
+
     /* Now the panel's pins, from the map the tag gave us. Everything
      * downstream goes through the table this fills. */
     epd_gpio_init();

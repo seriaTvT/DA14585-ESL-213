@@ -6,7 +6,7 @@
 #include <stdbool.h>
 #include <string.h>
 
-uint8_t epd_framebuffer[EPD_BUF_SIZE];
+uint8_t epd_framebuffer[EPD_BUF_SIZE_MAX];
 
 static uint8_t s_rotation;   /* quarter-turns clockwise, 0..3 */
 
@@ -22,28 +22,28 @@ uint8_t epd_gfx_get_rotation(void)
 
 int16_t epd_gfx_width(void)
 {
-    return (s_rotation & 1) ? EPD_HEIGHT : EPD_WIDTH;
+    return (s_rotation & 1) ? epd_height : epd_width;
 }
 
 int16_t epd_gfx_height(void)
 {
-    return (s_rotation & 1) ? EPD_WIDTH : EPD_HEIGHT;
+    return (s_rotation & 1) ? epd_width : epd_height;
 }
 
 bool epd_gfx_dirty_rows(const uint8_t *a, const uint8_t *b,
                         uint16_t *first, uint16_t *last)
 {
-    /* EPD_HEIGHT and EPD_WIDTH_BYTES on purpose, not the rotated accessors -
+    /* epd_height and epd_width_bytes on purpose, not the rotated accessors -
      * see the header. A framebuffer row is a panel gate line whatever rotation
      * a face asked for. */
-    uint16_t lo = EPD_HEIGHT;   /* past the end = nothing found yet */
+    uint16_t lo = epd_height;   /* past the end = nothing found yet */
     uint16_t hi = 0;
     uint16_t row;
 
-    for (row = 0; row < EPD_HEIGHT; row++) {
-        size_t off = (size_t)row * EPD_WIDTH_BYTES;
+    for (row = 0; row < epd_height; row++) {
+        size_t off = (size_t)row * epd_width_bytes;
 
-        if (memcmp(a + off, b + off, EPD_WIDTH_BYTES) != 0) {
+        if (memcmp(a + off, b + off, epd_width_bytes) != 0) {
             if (lo > row) {
                 lo = row;
             }
@@ -81,12 +81,12 @@ static inline bool fb_addr(int16_t x, int16_t y, uint32_t *idx, uint8_t *mask)
     switch (s_rotation) {
     default:
     case 0: px = x;                  py = y;                   break;
-    case 1: px = EPD_WIDTH - 1 - y;  py = x;                    break;
-    case 2: px = EPD_WIDTH - 1 - x;  py = EPD_HEIGHT - 1 - y;   break;
-    case 3: px = y;                  py = EPD_HEIGHT - 1 - x;   break;
+    case 1: px = epd_width - 1 - y;  py = x;                    break;
+    case 2: px = epd_width - 1 - x;  py = epd_height - 1 - y;   break;
+    case 3: px = y;                  py = epd_height - 1 - x;   break;
     }
 
-    *idx  = (uint32_t)py * EPD_WIDTH_BYTES + (px >> 3);
+    *idx  = (uint32_t)py * epd_width_bytes + (px >> 3);
     *mask = 0x80 >> (px & 7);
     return true;
 }
@@ -112,7 +112,7 @@ static inline void fb_xor(int16_t x, int16_t y)
 
 void epd_gfx_clear(uint8_t color)
 {
-    memset(epd_framebuffer, color ? 0xFF : 0x00, EPD_BUF_SIZE);
+    memset(epd_framebuffer, color ? 0xFF : 0x00, epd_buf_size);
 }
 
 void epd_gfx_set_pixel(int16_t x, int16_t y, uint8_t color)
