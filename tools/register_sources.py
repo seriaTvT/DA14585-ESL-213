@@ -50,12 +50,32 @@ def add_to_list(text, var, entry):
     Note the [^\\\\\\n] rather than [^\\\\]: a negated character class matches
     newlines, so the looser form swallows the line ending and the blank line
     after it, and the list ends up terminating one entry early - which make
-    accepts silently and which costs a link error to notice."""
-    m = re.search(rf'^{var} \+= \\\n((?:.*\\\n)*)(.*[^\\\n])\n', text, re.M)
+    accepts silently and which costs a link error to notice.
+
+    e2 studio writes these lists in two styles and both turn up in one build
+    tree. Either the last entry drops its backslash, or every entry keeps one
+    and a blank line ends the list. Handling only the first is what "C_SRCS:
+    list not found" used to mean, on a file that was plainly right there."""
+    m = re.search(rf'^{var} \+= \\\n((?:.*\\\n)*)', text, re.M)
     if not m:
         sys.exit(f'{var}: list not found - add {entry} by hand')
-    return text[:m.start()] + f'{var} += \\\n{m.group(1)}{m.group(2)}\\\n' \
-                              f'{entry}\n' + text[m.end():]
+    body, rest = m.group(1), text[m.end():]
+
+    # Style one: a final entry carrying no backslash, which must take one on
+    # so that the entry being added can become the new last.
+    tail = re.match(r'(.*[^\\\n])\n', rest)
+    if tail:
+        return (text[:m.start()] + f'{var} += \\\n{body}{tail.group(1)}\\\n'
+                f'{entry}\n' + rest[tail.end():])
+
+    # Style two: every entry backslashed, list closed by the blank line that
+    # `rest` now starts with. Append in kind and leave the blank line alone.
+    #
+    # No space before the backslash: `entry` already ends with one, and the
+    # detection regex in register() allows exactly one. Emitting two makes the
+    # line invisible to the next run, which then adds the file a second time -
+    # and a duplicate object is a duplicate-symbol link error, not a warning.
+    return text[:m.start()] + f'{var} += \\\n{body}{entry}\\\n' + rest
 
 
 def register(mk):

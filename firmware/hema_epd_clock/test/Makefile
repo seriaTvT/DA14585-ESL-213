@@ -10,7 +10,7 @@ CC      ?= cc
 SRC      = ../src/epd
 CFLAGS   = -std=c99 -Wall -Wextra -Werror -O1 -I stub -I $(SRC)
 
-TESTS    = test_time test_gfx
+TESTS    = test_time test_gfx test_board
 TOOLS    = render render-low
 
 .PHONY: all clean render
@@ -27,6 +27,15 @@ run-test_gfx: test_gfx
 
 test_gfx: test_gfx.c $(SRC)/epd_gfx.c $(SRC)/epd_gfx.h $(SRC)/epd_font_data.c
 	$(CC) $(CFLAGS) -o $@ test_gfx.c $(SRC)/epd_gfx.c $(SRC)/epd_font_data.c
+
+run-test_board: test_board
+	./$<
+
+# Built for the default variant. The decoder itself is variant-agnostic; only
+# the build-agreement check at the end reads the macros, and it is written to
+# assert the right answer either way, so -DEPD_BOARD_VARIANT_A also passes.
+test_board: test_board.c $(SRC)/epd_board.c $(SRC)/epd_board.h
+	$(CC) $(CFLAGS) -o $@ test_board.c $(SRC)/epd_board.c
 
 # Not part of `all`: it is a diagnostic tool, not a test. See render.c.
 #

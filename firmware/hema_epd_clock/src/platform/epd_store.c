@@ -353,12 +353,12 @@ epd_store_res_t epd_store_last_result(void)
     return s_last_result;
 }
 
-#if defined(EPD_SUOTA) && (EPD_SUOTA)
 /* Thin wrappers rather than making the statics non-static, so that the bus
  * hand-off - the pad detach order, the JEDEC size override, the fact that
  * release goes through epd_spi_claim() - stays described in exactly one place.
  * SUOTA needs the same acquire the store needs; what differs is only how long
- * it holds it. See the header for why it cannot be per-operation. */
+ * it holds it. epd_board_read() needs it too, for one 16-byte read at boot.
+ * See the header for why it cannot be per-operation. */
 bool epd_store_flash_claim(void)
 {
     return flash_bus_acquire();
@@ -368,4 +368,3 @@ void epd_store_flash_release(void)
 {
     flash_bus_release();
 }
-#endif

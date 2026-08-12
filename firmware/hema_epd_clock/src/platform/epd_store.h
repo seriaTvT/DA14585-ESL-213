@@ -61,8 +61,12 @@ epd_store_res_t epd_store_last_result(void);
  *  the tag up on the built-in default. */
 epd_store_res_t epd_store_last_load(void);
 
-#if defined(EPD_SUOTA) && (EPD_SUOTA)
-/** Hold the flash bus across many operations, for SUOTA.
+/** Hold the flash bus across many operations.
+ *
+ * Was SUOTA-only until epd_board_read() needed the same hand-off to read the
+ * board record at 0x039000. Unconditional now, because duplicating the acquire
+ * would mean describing the pad-detach order in two places, which is exactly
+ * what the wrappers exist to avoid.
  *
  * The two calls above are self-contained: each takes the bus and hands it back.
  * A SUOTA session cannot work that way. It writes the image in ~230 blocks over
@@ -85,6 +89,5 @@ epd_store_res_t epd_store_last_load(void);
  * the next reboot - the panel's pins are still configured for the flash. */
 bool epd_store_flash_claim(void);
 void epd_store_flash_release(void);
-#endif
 
 #endif // _EPD_STORE_H_

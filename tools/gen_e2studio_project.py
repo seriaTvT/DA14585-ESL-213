@@ -85,14 +85,16 @@ cfg_dir = f'{PROJ}/src/config'
 for f in sorted(os.listdir(cfg_dir)):
     new += link(f'user_config/{f}', f'{U1}/src/config/{f}')
 
-for f in ('user_periph_setup.c', 'epd_store.c', 'epd_store.h'):
+for f in ('user_periph_setup.c', 'epd_store.c', 'epd_store.h',
+          'epd_board_flash.c'):
     new += link(f'user_platform/{f}', f'{U1}/src/platform/{f}')
 
 for f in ('user_custs1_def.c', 'user_custs1_def.h',
           'user_custs_config.c', 'user_custs_config.h'):
     new += link(f'user_profile/{f}', f'{U1}/src/custom_profile/{f}')
 
-for f in ('epd_cmdparser.c', 'epd_cmdparser.h', 'epd_gfx.c', 'epd_gfx.h',
+for f in ('epd_board.c', 'epd_board.h',
+          'epd_cmdparser.c', 'epd_cmdparser.h', 'epd_gfx.c', 'epd_gfx.h',
           'epd_font_data.c', 'epd_font_data.h',
           'epd_ssd1680.c', 'epd_ssd1680.h', 'epd_time.c', 'epd_time.h'):
     new += link(f'user_epd/{f}', f'{U1}/src/epd/{f}')

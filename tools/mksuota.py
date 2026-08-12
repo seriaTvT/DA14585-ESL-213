@@ -105,6 +105,11 @@ RETAIL_BANK2 = 0x01F000
 # because matching what the vendor writes costs nothing and "ignored today" is
 # a weaker guarantee than "identical to something known to work".
 PROD_HDR_MAGIC = b'\x12\x34'
+# The board record: panel model, pin-map selector, and a packed pin map. Only
+# a variant-A board carries one; variant B is the firmware's built-in default,
+# so an erased record is meaningful rather than missing. Decoded by
+# src/epd/epd_board.c; derivation in hema-local/docs/TAG_VARIANTS.md.
+BOARD_REC_OFF = 0x039000
 
 
 def bootloader_picks(id1: int, id2: int) -> int:
@@ -244,6 +249,15 @@ def synth_flash(size: int, boot: bytes, otp_boot: bool) -> bytearray:
     flash[PROD_HDR_OFF + 2:PROD_HDR_OFF + 4] = PROD_HDR_MAGIC
     print(f"synthesised flash: product header @ 0x{PROD_HDR_OFF:06x}, banks "
           f"0x{RETAIL_BANK1:06x}/0x{RETAIL_BANK2:06x}")
+    # A synthesised image leaves 0x039000 erased, and that record is not inert:
+    # it is how a board says it is variant A (see src/epd/epd_board.h). Erased
+    # means "variant B, built-in pin map". Harmless while the firmware picks its
+    # wiring at build time, but it destroys the board's own identity - so on a
+    # variant-A tag this image would be indistinguishable from a variant-B one,
+    # and a later build that trusts the record would drive the wrong pins.
+    print(f"  WARNING: board record @ 0x{BOARD_REC_OFF:06x} left erased. On a "
+          f"variant-A tag\n           that discards how the board identifies "
+          f"itself. Use --fallback to\n           keep it.")
     print(f"  bootloader @ 0x000000: "
           + (f"{len(boot)} bytes" if boot
              else "NONE - relying on the OTP boot chain (--otp-boot)"))
