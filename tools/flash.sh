@@ -9,9 +9,20 @@
 # the raw linker .bin in a SUOTA image bank, and J-Link Commander to program it.
 # See README.md for why a raw .bin at offset 0 does not boot on this board.
 #
-# The tag's secondary bootloader is in OTP and picks the *newest valid* of two
-# image banks, so writing bank 1 and leaving the stock image in bank 2 means a
-# bad build falls back to something that works rather than bricking the tag.
+# The secondary bootloader picks the *newest valid* of two image banks, so
+# writing bank 1 and leaving the stock image in bank 2 means a bad build falls
+# back to something that works rather than bricking the tag. That fallback is a
+# real feature of the bootloader, not a convention: on a CRC failure it loads
+# and verifies the other bank before giving up.
+#
+# That bootloader lives in OTP. Types 1, 3 and 4 were each dumped on
+# 2026-08-12 and all three carry OTP_HDR_OTP_CONTROL = 0xC0DEBABE and a
+# byte-identical OTP bootloader, so the AN-B-001 image sitting at flash
+# 0x000000 is present but never runs. TAG_VARIANTS.md still says Types 2/3/4
+# boot from offset 0; that is wrong for 3 and 4, and untested for 2. The
+# bootloader has been disassembled - the exact contract, including the
+# wraparound rule for imageid, is in
+# hema-local/docs/BOOT_CONTRACT.md
 #
 # Say which tag this is and everything else follows. --type takes the number
 # from hema-local/docs/TAG_VARIANTS.md and picks that type's stock dump; the
@@ -56,12 +67,25 @@ usage: flash.sh --type <n> <hema_epd_clock.bin> [bank]
                    flash fails verifying RAMCode by only a bit or two - that
                    is the link, not the target. Or set HEMA_SWD_SPEED.
   --unverified     flash an image that carries no stamp to check.
+  --no-fallback    build the image from scratch instead of on top of a stock
+                   dump. Removes the need for one, at the cost of the
+                   known-good image in the other bank. Types 1/3/4 boot from
+                   OTP so nothing else is needed; a Type 2 has never been
+                   dumped, so it also needs --bootloader.
+  --bootloader <f> the secondary bootloader for flash offset 0. Only needed
+                   with --no-fallback on a board whose boot chain is unverified.
 EOF
 }
 
 VARIANT=
 TYPE=
 UNVERIFIED=0
+NO_FALLBACK=0
+BOOTLOADER=
+# The secondary bootloader payload, identical on every retail tag dumped so far
+# (types 1, 2, 3 and 4) - the AN-B-001 record at flash offset 0 with its 8-byte
+# header stripped. re/type2/bootloader.bin is a correct copy.
+RETAIL_BOOT_SHA=c3220667e31492ae8ac5a77a5ddbf98ace65505e98094aeb63362922ef57c491
 # SWD clock. 4 MHz is fine over a short, well-soldered link and is what this
 # used to hardcode. Drop it when the probe is a J-Link OB clone, when the wires
 # are long, or after a "Verification of RAMCode failed" whose write and read
@@ -78,6 +102,9 @@ while [ $# -gt 0 ]; do
         --speed)       SPEED=${2:-}; shift 2 ;;
         --speed=*)     SPEED=${1#*=}; shift ;;
         --unverified)  UNVERIFIED=1; shift ;;
+        --no-fallback) NO_FALLBACK=1; shift ;;
+        --bootloader)  BOOTLOADER=${2:-}; shift 2 ;;
+        --bootloader=*) BOOTLOADER=${1#*=}; shift ;;
         -h|--help)     usage; exit 2 ;;
         -*)            echo "flash.sh: unknown option $1" >&2; exit 2 ;;
         *)             args+=("$1"); shift ;;
@@ -105,12 +132,16 @@ if [ -n "$TYPE" ]; then
     else
         usage; exit 2
     fi
-    if [ ! -r "$STOCK" ]; then
+    if [ $NO_FALLBACK -eq 1 ]; then
+        STOCK=
+    elif [ ! -r "$STOCK" ]; then
         echo "flash.sh: no stock dump for type $TYPE at" >&2
         echo "          $STOCK" >&2
         echo "          Set HEMA_STOCK_DIR, or name the dump before the" >&2
-        echo "          firmware. Do not substitute another type's - the bank" >&2
-        echo "          offsets differ and this is where they come from." >&2
+        echo "          firmware. Do not substitute another type's - it is" >&2
+        echo "          the fallback image the tag boots if this build is" >&2
+        echo "          bad, so it must be one that suits this board." >&2
+        echo "          Or pass --no-fallback to build without one." >&2
         exit 1
     fi
 elif [ ${#args[@]} -ge 2 ]; then
@@ -136,7 +167,7 @@ SCRIPT=$(mktemp -t hema-flash-XXXXXX.jlink)
 LOG=$(mktemp -t hema-flash-XXXXXX.log)
 trap 'rm -f "$OUT" "$SCRIPT" "$LOG"' EXIT
 
-for f in "$STOCK" "$FW"; do
+for f in ${STOCK:+"$STOCK"} "$FW"; do
     [ -r "$f" ] || { echo "flash.sh: cannot read $f" >&2; exit 1; }
 done
 
@@ -238,7 +269,72 @@ else
     echo "variant $VARIANT confirmed against the image."
 fi
 
-python3 "$HERE/mksuota.py" "$STOCK" "$FW" "$OUT" "$BANK"
+# mksuota.py synthesises the headers itself now, so the stock dump is no longer
+# a source of bank offsets or of header fields nobody had decoded. It is the
+# fallback image for the other bank and nothing else - which is worth having by
+# default, since the bootloader really does fall back on a CRC failure, but is
+# no longer a hard requirement.
+MKSUOTA=(--fallback "$STOCK")
+if [ $NO_FALLBACK -eq 1 ]; then
+    # Types 1, 3 and 4 were each dumped and each boots from OTP, so flash
+    # offset 0 is ignored and no bootloader is needed there. Type 2 has never
+    # been dumped - it is probably the same, but "probably" is not a reason to
+    # write an image that would not boot, so it still has to be told.
+    case "$TYPE" in
+        1|3|4) MKSUOTA=(--otp-boot)
+           echo "no fallback: Type $TYPE boots from OTP (verified 2026-08-12);"
+           echo "             flash offset 0 left erased." ;;
+        2)
+           # The retail bootloader payload is byte-identical on every retail
+           # tag dumped so far, so it is pinned by hash rather than taken on
+           # trust from a filename. That is not pedantry: re/type1 and re/type3
+           # each hold a bootloader.bin that was sliced from offset 0 instead
+           # of 8, so it carries the AN-B-001 header and is truncated by eight
+           # bytes at the tail. Both are the right size and the wrong bytes,
+           # and flashing one would leave a tag that does not boot.
+           if [ -z "$BOOTLOADER" ]; then
+               for c in "$STOCK_DIR"/type*/bootloader.bin; do
+                   [ -r "$c" ] || continue
+                   if [ "$(sha256sum <"$c" | cut -d' ' -f1)" = "$RETAIL_BOOT_SHA" ]; then
+                       BOOTLOADER=$c; break
+                   fi
+               done
+               if [ -z "$BOOTLOADER" ]; then
+                   echo "flash.sh: --no-fallback on a Type 2 needs a bootloader for" >&2
+                   echo "          flash offset 0, because no Type 2 has been dumped" >&2
+                   echo "          and its boot chain is unverified. Nothing under" >&2
+                   echo "          $STOCK_DIR/type*/bootloader.bin matches the known" >&2
+                   echo "          retail payload ($RETAIL_BOOT_SHA)." >&2
+                   echo "          Extract it from a stock dump - it is bytes 8 to" >&2
+                   echo "          8+len, where len is the big-endian u32 at offset" >&2
+                   echo "          4 - and pass it with --bootloader." >&2
+                   exit 1
+               fi
+           elif [ "$(sha256sum <"$BOOTLOADER" | cut -d' ' -f1)" != "$RETAIL_BOOT_SHA" ]; then
+               echo "flash.sh: WARNING - $BOOTLOADER is not the known retail" >&2
+               echo "          bootloader payload. Expected sha256" >&2
+               echo "          $RETAIL_BOOT_SHA." >&2
+               echo "          Check it is the payload with the 8-byte AN-B-001" >&2
+               echo "          header stripped, not the whole record. Proceeding" >&2
+               echo "          because you named it explicitly." >&2
+           fi
+           MKSUOTA=(--bootloader "$BOOTLOADER")
+           echo "no fallback: bootloader for offset 0 from $BOOTLOADER" ;;
+        *) if [ -z "$BOOTLOADER" ] || [ ! -r "$BOOTLOADER" ]; then
+               echo "flash.sh: --no-fallback needs to know whether this board" >&2
+               echo "          boots from OTP or from flash offset 0, and for" >&2
+               echo "          ${TYPE:+type $TYPE}${TYPE:-the --variant form} that is not recorded." >&2
+               echo "          Pass --bootloader <file> if it boots from offset" >&2
+               echo "          0; use --type 1 if its bootloader is in OTP." >&2
+               exit 1
+           fi
+           MKSUOTA=(--bootloader "$BOOTLOADER")
+           echo "no fallback: bootloader for offset 0 from $BOOTLOADER" ;;
+    esac
+    echo "             the other bank is left erased, so a bad build here has"
+    echo "             nothing to fall back to."
+fi
+python3 "$HERE/mksuota.py" "${MKSUOTA[@]}" "$FW" "$OUT" "$BANK"
 
 # `connect / r / h / loadbin` is all that is needed. Do NOT add a write to
 # SYS_CTRL_REG (0x50000012) here: bit 7 is DEBUGGER_ENABLE, and clearing it

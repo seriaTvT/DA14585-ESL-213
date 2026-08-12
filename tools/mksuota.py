@@ -26,15 +26,47 @@ CRC is plain zlib crc32 over the payload - confirmed by recomputing both stock
 banks' headers exactly. The payload is the raw linker .bin (vector table
 first), NOT the AN-B-001-wrapped one.
 
-Rather than synthesise a header from scratch, the stock bank's header is copied
-and only the fields we understand are patched. That keeps `encryption`,
-`reserved` and anything else the vendor's bootloader may check byte-identical
-to an image it already boots.
+Headers are SYNTHESISED, not copied from a stock image. Until 2026-08-12 this
+tool copied the stock bank's header and patched only the fields we understood,
+on the grounds that `encryption`, `reserved` and anything else the vendor's
+bootloader might check should stay byte-identical to an image it already boots.
+That caution is now known to be unnecessary: the OTP bootloader has been
+disassembled and it reads only
 
-Usage:  mksuota.py <stock_flash_dump.bin> <firmware.bin> <out.bin> [bank]
+    signature[2], validflag, imageid, code_size, CRC, encryption
+
+from the 64-byte header, and only `0x7052` plus the two bank offsets from the
+product header. `version`, `timestamp` and `reserved[31]` are never read by it,
+and the product header's bytes 2-3 are never examined. Full derivation, with
+addresses and the checks it does make, in
+
+    hema-local/docs/BOOT_CONTRACT.md
+
+So a stock dump is no longer a source of unknowns. It is still useful for one
+thing - supplying a known-good image for the *other* bank, so a bad build falls
+back to something that works - and that is what --fallback is for.
+
+`version` and `timestamp` are still written, because the SUOTA *receiver* reads
+them even though the bootloader does not. See build_header().
+
+Usage:  mksuota.py [--fallback <stock_dump.bin>] [--bootloader <boot.bin>]
+                   [--otp-boot] <firmware.bin> <out.bin> [bank]
         bank defaults to 1.
 
-        mksuota.py --ota <stock_flash_dump.bin> <firmware.bin> <out.img>
+        mksuota.py --ota <firmware.bin> <out.img>
+
+        mksuota.py <stock_dump.bin> <firmware.bin> <out.bin> [bank]
+        mksuota.py --ota <stock_dump.bin> <firmware.bin> <out.img>
+            the older positional forms; a leading dump is taken as --fallback.
+
+--ota needs no stock image at all: it emits just the 64-byte header and the
+payload, which is exactly what a SUOTA client sends.
+
+A full flash image without --fallback is synthesised from scratch. That image
+still needs a secondary bootloader at offset 0 on every board except Type 1,
+whose bootloader lives in OTP - so pass --bootloader, or --otp-boot to say the
+tag does not need one. Without either, this refuses rather than write an image
+that cannot boot.
 
 --ota writes just the bank contents - the 64-byte image header followed by the
 payload - instead of a whole flash image. That is exactly what a SUOTA client
@@ -61,6 +93,36 @@ VALID = 0xAA
 # Must match EPD_STORE_ADDR / EPD_STORE_SECTOR in src/platform/epd_store.c.
 STORE_ADDR = 0x03F000
 STORE_SECTOR = 4096
+
+# The retail flash layout, identical on every factory tag dumped so far
+# (types 1, 2, 3 and 4). The community-reflashed Type 1's 0x002000/0x014000 is
+# an artefact of that reflash, not a second vendor layout.
+PROD_HDR_OFF = 0x038000
+RETAIL_BANK1 = 0x004000
+RETAIL_BANK2 = 0x01F000
+# Bytes 2-3 are never examined by the bootloader - the community image's
+# `00 00` boots exactly as well as retail's. Written to match retail anyway,
+# because matching what the vendor writes costs nothing and "ignored today" is
+# a weaker guarantee than "identical to something known to work".
+PROD_HDR_MAGIC = b'\x12\x34'
+
+
+def bootloader_picks(id1: int, id2: int) -> int:
+    """Which bank the OTP bootloader boots, given both banks' imageids.
+
+    Transcribed from the decision function at 0x07FC01A0 (see BOOT_CONTRACT.md).
+    Wraparound-aware newest-wins, bank 1 taking ties. Note that a plain
+    "higher id wins" gets the 0xFF/0x00 pair backwards, which is not academic:
+    the Type 2 factory tag ships exactly that pair and runs bank 2.
+
+    Only meaningful when BOTH banks are valid; with one valid bank the
+    bootloader takes it regardless of id.
+    """
+    if id1 == 0xFF and id2 == 0x00:
+        return 2
+    if id2 == 0xFF and id1 == 0x00:
+        return 1
+    return 2 if id1 < id2 else 1
 
 
 def find_product_header(flash: bytes) -> tuple:
@@ -91,9 +153,10 @@ def find_product_header(flash: bytes) -> tuple:
 #
 # Counted out here rather than left implicit because getting them wrong is not
 # a visible failure. Writing the timestamp at 32 instead of 28 lands on
-# `encryption`, and the bootloader rejects a non-zero encryption *before* it
-# checks the CRC - so the image verifies perfectly against this tool, boots
-# nothing, and the tag silently falls back to the other bank. Done exactly that.
+# `encryption`, and a non-zero `encryption` makes the bootloader run a decrypt
+# pass over the whole payload (0x07FC1360) *before* it takes the CRC - so the
+# image verifies perfectly against this tool, is garbled in RAM, fails its CRC
+# on the tag and falls back to the other bank silently. Done exactly that.
 VERSION_OFF = 12
 VERSION_LEN = 16        # IMAGE_HEADER_VERSION_SIZE
 TIMESTAMP_OFF = 28
@@ -120,8 +183,13 @@ def compat_of(payload: bytes) -> bytes:
     return s
 
 
-def build_header(stock_hdr: bytes, payload: bytes, imageid: int) -> bytes:
-    h = bytearray(stock_hdr)
+def build_header(payload: bytes, imageid: int) -> bytes:
+    """Synthesise the 64-byte image header. No stock image involved.
+
+    Every byte not written here stays zero. The bootloader reads none of them,
+    and zero is what the vendor's own factory images carry in those fields.
+    """
+    h = bytearray(HDR_LEN)
     h[0:2] = IMG_SIG
     h[2] = VALID
     h[3] = imageid
@@ -148,56 +216,141 @@ def build_header(stock_hdr: bytes, payload: bytes, imageid: int) -> bytes:
     h[VERSION_OFF:VERSION_OFF + VERSION_LEN] = compat.ljust(VERSION_LEN, b'\0')
     struct.pack_into('<I', h, TIMESTAMP_OFF, crc)
 
-    # The bootloader refuses an image whose `encryption` byte is set, and it
-    # refuses it *before* the CRC check, so nothing downstream of here would
-    # notice: the image passes every check this tool makes and the tag quietly
-    # boots the other bank instead. Since the fields either side of it are the
-    # two written just above, assert rather than trust the arithmetic.
-    if h[ENCRYPTION_OFF] != stock_hdr[ENCRYPTION_OFF]:
+    # `encryption` must be zero, and now for a known reason rather than because
+    # the stock image happened to have it zero: a non-zero byte here sends the
+    # bootloader through its decrypt routine before the CRC, and nothing
+    # downstream of this tool would notice. The fields either side of it are the
+    # two written just above, so assert rather than trust the arithmetic.
+    if h[ENCRYPTION_OFF] != 0:
         raise ValueError(
-            f"header build disturbed the encryption byte at offset "
-            f"{ENCRYPTION_OFF} (0x{stock_hdr[ENCRYPTION_OFF]:02X} -> "
-            f"0x{h[ENCRYPTION_OFF]:02X}). The bootloader would reject this "
-            f"image and fall back to the other bank, silently. Check "
-            f"VERSION_OFF/TIMESTAMP_OFF against s_imageHeader.")
+            f"header build set the encryption byte at offset {ENCRYPTION_OFF} "
+            f"to 0x{h[ENCRYPTION_OFF]:02X}. The bootloader would decrypt the "
+            f"payload, fail its CRC and fall back to the other bank, silently. "
+            f"Check VERSION_OFF/TIMESTAMP_OFF against s_imageHeader.")
     if len(h) != HDR_LEN:
         raise ValueError(f"header is {len(h)} bytes, not {HDR_LEN}")
     return bytes(h)
 
 
+def synth_flash(size: int, boot: bytes, otp_boot: bool) -> bytearray:
+    """A blank retail-layout flash image: erased, plus bootloader and header."""
+    flash = bytearray(b'\xFF' * size)
+    if boot:
+        # AN-B-001: 0x7050, then the payload length as a big-endian u32 at +4.
+        flash[0:8] = b'\x70\x50\x00\x00' + struct.pack('>I', len(boot))
+        flash[8:8 + len(boot)] = boot
+    struct.pack_into('<II', flash, PROD_HDR_OFF + 4, RETAIL_BANK1, RETAIL_BANK2)
+    flash[PROD_HDR_OFF:PROD_HDR_OFF + 2] = PROD_SIG
+    flash[PROD_HDR_OFF + 2:PROD_HDR_OFF + 4] = PROD_HDR_MAGIC
+    print(f"synthesised flash: product header @ 0x{PROD_HDR_OFF:06x}, banks "
+          f"0x{RETAIL_BANK1:06x}/0x{RETAIL_BANK2:06x}")
+    print(f"  bootloader @ 0x000000: "
+          + (f"{len(boot)} bytes" if boot
+             else "NONE - relying on the OTP boot chain (--otp-boot)"))
+    return flash
+
+
 def main() -> int:
-    args = sys.argv[1:]
+    args = []
     ota = False
-    if args and args[0] == '--ota':
-        ota = True
-        args = args[1:]
-    if len(args) not in (3, 4) or (ota and len(args) != 3):
+    fallback = boot_path = None
+    otp_boot = False
+    argv = sys.argv[1:]
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == '--ota':
+            ota = True
+        elif a == '--fallback':
+            i += 1; fallback = argv[i]
+        elif a == '--bootloader':
+            i += 1; boot_path = argv[i]
+        elif a == '--otp-boot':
+            otp_boot = True
+        elif a.startswith('-'):
+            print(f"unknown option: {a}\n"); print(__doc__); return 2
+        else:
+            args.append(a)
+        i += 1
+
+    # Legacy positional forms put the stock dump first, so they carry one more
+    # positional than the new ones: <dump> <fw> <out> [bank] against
+    # <fw> <out> [bank]. Only three-without---ota is ambiguous, and there the
+    # trailing bank number settles it. --ota used to take a dump it never
+    # actually needed; accept it and use it as the fallback if one is wanted.
+    if fallback is None:
+        if ota and len(args) == 3:
+            fallback = args.pop(0)
+        elif not ota and len(args) == 4:
+            fallback = args.pop(0)
+        elif not ota and len(args) == 3 and not args[2].isdigit():
+            fallback = args.pop(0)
+
+    if len(args) not in (2, 3) or (ota and len(args) != 2):
         print(__doc__)
         return 2
-    flash = bytearray(open(args[0], 'rb').read())
-    payload = open(args[1], 'rb').read()
-    out_path = args[2]
-    bank = int(args[3]) if len(args) == 4 else 1
+    payload = open(args[0], 'rb').read()
+    out_path = args[1]
+    bank = int(args[2]) if len(args) == 3 else 1
 
-    ph, b1, b2 = find_product_header(flash)
-    target, other = (b1, b2) if bank == 1 else (b2, b1)
-    print(f"product header @ 0x{ph:06x}: bank1=0x{b1:06x} bank2=0x{b2:06x}")
+    if ota:
+        flash, ph, b1, b2 = None, None, None, None
+    elif fallback:
+        flash = bytearray(open(fallback, 'rb').read())
+        ph, b1, b2 = find_product_header(flash)
+        print(f"fallback image: {fallback}")
+        print(f"product header @ 0x{ph:06x}: bank1=0x{b1:06x} bank2=0x{b2:06x}")
+    else:
+        boot = open(boot_path, 'rb').read() if boot_path else b''
+        if not boot and not otp_boot:
+            print("mksuota.py: refusing to build a full flash image with no "
+                  "bootloader at offset 0.\n"
+                  "  Types 2, 3 and 4 boot from there and would not come up. "
+                  "Pass --bootloader\n"
+                  "  <boot.bin> (re/type2/bootloader.bin is byte-identical on "
+                  "every retail tag),\n"
+                  "  or --otp-boot for a Type 1, whose bootloader is in OTP "
+                  "and which ignores\n  offset 0. Or --fallback <dump> to base "
+                  "the image on a stock one.", file=sys.stderr)
+            return 2
+        flash = synth_flash(0x80000, boot, otp_boot)
+        ph, b1, b2 = PROD_HDR_OFF, RETAIL_BANK1, RETAIL_BANK2
 
-    # The bank must not run into whatever follows it.
-    limit = min(x for x in (b1, b2, ph, len(flash)) if x > target)
-    need = HDR_LEN + len(payload)
-    if need > limit - target:
-        raise ValueError(f"image needs {need} bytes, bank {bank} holds "
-                         f"{limit - target} (up to 0x{limit:06x})")
+    if ota:
+        # The receiver assigns its own imageid and picks the bank itself, so
+        # nothing here is tied to either.
+        imageid, other_id = 1, None
+    else:
+        target, other = (b1, b2) if bank == 1 else (b2, b1)
 
-    # Outrank the other bank so findlatest() picks ours (it returns bank 1 on a
-    # tie, and has special cases only for the 0xFF/0 wraparound pair).
-    other_id = flash[other + 3]
-    imageid = 1 if other_id == 0 else (other_id + 1) & 0xFF
-    if imageid in (0, 0xFF):
-        imageid = 1
+        # The bank must not run into whatever follows it.
+        limit = min(x for x in (b1, b2, ph, len(flash)) if x > target)
+        need = HDR_LEN + len(payload)
+        if need > limit - target:
+            raise ValueError(f"image needs {need} bytes, bank {bank} holds "
+                             f"{limit - target} (up to 0x{limit:06x})")
 
-    hdr = build_header(bytes(flash[target:target + HDR_LEN]), payload, imageid)
+        # Outrank the other bank. With the bootloader's rule in hand this is
+        # exact rather than heuristic: +1 wins outright, except against 0xFF
+        # where 0 wins by the wraparound case. Both hold for either bank.
+        other_valid = (bytes(flash[other:other + 2]) == IMG_SIG
+                       and flash[other + 2] == VALID)
+        other_id = flash[other + 3]
+        if not other_valid:
+            imageid = 1        # sole valid bank: the bootloader takes it
+        else:
+            imageid = 0 if other_id == 0xFF else other_id + 1
+            # Check the choice against the bootloader's own rule rather than
+            # trusting the arithmetic. Getting this wrong boots the OTHER bank,
+            # which looks like the flash silently not having taken.
+            ids = (imageid, other_id) if bank == 1 else (other_id, imageid)
+            if bootloader_picks(*ids) != bank:
+                raise ValueError(
+                    f"imageid {imageid} would not win bank {bank} against "
+                    f"{other_id}: the bootloader picks bank "
+                    f"{bootloader_picks(*ids)}. See bootloader_picks().")
+
+    hdr = build_header(payload, imageid)
 
     compat = compat_of(payload)
     if not compat:
@@ -231,9 +384,15 @@ def main() -> int:
     print(f"store sector @ 0x{STORE_ADDR:06x}: blanked ({STORE_SECTOR} bytes)")
 
     open(out_path, 'wb').write(flash)
+    other_desc = (f"other bank has {other_id}" if other_valid
+                  else "other bank is not a valid image")
     print(f"bank {bank} @ 0x{target:06x}: {len(payload)} bytes, "
-          f"imageid={imageid} (other bank has {other_id}), "
+          f"imageid={imageid} ({other_desc}), "
           f"crc=0x{zlib.crc32(payload) & 0xFFFFFFFF:08x}")
+    if not other_valid:
+        print("  NOTE: no fallback. A bad build here has nothing to fall back "
+              "to.\n        Pass --fallback <stock_dump.bin> to keep a "
+              "known-good image in the\n        other bank.")
     print(f"{out_path}: {len(flash)} bytes")
     return 0
 
