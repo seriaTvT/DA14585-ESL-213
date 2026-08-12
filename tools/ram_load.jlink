@@ -28,13 +28,39 @@ loadfile /path/to/DA145xx_SDK/6.0.22.1401/projects/target_apps/template/hema_epd
 // whatever image was in RAM at the time (usually the stock firmware). Running
 // from those stale values jumps into the middle of a different program.
 //
-// Resetting again AFTER the download makes the core re-latch MSP/PC from the
-// freshly-written vector table - which is why this script needs no hardcoded
-// entry values (they shift on every build).
+// Resetting again AFTER the download is meant to make the core re-latch MSP/PC
+// from the freshly-written vector table, which is why this script has no
+// hardcoded entry values (they shift on every build).
 //
-// Safe because SYS_CTRL_REG's address-0 remap lives in the always-on domain
-// and survives SYSRESETREQ: address 0 still points at SysRAM, so the boot ROM
-// never runs and never reloads the SPI-flash firmware. Verified on hardware.
+// *** THIS DOES NOT RELIABLY WORK ON AN OTP-BOOTING TAG. READ ON. ***
+//
+// This section used to claim the reset was safe because SYS_CTRL_REG's
+// address-0 remap lives in the always-on domain and survives SYSRESETREQ, so
+// the boot ROM never re-runs. Observed on a Type 4 on 2026-08-12, that is not
+// what happens: after this reset the core came up with PC at the *flashed*
+// image's reset handler rather than the loaded one, and moments later SysRAM no
+// longer held the loaded code at all - compared byte for byte against the ELF.
+// The boot chain had put the flashed image back.
+//
+// The failure is silent and expensive. The tag boots, BLE advertises, the panel
+// works, symbols resolve, and every value you read is the OLD firmware
+// answering questions about a build it is not. It cost most of a session, and
+// what exposed it was not a crash but arithmetic: the numbers were stale rather
+// than wrong-looking.
+//
+// So VERIFY, every time, before you believe anything you read:
+//
+//   1. mem32 0x07FC0000, 2 must show your build's MSP and reset handler
+//        llvm-nm <your.elf> | grep ' T Reset_Handler'    (+1 for Thumb)
+//   2. and then check actual CODE, not just the vector table - the table can
+//      still hold your values while the text underneath has been replaced:
+//        mem8 <addr of some function of yours>, 16
+//      against
+//        llvm-objdump -d --disassemble-symbols=<fn> <your.elf>
+//
+// If they disagree, the load did not take. Flash the image with tools/flash.sh
+// instead; that path is reliable and is what the measurements in
+// hema-local/docs/TAG_VARIANTS.md were taken through.
 r
 h
 
@@ -59,14 +85,24 @@ g
 //                         firmware boots. No BUSY pulse at all = the panel is
 //                         not being driven.
 //
-//   mem16 0x50003006, 1   P0_0 mode, expect 0307 (output, PID 7 = SPI_CLK)
+//   Variant B pin modes, measured on a Type 4 running the bit-bang build.
+//   Both variants bit-bang as of 2026-08-12, so P0_0 and P0_6 are plain GPIOs
+//   between flash accesses - they read 0307/0306 only while the boot flash has
+//   the bus, and catching them there means you sampled mid-transaction rather
+//   than that the panel is on the SPI block.
+//
+//   mem16 0x50003006, 1   P0_0 mode, expect 0300 (output GPIO = SCK)
 //   mem16 0x50003010, 1   P0_5 mode, expect 0300 (output GPIO = DC)
-//   mem16 0x50003012, 1   P0_6 mode, expect 0306 (output, PID 6 = SPI_DO)
+//   mem16 0x50003012, 1   P0_6 mode, expect 0300 (output GPIO = SDA)
 //   mem16 0x50003014, 1   P0_7 mode, expect 0300 (output GPIO = RST)
-//   mem16 0x50003046, 1   P2_0 mode, expect 0000 (input  GPIO = BUSY)
+//   mem16 0x50003046, 1   P2_0 mode, expect 0200 (input PULLDOWN = BUSY; the
+//                         pull-down matters - see epd_gpio_init())
 //   mem16 0x50003048, 1   P2_1 mode, expect 0300 (output GPIO = CS)
 //   mem16 0x5000304C, 1   P2_3 mode, expect 0300 (output GPIO = PWR)
-//   mem16 0x50001200, 1   SPI_CTRL, expect 1011 (SPI on, master, 8-bit, 8MHz)
+//   mem16 0x50001200, 1   SPI_CTRL, expect 1009 (the boot flash's config at
+//                         4 MHz - the panel no longer configures this block;
+//                         1011 is the old SPI-panel build, tools/build.sh
+//                         --spi-panel)
 //
 // If the core sits at a fixed PC inside GPIO_ConfigurePin, that is the SDK's
 // pin-allocation monitor hitting __BKPT(0) - a pin was configured without
