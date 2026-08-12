@@ -105,6 +105,24 @@
     #define EPD_PANEL_PROBE 0
 #endif
 
+/* Time the frame write. Off by default - it is two words of RAM and a pair of
+ * SysTick reads, but it answers a question that only comes up when someone is
+ * weighing the bus against the waveform, and a shipping image should not carry
+ * instrumentation nobody reads. tools/build.sh --tx-profile. */
+#if !defined(EPD_TX_PROFILE)
+    #define EPD_TX_PROFILE 0
+#endif
+
+/* Drive the bit-bang loop by writing the GPIO set/reset registers directly
+ * instead of calling GPIO_SetActive()/GPIO_SetInactive(). On by default: under
+ * DEVELOPMENT_DEBUG those helpers each test a 64-bit pin-reservation mask and
+ * __BKPT() on failure, three times per bit, which measured as about half the
+ * cost of the loop. tools/build.sh --tx-slow restores the helper calls, which
+ * is the thing to try first if a panel stops latching. */
+#if !defined(EPD_TX_FAST)
+    #define EPD_TX_FAST 1
+#endif
+
 /* Build in the controller's temperature reading. It feeds {T}, and on the OTP
  * path it also reports the value the controller picked its waveform with.
  *

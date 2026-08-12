@@ -20,6 +20,9 @@
 # Bench builds, for working out why a panel behaves as it does. Each gets its
 # own name on disk, for the same reason --fast does.
 #
+#   --tx-profile     time the frame write into epd_tx_us/epd_tx_bytes, read
+#                    with hema-local/tools/tagread.py. Diagnostic; see
+#                    EPD_TX_PROFILE in epd/epd_ssd1680.h.
 #   --sweep          map the panel's OTP waveform against temperature. Blocks
 #                    for ~a minute at boot; read epd_sweep_ms over SWD.
 #   --lut-gain <n>   multiply the Waveshare waveform's drive by n. Separates
@@ -87,6 +90,8 @@ force_clean=0
 wf=
 also_alt=0
 sweep=0
+tx_profile=0
+tx_slow=0
 panel_id=0
 partial=0
 suota=1
@@ -106,6 +111,8 @@ while [ $# -gt 0 ]; do
         --otp)     wf=otp; shift ;;
         --clean)   force_clean=1; shift ;;
         --sweep)   sweep=1; shift ;;
+        --tx-profile) tx_profile=1; shift ;;
+        --tx-slow) tx_slow=1; shift ;;
         --panel-id) panel_id=1; shift ;;
         --partial) partial=1; shift ;;
         --suota)   suota=1; shift ;;            # the default; kept explicit
@@ -225,6 +232,14 @@ build_one() {
     if [ "$sweep" = 1 ]; then
         defs="$defs -DEPD_TEMP_SWEEP=1"
         suffix="$suffix-sweep"
+    fi
+    if [ "$tx_slow" = 1 ]; then
+        defs="$defs -DEPD_TX_FAST=0"
+        suffix="$suffix-txslow"
+    fi
+    if [ "$tx_profile" = 1 ]; then
+        defs="$defs -DEPD_TX_PROFILE=1"
+        suffix="$suffix-txprof"
     fi
     if [ "$panel_id" = 1 ]; then
         defs="$defs -DEPD_PANEL_ID=1"

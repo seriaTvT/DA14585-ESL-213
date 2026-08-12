@@ -107,6 +107,21 @@ const char hema_compat_tag[] = HEMA_COMPAT_TAG;
 
 /* ---- low level cmd/data primitives -------------------------------------- */
 
+#if EPD_TX_PROFILE
+/* How long the last full frame took to shift out, in microseconds, and how
+ * many bytes that was. Diagnostic only, and off unless --tx-profile asked for
+ * it: this is here to answer "how much of a refresh is the bus?" with a
+ * measurement rather than an instruction count.
+ *
+ *     hema-local/tools/tagread.py <image.elf> epd_tx_us epd_tx_bytes
+ *
+ * Deliberately measures the RAM write, not a whole refresh: the panel's
+ * waveform dominates the latter and would bury the difference this is for. */
+volatile uint32_t epd_tx_us;
+volatile uint32_t epd_tx_bytes;
+static   uint32_t epd_tx_t0;
+#endif
+
 /* CS is a plain GPIO (see epd_ssd1680.h) — active low. */
 static void epd_cs_low(void)  { GPIO_SetInactive(EPD_CS_PORT, EPD_CS_PIN); }
 static void epd_cs_high(void) { GPIO_SetActive(EPD_CS_PORT, EPD_CS_PIN); }
@@ -121,6 +136,67 @@ static void epd_cs_high(void) { GPIO_SetActive(EPD_CS_PORT, EPD_CS_PIN); }
  *
  * No delays: a GPIO_Set* pair is several 16 MHz cycles on its own, which is
  * far slower than the ~20 MHz this controller family accepts. */
+
+#if EPD_TX_FAST
+
+/* Port 3 is addressed as 4 (P30_MODE_REG sits at 0x50003086, not 0x50003066),
+ * which GPIO_SetActive() handles and the arithmetic below does not. No panel
+ * pin is on port 3 in either variant, so rather than carry the fixup into the
+ * inner loop, refuse at compile time if that ever stops being true.
+ *
+ * Checked with a negative-size typedef rather than #if: GPIO_PORT_3 is an enum
+ * constant, and to the preprocessor every one of these names is an undefined
+ * identifier worth 0, so `#if EPD_SDA_PORT == GPIO_PORT_3` compares 0 with 0
+ * and fires on every build. This form makes the compiler evaluate them. */
+typedef char epd_tx_no_port3_check[
+    (EPD_SDA_PORT != GPIO_PORT_3 && EPD_SCK_PORT != GPIO_PORT_3) ? 1 : -1];
+
+static void epd_tx(const uint8_t *buf, uint16_t len)
+{
+    /* Write the GPIO set/reset registers directly rather than going through
+     * GPIO_SetActive()/GPIO_SetInactive().
+     *
+     * Those are correct and stay in use everywhere else in this file. But
+     * under DEVELOPMENT_DEBUG each one first tests a 64-bit pin-reservation
+     * mask and __BKPT()s if the pin was never reserved - and this loop calls
+     * them three times per bit, so the check runs 24 times per byte purely to
+     * re-answer a question whose answer cannot change mid-frame. Counted off
+     * the compiled loop it was about eighteen of the forty-one cycles a bit
+     * cost. The allocation monitor keeps working for every other GPIO call;
+     * this is the one place where it does not pay for itself.
+     *
+     * The addresses are exactly the arithmetic GPIO_SetActive() does: the port
+     * block at base + (port << 5), +2 to set a bit, +4 to clear it. Hoisted
+     * out so the inner eight iterations are three stores, a test and a shift.
+     *
+     * Still no delays. Each store is a couple of 16 MHz cycles, so SCK's high
+     * phase is ~125 ns - quicker than before, and still far inside what this
+     * controller family accepts (~20 MHz). If a panel ever disagrees, this is
+     * the first place to look, and the fix is a nop between the edges rather
+     * than going back through the driver. */
+    const uint32_t sda_set = GPIO_BASE + ((uint32_t)EPD_SDA_PORT << 5) + 2u;
+    const uint32_t sda_clr = GPIO_BASE + ((uint32_t)EPD_SDA_PORT << 5) + 4u;
+    const uint32_t sck_set = GPIO_BASE + ((uint32_t)EPD_SCK_PORT << 5) + 2u;
+    const uint32_t sck_clr = GPIO_BASE + ((uint32_t)EPD_SCK_PORT << 5) + 4u;
+    const uint16_t sda_bit = (uint16_t)(1u << EPD_SDA_PIN);
+    const uint16_t sck_bit = (uint16_t)(1u << EPD_SCK_PIN);
+
+    while (len--) {
+        uint8_t b = *buf++;
+
+        for (uint8_t i = 0; i < 8; i++) {
+            SetWord16((b & 0x80u) ? sda_set : sda_clr, sda_bit);
+            SetWord16(sck_set, sck_bit);
+            SetWord16(sck_clr, sck_bit);
+            b = (uint8_t)(b << 1);
+        }
+    }
+}
+
+#else   /* EPD_TX_FAST - the original, kept so the two can be measured against
+         * each other and as the fallback if a panel ever objects to the
+         * faster edges. tools/build.sh --tx-slow. */
+
 static void epd_tx(const uint8_t *buf, uint16_t len)
 {
     while (len--) {
@@ -139,7 +215,9 @@ static void epd_tx(const uint8_t *buf, uint16_t len)
     }
 }
 
-#else
+#endif  /* EPD_TX_FAST */
+
+#else   /* EPD_BITBANG */
 
 static void epd_tx(const uint8_t *buf, uint16_t len)
 {
@@ -1301,6 +1379,19 @@ static void epd_write_rows(const uint8_t *fb, uint16_t first, uint16_t last,
     epd_write_cmd(ram_cmd);
     GPIO_SetActive(EPD_DC_PORT, EPD_DC_PIN);   /* DC high = data */
     epd_cs_low();
+#if EPD_TX_PROFILE
+    /* SysTick counts DOWN from its reload at a 1 MHz reference, so the
+     * difference is microseconds directly. Started here rather than left
+     * running because epd_delay_ms() drives the same timer and would reset it
+     * under us; nothing inside this loop delays. */
+    systick_start(0xFFFFFFu, 0);
+    /* systick_start() zeroes VAL and the counter does not reload until the
+     * next tick, so an immediate read can legitimately return 0 and make the
+     * difference below meaningless - it read as 4278265734 us the first time.
+     * Wait for the reload before taking the start point. */
+    while (systick_value() == 0u) { }
+    epd_tx_t0 = systick_value();
+#endif
     for (i = from; i < to; i++) {
         uint8_t b = fb[i];
 #if EPD_INVERT_OUTPUT
@@ -1308,6 +1399,13 @@ static void epd_write_rows(const uint8_t *fb, uint16_t first, uint16_t last,
 #endif
         epd_tx(&b, 1);
     }
+#if EPD_TX_PROFILE
+    /* Masked to 24 bits: SysTick's counter is that wide, so a plain 32-bit
+     * subtraction of two reads is only right by accident. */
+    epd_tx_us    = (epd_tx_t0 - systick_value()) & 0xFFFFFFu;
+    epd_tx_bytes = (uint32_t)(to - from);
+    systick_stop();
+#endif
     epd_cs_high();
 }
 
