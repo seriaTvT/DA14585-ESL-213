@@ -16,6 +16,11 @@
 #include "epd_store.h"
 #include "spi_flash.h"
 
+/* The boot-time verdict, kept here rather than in epd_board.c so that the
+ * decoder stays pure and host-testable. */
+static epd_board_verdict_t s_verdict = EPD_BOARD_UNCHECKED;
+static epd_board_t         s_board;
+
 bool epd_board_read(epd_board_t *out)
 {
     uint8_t rec[EPD_BOARD_REC_LEN];
@@ -43,4 +48,29 @@ bool epd_board_read(epd_board_t *out)
     }
 
     return epd_board_decode(rec, out);
+}
+
+void epd_board_check(void)
+{
+    if (!epd_board_read(&s_board)) {
+        /* Distinguished from a mismatch on purpose. A flash that will not
+         * answer says nothing about which board this is, and treating silence
+         * as disagreement would refuse the panel on a tag whose only fault is
+         * a flaky read. */
+        s_verdict = EPD_BOARD_UNREADABLE;
+        return;
+    }
+
+    s_verdict = epd_board_matches_build(&s_board) ? EPD_BOARD_AGREES
+                                                  : EPD_BOARD_MISMATCH;
+}
+
+epd_board_verdict_t epd_board_verdict(void)
+{
+    return s_verdict;
+}
+
+const epd_board_t *epd_board_last(void)
+{
+    return &s_board;
 }

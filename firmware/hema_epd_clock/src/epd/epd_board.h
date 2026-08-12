@@ -103,6 +103,28 @@ bool epd_board_decode(const uint8_t *rec, epd_board_t *out);
  */
 bool epd_board_read(epd_board_t *out);
 
+/** What the boot-time check concluded. Readable over SWD for bring-up, the
+ *  same way epd_store_last_load() is. */
+typedef enum {
+    EPD_BOARD_UNCHECKED = 0,    /**< epd_board_check() has not run           */
+    EPD_BOARD_AGREES,           /**< record matches this build, or is blank  */
+    EPD_BOARD_UNREADABLE,       /**< the flash read failed - not a mismatch  */
+    EPD_BOARD_MISMATCH          /**< the board says it is the other variant  */
+} epd_board_verdict_t;
+
+/**
+ * @brief Read the record and record what it says about this build. Once, at boot.
+ *
+ * Never changes behaviour on its own. Whether a mismatch stops the panel being
+ * driven is EPD_BOARD_CHECK's business, and that defaults to off - see
+ * user_periph_setup.c for why.
+ */
+void epd_board_check(void);
+
+/** The verdict from epd_board_check(), and the record it was based on. */
+epd_board_verdict_t epd_board_verdict(void);
+const epd_board_t *epd_board_last(void);
+
 /**
  * @brief Does the board agree with what this image was built for?
  *
