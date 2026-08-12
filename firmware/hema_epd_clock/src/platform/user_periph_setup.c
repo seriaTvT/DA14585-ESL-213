@@ -81,11 +81,23 @@ void GPIO_reservations(void)
     RESERVE_GPIO(SPI_MOSI, SPI_DO_PORT,  SPI_DO_PIN,  PID_SPI_DO);
     RESERVE_GPIO(SPI_MISO, SPI_DI_PORT,  SPI_DI_PIN,  PID_SPI_DI);
 
-#if EPD_BITBANG
-    /* Variant A drives the panel's clock and data as plain GPIOs, plus a
-     * second enable line held high. */
+#if EPD_BITBANG && !EPD_PANEL_PADS_SHARED
+    /* The panel's clock and data, as plain GPIOs, where they are pads of their
+     * own. Both variants bit-bang, but variant B does it on the three pads
+     * already reserved above, and reserving a pin twice is not harmless here:
+     * RESERVE_GPIO sets the slot to -1 on the second call and then shifts that
+     * into the mask, which turns GPIO_status into a smear of set bits and
+     * disarms the monitor for pins that really were never reserved. GPIO_init()
+     * catches it with its own __BKPT(0) ("this pin has been previously
+     * reserved!"), which presents as a hang at boot - the same symptom the note
+     * above warns about, from the opposite cause. */
     RESERVE_GPIO(EPD_SCK, EPD_SCK_PORT, EPD_SCK_PIN, PID_GPIO);
     RESERVE_GPIO(EPD_SDA, EPD_SDA_PORT, EPD_SDA_PIN, PID_GPIO);
+#endif
+
+    /* Variant A's spare enable line. Named only on that board - see
+     * epd_gpio_init(). */
+#ifdef EPD_AUX_PORT
     RESERVE_GPIO(EPD_AUX, EPD_AUX_PORT, EPD_AUX_PIN, PID_GPIO);
 #endif
 

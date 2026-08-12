@@ -435,11 +435,25 @@ static const uint8_t epd_lut_partial[EPD_LUT_BYTES + EPD_LUT_TRAILER] = {
 
 #if EPD_BITBANG
 
-/* Variant A shares nothing with the boot flash: the panel is on P0_1/P2_0 and
- * the flash on P0_0/P0_3/P0_5/P0_6, so there is no bus to hand back. This stays
- * as a real function rather than an empty macro because epd_store.c calls it on
- * release and the panel's pads still have to be put back to outputs - the flash
- * path does not touch them, but a future borrower might. */
+/* Take the panel's pads back as plain outputs, with the clock idle low.
+ *
+ * Called at init and, more importantly, by epd_store.c every time it finishes
+ * with the boot flash. What that means depends on the board:
+ *
+ *   variant A - nothing was taken away. The panel is on P0_1/P2_0 and the flash
+ *     on P0_0/P0_3/P0_5/P0_6, disjoint, so this is a no-op that stays a real
+ *     function because the release path calls it and a future borrower might
+ *     actually touch these.
+ *
+ *   variant B - the pads ARE the flash's. flash_bus_acquire() switched them to
+ *     PID_SPI_CLK/PID_SPI_DO to talk to the flash, and this switches them back.
+ *     Miss this and the panel's next transfer clocks nothing: the pins are
+ *     still wired to the SPI block, so the GPIO set/reset registers write into
+ *     a pad that is not listening to them, and the failure is silent - no
+ *     error, just a screen that stops changing.
+ *
+ * D/C is restored on both, because on variant B the flash claims P0_5 as its
+ * MISO and on variant A it is simply cheap to be consistent. */
 void epd_spi_claim(void)
 {
     GPIO_ConfigurePin(EPD_SCK_PORT, EPD_SCK_PIN, OUTPUT, PID_GPIO, false);
@@ -485,8 +499,16 @@ void epd_gpio_init(void)
      * PCB it lands on R22, an unpopulated resistor position, and stops. It was
      * described here as a "second enable line"; that was a guess and it was
      * wrong. Kept because driving an unconnected pad costs nothing and other
-     * board revisions may well populate R22. */
+     * board revisions may well populate R22.
+     *
+     * Variant A only. Variant B's retail firmware drives its P2_2 LOW rather
+     * than high, and we have never established what it is for there, so this
+     * firmware leaves it alone on that board - guarded on the pin being named
+     * rather than on the variant, since "we have a pin for this" is the actual
+     * precondition. */
+#ifdef EPD_AUX_PORT
     GPIO_ConfigurePin(EPD_AUX_PORT, EPD_AUX_PIN, OUTPUT, PID_GPIO, true);
+#endif
 #endif
 
     /* CS as GPIO output, idle high (inactive). Must be PID_GPIO so the

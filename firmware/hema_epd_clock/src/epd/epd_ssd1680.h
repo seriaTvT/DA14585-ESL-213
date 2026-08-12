@@ -123,6 +123,34 @@
     #define EPD_TX_FAST 1
 #endif
 
+/* Drive variant B's panel through the hardware SPI block, as this firmware did
+ * until 2026-08-12. Off by default: BOTH variants now bit-bang.
+ *
+ * Variant B genuinely has a usable SPI block on the panel's clock and data
+ * pads, and using it was the obvious thing to do while the two variants were
+ * separate images. It stops being obvious once they are one image, because the
+ * pin map then comes off the tag at runtime (epd/epd_board.h) and a hardware
+ * peripheral cannot follow it - the SPI block reaches the pads it reaches. A
+ * single image has to drive the panel by a method that works for any pin map,
+ * and bit-banging is the only such method.
+ *
+ * That is not merely our conclusion: the vendor's retail firmware ships one
+ * image for every board and bit-bangs both variants from it (the loop is at
+ * 0x07FC22A0, pins from its runtime table). So this follows the vendor rather
+ * than departing from it.
+ *
+ * The cost was measured rather than assumed. On the fast loop a full frame's
+ * transfer is ~2.1% of a refresh; the waveform is the rest. See
+ * hema-local/docs/TAG_VARIANTS.md.
+ *
+ * Kept because it is the one path that does not depend on the bit loop being
+ * fast enough or the pad handover being right, which makes it the thing to
+ * compare against if a variant-B panel ever misbehaves.
+ * tools/build.sh --spi-panel. */
+#if !defined(EPD_PANEL_SPI)
+    #define EPD_PANEL_SPI 0
+#endif
+
 /* Build in the controller's temperature reading. It feeds {T}, and on the OTP
  * path it also reports the value the controller picked its waveform with.
  *
@@ -547,7 +575,12 @@
 
 #else   /* EPD_BOARD_VARIANT_B */
 
-#define EPD_BITBANG      0
+/* Bit-banged as of 2026-08-12, like variant A - see EPD_PANEL_SPI above for
+ * why, and --spi-panel to go back. The difference from variant A is entirely
+ * in which pads: here the panel's clock and data ARE the SPI block's pads,
+ * shared with the boot flash, so they change function back and forth as the
+ * bus is handed over (EPD_PANEL_PADS_SHARED, below). */
+#define EPD_BITBANG      (!EPD_PANEL_SPI)
 
 /* ------------------------------------------------------------------------
  * VARIANT B pin assignments — RECOVERED FROM THE COMMUNITY FIRMWARE.
@@ -606,15 +639,19 @@
 #define EPD_PWR_PIN      GPIO_PIN_3     /* QFN40 pin 18 */
 #endif
 
-/* Clock and data, named here only so a read can borrow them.
+/* Clock and data.
  *
- * Writing never touches these: on this variant both pads belong to the
- * hardware SPI block (SPI_CLK_PORT / SPI_DO_PORT in user_periph_setup.h, set
- * to PID_SPI_CLK / PID_SPI_DO), and epd_tx() goes through spi_send(). But the
- * panel's data line is bidirectional, and reading it means taking the pads
- * back as GPIOs for the turnaround - see epd_read_byte(). They must therefore
- * agree with user_periph_setup.h; they are the same two pins the table above
- * lists as SCK and SDA. */
+ * These two pads are ALSO the hardware SPI block's (SPI_CLK_PORT / SPI_DO_PORT
+ * in user_periph_setup.h) and must agree with it - they are the same two pins
+ * the table above lists as SCK and SDA. Which peripheral they belong to at any
+ * moment is not fixed: the boot flash needs them as PID_SPI_CLK / PID_SPI_DO,
+ * and the panel now needs them as plain outputs to bit-bang. flash_bus_acquire()
+ * takes them and epd_spi_claim() gives them back - see epd_store.c.
+ *
+ * The one hard rule is that the flash's chip select must be inactive whenever
+ * the panel drives these, and the panel's whenever the flash does. Both are
+ * plain GPIOs held high between transactions, so this holds by construction;
+ * it is stated because nothing enforces it. */
 #ifndef EPD_SCK_PORT
 #define EPD_SCK_PORT     GPIO_PORT_0
 #define EPD_SCK_PIN      GPIO_PIN_0     /* QFN40 pin 1  */
@@ -626,6 +663,25 @@
 #endif
 
 #endif  /* board variant */
+
+/* Does the panel's clock/data share pads with the hardware SPI block, and so
+ * with the boot flash?
+ *
+ * Variant B: yes - P0_0 and P0_6 are both. Variant A: no - the panel is on
+ * P0_1/P2_0 and the flash on P0_0/P0_3/P0_5/P0_6, disjoint.
+ *
+ * Worth a name of its own rather than testing the variant directly, because
+ * the two questions are only accidentally the same one. Everywhere this is
+ * used, what matters is the pad sharing - who has to hand the bus back, and
+ * which pins must not be reserved twice - and none of it would change if a
+ * fifth board turned up that bit-banged a pin map of its own onto the SPI
+ * pads. Once the pin map comes off the tag rather than out of these macros,
+ * this is the one thing about a board that still cannot be read from flash. */
+#if defined(EPD_BOARD_VARIANT_A)
+#define EPD_PANEL_PADS_SHARED   0
+#else
+#define EPD_PANEL_PADS_SHARED   1
+#endif
 
 /* Which wiring this image was built for, as a string, so the built binary can
  * say so out loud. tools/flash.sh reads it back out of the .bin and refuses to

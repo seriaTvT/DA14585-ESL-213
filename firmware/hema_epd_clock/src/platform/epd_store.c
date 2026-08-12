@@ -164,6 +164,21 @@ static bool flash_bus_acquire(void)
     GPIO_ConfigurePin(SPI_DI_PORT, SPI_DI_PIN, INPUT, PID_GPIO, false);
     GPIO_ConfigurePin(FLASH_DI_PORT, FLASH_DI_PIN, INPUT, PID_SPI_DI, false);
 
+    /* Clock and data back to the SPI block.
+     *
+     * Only variant B needs this, and only since the panel started bit-banging:
+     * these two pads are shared, and the panel leaves them as plain GPIOs when
+     * it is done (epd_spi_claim()). Without this the flash gets a clock line
+     * the SPI block cannot drive, and every transaction reads back as zeroes -
+     * the same symptom as the SPI_DI collision above and just as quiet.
+     *
+     * Unconditional because on variant A it is a no-op that restates the truth:
+     * set_pad_functions() already put these pads here and nothing on that board
+     * ever moves them. Cheaper than a conditional, and it means this function
+     * establishes what it needs rather than inheriting it. */
+    GPIO_ConfigurePin(SPI_CLK_PORT, SPI_CLK_PIN, OUTPUT, PID_SPI_CLK, false);
+    GPIO_ConfigurePin(SPI_DO_PORT,  SPI_DO_PIN,  OUTPUT, PID_SPI_DO,  false);
+
     spi_flash_configure_env(&flash_cfg);
     spi_initialize(&flash_spi_cfg);
 

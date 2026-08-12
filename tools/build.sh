@@ -28,6 +28,11 @@
 #   --lut-gain <n>   multiply the Waveshare waveform's drive by n. Separates
 #                    "this lot needs more drive" from "our LUT is the wrong
 #                    shape for this controller". Needs the Waveshare path.
+#   --spi-panel      drive a variant-B panel from the hardware SPI block, the
+#                    way this firmware did until 2026-08-12. Both variants now
+#                    bit-bang, because one image cannot follow a runtime pin map
+#                    through a fixed peripheral. Variant B only; the fallback if
+#                    a variant-B panel ever objects to the bit loop.
 #   --panel-id       read cmd 0x2F/0x2E/0x2D into epd_panel_id_* over SWD, to
 #                    see whether the controller can say which lot it is.
 #   --lut-steps <n>  which LUT shape the hand-written waveform is written for:
@@ -92,6 +97,7 @@ also_alt=0
 sweep=0
 tx_profile=0
 tx_slow=0
+spi_panel=0
 panel_id=0
 partial=0
 suota=1
@@ -113,6 +119,7 @@ while [ $# -gt 0 ]; do
         --sweep)   sweep=1; shift ;;
         --tx-profile) tx_profile=1; shift ;;
         --tx-slow) tx_slow=1; shift ;;
+        --spi-panel) spi_panel=1; shift ;;
         --panel-id) panel_id=1; shift ;;
         --partial) partial=1; shift ;;
         --suota)   suota=1; shift ;;            # the default; kept explicit
@@ -236,6 +243,19 @@ build_one() {
     if [ "$tx_slow" = 1 ]; then
         defs="$defs -DEPD_TX_FAST=0"
         suffix="$suffix-txslow"
+    fi
+    if [ "$spi_panel" = 1 ]; then
+        # Variant B only - variant A has no SPI block on the panel's pins and
+        # never had this path. Refused rather than ignored on A, because a flag
+        # that silently does nothing is how you convince yourself you have
+        # tested something you have not.
+        if [ "$(variant_of "$t")" = A ]; then
+            echo "build.sh: --spi-panel drives the panel from the hardware SPI block," >&2
+            echo "          which only variant B has on those pins. Type $t is variant A." >&2
+            exit 2
+        fi
+        defs="$defs -DEPD_PANEL_SPI=1"
+        suffix="$suffix-spi"
     fi
     if [ "$tx_profile" = 1 ]; then
         defs="$defs -DEPD_TX_PROFILE=1"
@@ -363,6 +383,22 @@ build_one() {
 type_defaults_to_otp() {
     grep -A4 "HEMA_TAG_TYPE == $1\$" "$TABLE" \
         | grep -qE 'HEMA_TAG_OTP_DEFAULT[[:space:]]+1'
+}
+
+# Which board wiring a type is built for. Read out of the table for the same
+# reason type_defaults_to_otp() is: restating it here is one edit away from
+# disagreeing with the header that actually decides.
+#
+# -A2, not more: a type's block is two or three lines, so -A4 would run into the
+# NEXT type's #elif and read its variant instead. Type 1 is variant B and type 2
+# is variant A directly below it, which is exactly the pair that would go wrong.
+variant_of() {
+    if grep -A2 "HEMA_TAG_TYPE == $1\$" "$TABLE" \
+        | grep -qE 'define[[:space:]]+EPD_BOARD_VARIANT_A'; then
+        echo A
+    else
+        echo B
+    fi
 }
 
 "$HERE/tools/sync.sh" --local
