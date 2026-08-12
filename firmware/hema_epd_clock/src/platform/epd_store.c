@@ -153,6 +153,22 @@ static bool flash_bus_acquire(void)
 {
     uint8_t dev_id = 0;
 
+    /* WHEN THE PIN MAP COMES OFF THE TAG, THIS LINE IS A BUG.
+     *
+     * The panel driver now keeps its eight pins in a runtime table and no
+     * longer names them at each use (s_pin[] in epd_ssd1680.c). This file was
+     * not converted, because nothing here needs converting yet - the table is
+     * still seeded from these same macros, so the two agree by construction.
+     *
+     * They stop agreeing the moment the table is seeded from flash instead. A
+     * board whose CS is not where this build thinks it is would then have the
+     * WRONG pin parked high before the flash takes the bus, leaving the panel
+     * selected across the whole transaction - two devices driving one bus, and
+     * the panel seeing flash traffic as commands. Nothing would report it.
+     *
+     * The fix is an accessor on the driver rather than a second copy of the map
+     * here; it is deliberately not written yet, so that it lands with the
+     * change that makes it necessary rather than ahead of it. */
     GPIO_ConfigurePin(EPD_CS_PORT, EPD_CS_PIN, OUTPUT, PID_GPIO, true);
     GPIO_ConfigurePin(FLASH_CS_PORT, FLASH_CS_PIN, OUTPUT, PID_SPI_EN, true);
 

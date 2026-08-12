@@ -101,7 +101,16 @@ void GPIO_reservations(void)
     RESERVE_GPIO(EPD_AUX, EPD_AUX_PORT, EPD_AUX_PIN, PID_GPIO);
 #endif
 
-    /* EPD control lines - all plain GPIO (see epd_ssd1680.h) */
+    /* EPD control lines - all plain GPIO (see epd_ssd1680.h)
+     *
+     * These are compile-time, and they have to stay that way: GPIO_init() runs
+     * this before periph_init(), so before the boot flash has been read and
+     * therefore before the board could have said what it is. When the driver's
+     * pin table starts coming from flash, THIS list must widen to the union of
+     * every map an image might load - a pin configured without being reserved
+     * here is __BKPT(0) at boot, which presents as a hang inside
+     * GPIO_ConfigurePin. Reserving a pin that then goes unused is harmless;
+     * failing to reserve one that gets used is not. */
     RESERVE_GPIO(EPD_CS,   EPD_CS_PORT,   EPD_CS_PIN,   PID_GPIO);
     RESERVE_GPIO(EPD_DC,   EPD_DC_PORT,   EPD_DC_PIN,   PID_GPIO);
     RESERVE_GPIO(EPD_RST,  EPD_RST_PORT,  EPD_RST_PIN,  PID_GPIO);

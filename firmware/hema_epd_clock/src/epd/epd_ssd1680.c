@@ -40,6 +40,7 @@
  */
 
 #include "epd_ssd1680.h"
+#include "epd_board.h"  // epd_board_signal_t - the order s_pin[] is indexed by
 #include "spi.h"
 #include "gpio.h"
 #include "systick.h"    // systick_wait() blocking delay
@@ -105,6 +106,124 @@ const char hema_compat_tag[] = HEMA_COMPAT_TAG;
 #define EPD_INVERT_OUTPUT 0
 #endif
 
+/* ---- the pin map, at runtime -------------------------------------------- */
+
+/* Which pin each panel signal is on, held in RAM rather than compiled in.
+ *
+ * The macros in epd_ssd1680.h still decide what goes in here, so this is not
+ * yet a board-driven map - it is the same eight pins by a slower route, and
+ * every build behaves exactly as it did. What it buys is that the driver no
+ * longer NAMES its pins at each use, which is the thing that has to stop before
+ * the map can come off the tag (epd/epd_board.h). That change is then the
+ * initialiser below and nothing else.
+ *
+ * Indexed by epd_board_signal_t so the two describe the same eight signals in
+ * the same order, and a record decoded from flash can be dropped straight in.
+ *
+ * WHAT THIS COSTS TODAY: nothing, and not for a flattering reason. Because
+ * epd_pins_init() writes only compile-time constants, -flto propagates them
+ * through every read and folds the table out of existence - on a Type 4 build
+ * s_sda_set is a uint32_t that llvm-nm reports as one byte and that reads back
+ * as 1 on the tag, because nothing loads it any more.
+ *
+ * So this arrangement is NOT yet evidence that a runtime map works. It cannot
+ * be: the compiler removes the runtime part. What it is worth is that the 41
+ * call sites no longer name their pins, which makes seeding the table from
+ * flash a change to one function instead of a rewrite. The real cost - and a
+ * real measurement - arrives with that change, when the values stop being
+ * knowable at compile time. Expect both the size and the frame time to move
+ * then, and do not treat today's numbers as the baseline. */
+typedef struct {
+    uint8_t port;
+    uint8_t pin;
+} epd_pin_t;
+
+static epd_pin_t s_pin[EPD_BOARD_NPINS];
+
+/* Both halves of a signal's identity, as the two arguments every GPIO_* call
+ * wants. Spelled as one macro so a call site reads about as well as it did
+ * when these were constants. */
+#define EPD_PIN(sig) \
+    (GPIO_PORT)s_pin[EPD_BOARD_##sig].port, (GPIO_PIN)s_pin[EPD_BOARD_##sig].pin
+
+/* Seed the table from the compile-time map. Deliberately the only place that
+ * mentions the EPD_*_PORT/PIN macros for these eight signals, so that pointing
+ * the driver at a board record later is a change to one function.
+ *
+ * AUX is the exception and stays conditional: only variant A names one, and
+ * only variant A drives it. The vendor's variant-B table does name a pin there
+ * (P1_1) and drives it, but this firmware never has, and quietly starting to
+ * during a refactor would be a behaviour change smuggled in under "no
+ * behaviour change". It is a question for when the map comes off the tag. */
+static void epd_pins_init(void)
+{
+    s_pin[EPD_BOARD_CS]   = (epd_pin_t){ EPD_CS_PORT,   EPD_CS_PIN   };
+    s_pin[EPD_BOARD_RST]  = (epd_pin_t){ EPD_RST_PORT,  EPD_RST_PIN  };
+    s_pin[EPD_BOARD_SCK]  = (epd_pin_t){ EPD_SCK_PORT,  EPD_SCK_PIN  };
+    s_pin[EPD_BOARD_SDA]  = (epd_pin_t){ EPD_SDA_PORT,  EPD_SDA_PIN  };
+    s_pin[EPD_BOARD_DC]   = (epd_pin_t){ EPD_DC_PORT,   EPD_DC_PIN   };
+    s_pin[EPD_BOARD_BUSY] = (epd_pin_t){ EPD_BUSY_PORT, EPD_BUSY_PIN };
+    s_pin[EPD_BOARD_PWR]  = (epd_pin_t){ EPD_PWR_PORT,  EPD_PWR_PIN  };
+#ifdef EPD_AUX_PORT
+    s_pin[EPD_BOARD_AUX]  = (epd_pin_t){ EPD_AUX_PORT,  EPD_AUX_PIN  };
+#endif
+}
+
+#if EPD_BITBANG && EPD_TX_FAST
+/* The four GPIO registers the bit loop writes, and the two bit masks, worked
+ * out once instead of eight times per byte.
+ *
+ * The point of caching is that the loop never indexes s_pin, so a map that
+ * varies per board costs the transfer one setup call per frame rather than two
+ * lookups per bit. Recomputed by epd_spi_claim(), which already runs at init
+ * and after every time the boot flash borrows the bus.
+ *
+ * Today -flto folds all six into immediates, because their inputs are
+ * compile-time constants - see the note on s_pin. That stops when the map is
+ * read from flash, and these become genuine loads. */
+/* The four registers the loop writes, each as a whole address, plus the two bit
+ * masks. Six values, and the exact six the loop wants in registers.
+ *
+ * Storing the two port BLOCKS instead and reaching set/reset as base+2 / base+4
+ * looks tighter and is worse: it needs the base and both offsets live where an
+ * address needs only itself, and Cortex-M0's eight low registers do not stretch
+ * to it. Measured, not guessed - that form made the compiler spill the constant
+ * 2 to the stack and reload it on every bit. */
+static uint32_t s_sda_set, s_sda_clr, s_sck_set, s_sck_clr;
+static uint16_t s_sda_bit, s_sck_bit;
+
+/* Port 3's registers do not follow the others: P30_MODE_REG is at 0x50003086,
+ * so the block sits at index 4 rather than 3. GPIO_SetActive() handles this and
+ * plain `port << 5` does not.
+ *
+ * This used to be a compile-time refusal, on the grounds that no panel pin is
+ * on port 3 in either variant. That was true of a map chosen by the compiler
+ * and cannot be asserted about one read off a tag, so it is arithmetic now -
+ * a conditional at setup time, nowhere near the loop. */
+static uint32_t epd_gpio_block(uint8_t port)
+{
+    return GPIO_BASE + ((uint32_t)(port == 3u ? 4u : port) << 5);
+}
+
+/* Offsets within a port block. Named because the loop below reads better for
+ * it, and because +2/+4 in isolation look like they could be either way round. */
+#define GPIO_SET_OFF  2u
+#define GPIO_CLR_OFF  4u
+
+static void epd_tx_cache_pins(void)
+{
+    const uint32_t sda = epd_gpio_block(s_pin[EPD_BOARD_SDA].port);
+    const uint32_t sck = epd_gpio_block(s_pin[EPD_BOARD_SCK].port);
+
+    s_sda_set = sda + GPIO_SET_OFF;
+    s_sda_clr = sda + GPIO_CLR_OFF;
+    s_sck_set = sck + GPIO_SET_OFF;
+    s_sck_clr = sck + GPIO_CLR_OFF;
+    s_sda_bit = (uint16_t)(1u << s_pin[EPD_BOARD_SDA].pin);
+    s_sck_bit = (uint16_t)(1u << s_pin[EPD_BOARD_SCK].pin);
+}
+#endif
+
 /* ---- low level cmd/data primitives -------------------------------------- */
 
 #if EPD_TX_PROFILE
@@ -123,8 +242,8 @@ static   uint32_t epd_tx_t0;
 #endif
 
 /* CS is a plain GPIO (see epd_ssd1680.h) — active low. */
-static void epd_cs_low(void)  { GPIO_SetInactive(EPD_CS_PORT, EPD_CS_PIN); }
-static void epd_cs_high(void) { GPIO_SetActive(EPD_CS_PORT, EPD_CS_PIN); }
+static void epd_cs_low(void)  { GPIO_SetInactive(EPD_PIN(CS)); }
+static void epd_cs_high(void) { GPIO_SetActive(EPD_PIN(CS)); }
 
 #if EPD_BITBANG
 
@@ -138,18 +257,6 @@ static void epd_cs_high(void) { GPIO_SetActive(EPD_CS_PORT, EPD_CS_PIN); }
  * far slower than the ~20 MHz this controller family accepts. */
 
 #if EPD_TX_FAST
-
-/* Port 3 is addressed as 4 (P30_MODE_REG sits at 0x50003086, not 0x50003066),
- * which GPIO_SetActive() handles and the arithmetic below does not. No panel
- * pin is on port 3 in either variant, so rather than carry the fixup into the
- * inner loop, refuse at compile time if that ever stops being true.
- *
- * Checked with a negative-size typedef rather than #if: GPIO_PORT_3 is an enum
- * constant, and to the preprocessor every one of these names is an undefined
- * identifier worth 0, so `#if EPD_SDA_PORT == GPIO_PORT_3` compares 0 with 0
- * and fires on every build. This form makes the compiler evaluate them. */
-typedef char epd_tx_no_port3_check[
-    (EPD_SDA_PORT != GPIO_PORT_3 && EPD_SCK_PORT != GPIO_PORT_3) ? 1 : -1];
 
 static void epd_tx(const uint8_t *buf, uint16_t len)
 {
@@ -166,31 +273,45 @@ static void epd_tx(const uint8_t *buf, uint16_t len)
      * this is the one place where it does not pay for itself.
      *
      * The addresses are exactly the arithmetic GPIO_SetActive() does: the port
-     * block at base + (port << 5), +2 to set a bit, +4 to clear it. Hoisted
-     * out so the inner eight iterations are three stores, a test and a shift.
+     * block at base + (port << 5), +2 to set a bit, +4 to clear it. They are
+     * worked out by epd_tx_cache_pins() rather than here, which is what keeps
+     * the pin map free: the loop reads six cached values and never touches
+     * s_pin[], so it costs the same whether the map was compiled in or read off
+     * the tag. Copied into locals so the compiler keeps them in registers
+     * across the whole frame instead of reloading each byte.
      *
      * Still no delays. Each store is a couple of 16 MHz cycles, so SCK's high
      * phase is ~125 ns - quicker than before, and still far inside what this
      * controller family accepts (~20 MHz). If a panel ever disagrees, this is
      * the first place to look, and the fix is a nop between the edges rather
      * than going back through the driver. */
-    const uint32_t sda_set = GPIO_BASE + ((uint32_t)EPD_SDA_PORT << 5) + 2u;
-    const uint32_t sda_clr = GPIO_BASE + ((uint32_t)EPD_SDA_PORT << 5) + 4u;
-    const uint32_t sck_set = GPIO_BASE + ((uint32_t)EPD_SCK_PORT << 5) + 2u;
-    const uint32_t sck_clr = GPIO_BASE + ((uint32_t)EPD_SCK_PORT << 5) + 4u;
-    const uint16_t sda_bit = (uint16_t)(1u << EPD_SDA_PIN);
-    const uint16_t sck_bit = (uint16_t)(1u << EPD_SCK_PIN);
+    const uint32_t sda_set = s_sda_set, sda_clr = s_sda_clr;
+    const uint32_t sck_set = s_sck_set, sck_clr = s_sck_clr;
+    const uint16_t sda_bit = s_sda_bit, sck_bit = s_sck_bit;
 
+    /* One bit, MSB first: present it, then pulse the clock. */
+#define EPD_TX_BIT()                                                         \
+    do {                                                                     \
+        SetWord16((b & 0x80u) ? sda_set : sda_clr, sda_bit);                 \
+        SetWord16(sck_set, sck_bit);                                         \
+        SetWord16(sck_clr, sck_bit);                                         \
+        b = (uint8_t)(b << 1);                                               \
+    } while (0)
+
+    /* Unrolled, and for a specific reason rather than out of habit.
+     *
+     * A bit counter is a ninth live value, and Cortex-M0's inner loop has
+     * eight low registers. With it the compiler spilled the SDA base to the
+     * stack and reloaded it ONCE PER BIT - a load in the middle of the tightest
+     * loop in the firmware. Unrolling deletes the counter, its compare and its
+     * branch, and the spill goes with them. */
     while (len--) {
         uint8_t b = *buf++;
 
-        for (uint8_t i = 0; i < 8; i++) {
-            SetWord16((b & 0x80u) ? sda_set : sda_clr, sda_bit);
-            SetWord16(sck_set, sck_bit);
-            SetWord16(sck_clr, sck_bit);
-            b = (uint8_t)(b << 1);
-        }
+        EPD_TX_BIT(); EPD_TX_BIT(); EPD_TX_BIT(); EPD_TX_BIT();
+        EPD_TX_BIT(); EPD_TX_BIT(); EPD_TX_BIT(); EPD_TX_BIT();
     }
+#undef EPD_TX_BIT
 }
 
 #else   /* EPD_TX_FAST - the original, kept so the two can be measured against
@@ -204,12 +325,12 @@ static void epd_tx(const uint8_t *buf, uint16_t len)
 
         for (uint8_t i = 0; i < 8; i++) {
             if (b & 0x80) {
-                GPIO_SetActive(EPD_SDA_PORT, EPD_SDA_PIN);
+                GPIO_SetActive(EPD_PIN(SDA));
             } else {
-                GPIO_SetInactive(EPD_SDA_PORT, EPD_SDA_PIN);
+                GPIO_SetInactive(EPD_PIN(SDA));
             }
-            GPIO_SetActive(EPD_SCK_PORT, EPD_SCK_PIN);
-            GPIO_SetInactive(EPD_SCK_PORT, EPD_SCK_PIN);
+            GPIO_SetActive(EPD_PIN(SCK));
+            GPIO_SetInactive(EPD_PIN(SCK));
             b = (uint8_t)(b << 1);
         }
     }
@@ -228,7 +349,7 @@ static void epd_tx(const uint8_t *buf, uint16_t len)
 
 static void epd_write_cmd(uint8_t cmd)
 {
-    GPIO_SetInactive(EPD_DC_PORT, EPD_DC_PIN); /* DC low = command */
+    GPIO_SetInactive(EPD_PIN(DC)); /* DC low = command */
     epd_cs_low();
     epd_tx(&cmd, 1);
     epd_cs_high();
@@ -236,7 +357,7 @@ static void epd_write_cmd(uint8_t cmd)
 
 static void epd_write_data(uint8_t data)
 {
-    GPIO_SetActive(EPD_DC_PORT, EPD_DC_PIN);   /* DC high = data */
+    GPIO_SetActive(EPD_PIN(DC));   /* DC high = data */
     epd_cs_low();
     epd_tx(&data, 1);
     epd_cs_high();
@@ -244,7 +365,7 @@ static void epd_write_data(uint8_t data)
 
 static void epd_write_data_buf(const uint8_t *buf, uint16_t len)
 {
-    GPIO_SetActive(EPD_DC_PORT, EPD_DC_PIN);
+    GPIO_SetActive(EPD_PIN(DC));
     epd_cs_low();
     epd_tx(buf, len);
     epd_cs_high();
@@ -266,7 +387,7 @@ static void epd_wait_busy(void)
      * timeout is a safety net in case BUSY never deasserts (e.g. wrong pin
      * or inverted polarity) — without it a bad build would hang here. */
     uint32_t timeout = 600000;   /* ~ a few seconds of spinning */
-    while (GPIO_GetPinStatus(EPD_BUSY_PORT, EPD_BUSY_PIN) && timeout--) {
+    while (GPIO_GetPinStatus(EPD_PIN(BUSY)) && timeout--) {
         wdg_reload(0xFF);        /* keep the watchdog happy during the wait */
     }
 }
@@ -277,19 +398,19 @@ static void epd_hw_reset(void)
     /* Variant A's own retail driver holds every phase for 100ms, including the
      * low pulse - where Waveshare's is 2ms. Transcribed from the reset routine
      * at 0x07FC3960 in a stock image. */
-    GPIO_SetActive(EPD_RST_PORT, EPD_RST_PIN);
+    GPIO_SetActive(EPD_PIN(RST));
     epd_delay_ms(100);
-    GPIO_SetInactive(EPD_RST_PORT, EPD_RST_PIN);
+    GPIO_SetInactive(EPD_PIN(RST));
     epd_delay_ms(100);
-    GPIO_SetActive(EPD_RST_PORT, EPD_RST_PIN);
+    GPIO_SetActive(EPD_PIN(RST));
     epd_delay_ms(100);
 #else
     /* Timing matches Waveshare's EPD_2IN13_V2_Reset() exactly. */
-    GPIO_SetActive(EPD_RST_PORT, EPD_RST_PIN);
+    GPIO_SetActive(EPD_PIN(RST));
     epd_delay_ms(200);
-    GPIO_SetInactive(EPD_RST_PORT, EPD_RST_PIN);
+    GPIO_SetInactive(EPD_PIN(RST));
     epd_delay_ms(2);
-    GPIO_SetActive(EPD_RST_PORT, EPD_RST_PIN);
+    GPIO_SetActive(EPD_PIN(RST));
     epd_delay_ms(200);
 #endif
 }
@@ -456,9 +577,17 @@ static const uint8_t epd_lut_partial[EPD_LUT_BYTES + EPD_LUT_TRAILER] = {
  * MISO and on variant A it is simply cheap to be consistent. */
 void epd_spi_claim(void)
 {
-    GPIO_ConfigurePin(EPD_SCK_PORT, EPD_SCK_PIN, OUTPUT, PID_GPIO, false);
-    GPIO_ConfigurePin(EPD_SDA_PORT, EPD_SDA_PIN, OUTPUT, PID_GPIO, false);
-    GPIO_ConfigurePin(EPD_DC_PORT,  EPD_DC_PIN,  OUTPUT, PID_GPIO, false);
+    GPIO_ConfigurePin(EPD_PIN(SCK), OUTPUT, PID_GPIO, false);
+    GPIO_ConfigurePin(EPD_PIN(SDA), OUTPUT, PID_GPIO, false);
+    GPIO_ConfigurePin(EPD_PIN(DC),  OUTPUT, PID_GPIO, false);
+#if EPD_TX_FAST
+    /* Re-derive the bit loop's register addresses here rather than once at
+     * init. They cannot change today - the map is compiled in - but this is
+     * the function that says "the panel has its pins back", which is exactly
+     * the condition those cached addresses describe. Putting them anywhere
+     * else would mean a future runtime remap had two places to remember. */
+    epd_tx_cache_pins();
+#endif
 }
 
 #else
@@ -482,7 +611,7 @@ static const spi_cfg_t epd_spi_cfg = {
 void epd_spi_claim(void)
 {
     /* D/C back to a plain output - the flash driver leaves it as SPI_DI. */
-    GPIO_ConfigurePin(EPD_DC_PORT, EPD_DC_PIN, OUTPUT, PID_GPIO, false);
+    GPIO_ConfigurePin(EPD_PIN(DC), OUTPUT, PID_GPIO, false);
     spi_initialize(&epd_spi_cfg);
 }
 
@@ -490,10 +619,16 @@ void epd_spi_claim(void)
 
 void epd_gpio_init(void)
 {
+    /* Decide which pins these are before configuring any of them. First thing
+     * in the first function that touches the panel, so nothing can read s_pin[]
+     * before it is filled - the whole driver goes through it now, and a zeroed
+     * table would quietly mean "every signal is P0_0". */
+    epd_pins_init();
+
 #if EPD_BITBANG
     /* Panel clock and data as plain outputs, both idle low. */
-    GPIO_ConfigurePin(EPD_SCK_PORT, EPD_SCK_PIN, OUTPUT, PID_GPIO, false);
-    GPIO_ConfigurePin(EPD_SDA_PORT, EPD_SDA_PIN, OUTPUT, PID_GPIO, false);
+    GPIO_ConfigurePin(EPD_PIN(SCK), OUTPUT, PID_GPIO, false);
+    GPIO_ConfigurePin(EPD_PIN(SDA), OUTPUT, PID_GPIO, false);
     /* P2_2 is in the retail firmware's pin table, so we drive it as the retail
      * firmware does - but on this board it goes nowhere. Traced on the Type 3
      * PCB it lands on R22, an unpopulated resistor position, and stops. It was
@@ -507,15 +642,15 @@ void epd_gpio_init(void)
      * rather than on the variant, since "we have a pin for this" is the actual
      * precondition. */
 #ifdef EPD_AUX_PORT
-    GPIO_ConfigurePin(EPD_AUX_PORT, EPD_AUX_PIN, OUTPUT, PID_GPIO, true);
+    GPIO_ConfigurePin(EPD_PIN(AUX), OUTPUT, PID_GPIO, true);
 #endif
 #endif
 
     /* CS as GPIO output, idle high (inactive). Must be PID_GPIO so the
      * GPIO SET/RESET registers (used by epd_cs_low/high) actually drive it. */
-    GPIO_ConfigurePin(EPD_CS_PORT,   EPD_CS_PIN,   OUTPUT, PID_GPIO, true);
-    GPIO_ConfigurePin(EPD_DC_PORT,   EPD_DC_PIN,   OUTPUT, PID_GPIO, false);
-    GPIO_ConfigurePin(EPD_RST_PORT,  EPD_RST_PIN,  OUTPUT, PID_GPIO, true);
+    GPIO_ConfigurePin(EPD_PIN(CS),   OUTPUT, PID_GPIO, true);
+    GPIO_ConfigurePin(EPD_PIN(DC),   OUTPUT, PID_GPIO, false);
+    GPIO_ConfigurePin(EPD_PIN(RST),  OUTPUT, PID_GPIO, true);
     /* BUSY as an input with a PULL-DOWN, not hi-Z.
      *
      * The retail firmware configures its BUSY pin this way (mode 0x0200,
@@ -530,10 +665,10 @@ void epd_gpio_init(void)
      * With a pull-down the same fault reads as idle, which is both the safer
      * failure and the honest one. On a healthy panel the line is driven either
      * way, so this costs nothing. */
-    GPIO_ConfigurePin(EPD_BUSY_PORT, EPD_BUSY_PIN, INPUT_PULLDOWN, PID_GPIO, false);
+    GPIO_ConfigurePin(EPD_PIN(BUSY), INPUT_PULLDOWN, PID_GPIO, false);
     /* Assert the panel power-enable exactly as the stock firmware does
      * (P2_3 high). Without this the booster/supply may stay off. */
-    GPIO_ConfigurePin(EPD_PWR_PORT,  EPD_PWR_PIN,  OUTPUT, PID_GPIO, true);
+    GPIO_ConfigurePin(EPD_PIN(PWR),  OUTPUT, PID_GPIO, true);
 }
 
 #if (EPD_BITBANG && EPD_PANEL_PROBE) || EPD_TEMP_READ || EPD_PANEL_ID
@@ -566,13 +701,13 @@ static void epd_read_begin(uint32_t sda_mode)
      * stand. Borrow them as GPIOs for the turnaround and give them back at
      * the end. CS is manual on both variants and D/C is already an output, so
      * those need nothing. */
-    GPIO_ConfigurePin(EPD_SCK_PORT, EPD_SCK_PIN, OUTPUT, PID_GPIO, false);
+    GPIO_ConfigurePin(EPD_PIN(SCK), OUTPUT, PID_GPIO, false);
 #endif
 
     epd_cs_low();
-    GPIO_SetInactive(EPD_SCK_PORT, EPD_SCK_PIN);
-    GPIO_SetActive(EPD_DC_PORT, EPD_DC_PIN);      /* data phase */
-    GPIO_ConfigurePin(EPD_SDA_PORT, EPD_SDA_PIN,
+    GPIO_SetInactive(EPD_PIN(SCK));
+    GPIO_SetActive(EPD_PIN(DC));      /* data phase */
+    GPIO_ConfigurePin(EPD_PIN(SDA),
                       (GPIO_PUPD)sda_mode, PID_GPIO, false);
 }
 
@@ -581,10 +716,10 @@ static uint8_t epd_read_bits(void)
     uint8_t v = 0;
 
     for (uint8_t i = 0; i < 8; i++) {
-        GPIO_SetInactive(EPD_SCK_PORT, EPD_SCK_PIN);
+        GPIO_SetInactive(EPD_PIN(SCK));
         v = (uint8_t)((v << 1) |
-                      (GPIO_GetPinStatus(EPD_SDA_PORT, EPD_SDA_PIN) ? 1u : 0u));
-        GPIO_SetActive(EPD_SCK_PORT, EPD_SCK_PIN);
+                      (GPIO_GetPinStatus(EPD_PIN(SDA)) ? 1u : 0u));
+        GPIO_SetActive(EPD_PIN(SCK));
     }
     return v;
 }
@@ -592,15 +727,15 @@ static uint8_t epd_read_bits(void)
 static void epd_read_end(void)
 {
 #if EPD_BITBANG
-    GPIO_ConfigurePin(EPD_SDA_PORT, EPD_SDA_PIN, OUTPUT, PID_GPIO, false);
+    GPIO_ConfigurePin(EPD_PIN(SDA), OUTPUT, PID_GPIO, false);
     epd_cs_high();
 #else
     epd_cs_high();
     /* Back to the SPI block, exactly as set_pad_functions() configures them.
      * Note this does NOT re-run spi_initialize(): the block itself was never
      * touched, only which pads it reaches. */
-    GPIO_ConfigurePin(EPD_SCK_PORT, EPD_SCK_PIN, OUTPUT, PID_SPI_CLK, false);
-    GPIO_ConfigurePin(EPD_SDA_PORT, EPD_SDA_PIN, OUTPUT, PID_SPI_DO,  false);
+    GPIO_ConfigurePin(EPD_PIN(SCK), OUTPUT, PID_SPI_CLK, false);
+    GPIO_ConfigurePin(EPD_PIN(SDA), OUTPUT, PID_SPI_DO,  false);
 #endif
 }
 
@@ -1250,7 +1385,7 @@ void epd_init(bool full_lut)
 bool epd_display_busy(void)
 {
     /* BUSY is active-high while busy, confirmed by the Waveshare reference. */
-    return GPIO_GetPinStatus(EPD_BUSY_PORT, EPD_BUSY_PIN) ? true : false;
+    return GPIO_GetPinStatus(EPD_PIN(BUSY)) ? true : false;
 }
 
 /* Display Update Control 2 payloads.
@@ -1399,7 +1534,7 @@ static void epd_write_rows(const uint8_t *fb, uint16_t first, uint16_t last,
      * this reason. So invert on the way out. If the very first test pattern
      * comes out as white-on-black, flip EPD_INVERT_OUTPUT to 0 and reflash. */
     epd_write_cmd(ram_cmd);
-    GPIO_SetActive(EPD_DC_PORT, EPD_DC_PIN);   /* DC high = data */
+    GPIO_SetActive(EPD_PIN(DC));   /* DC high = data */
     epd_cs_low();
 #if EPD_TX_PROFILE
     /* SysTick counts DOWN from its reload at a 1 MHz reference, so the
