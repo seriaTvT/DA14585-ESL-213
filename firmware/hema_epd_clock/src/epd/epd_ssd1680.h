@@ -33,21 +33,19 @@
 #include "gpio.h"
 
 /* ------------------------------------------------------------------------
- * Panel geometry. Both sizes are in the field and vary independently of the
- * board wiring, so this comes from the tag type - config/tag_types.h defines
- * EPD_PANEL_LOW_RES for the types that carry the 104x212 A41. High-res is only
- * the fallback for builds that never see that header, the host tests included.
+ * The geometry SEED. Not a choice - see the runtime geometry below.
+ *
+ * A53 122x250, the larger of the two panels, because every buffer is sized for
+ * it anyway (EPD_BUF_SIZE_MAX) and because an erased panel byte means "the
+ * built-in case", which is the same reasoning that makes variant B the seed pin
+ * map. A tag whose record cannot be read never drives its panel, so these
+ * values only ever describe a panel that is not being driven.
  *
  * Read the size off the FPC label rather than inferring it: A53 is 122x250,
  * A41 and A07 are 104x212.
  * ---------------------------------------------------------------------- */
-#if defined(EPD_PANEL_LOW_RES)
-    #define EPD_WIDTH_BUILD   104
-    #define EPD_HEIGHT_BUILD  212
-#else
-    #define EPD_WIDTH_BUILD   122
-    #define EPD_HEIGHT_BUILD  250
-#endif
+#define EPD_WIDTH_BUILD   122
+#define EPD_HEIGHT_BUILD  250
 
 /* ---- the geometry, at runtime -------------------------------------------
  *
@@ -124,11 +122,7 @@ void epd_geometry_init(void);
  * See hema-local/docs/PANEL_LOTS.md, and re/type4/lut/ for the probe data.
  * ---------------------------------------------------------------------- */
 #if !defined(EPD_INIT_FROM_OTP)
-    #if defined(EPD_BOARD_VARIANT_A)
-        #define EPD_INIT_FROM_OTP 1
-    #else
-        #define EPD_INIT_FROM_OTP 0
-    #endif
+    #define EPD_INIT_FROM_OTP 0
 #endif
 
 /* Build the panel-presence probe in. Off by default: it is a bring-up tool for
@@ -155,34 +149,6 @@ void epd_geometry_init(void);
  * is the thing to try first if a panel stops latching. */
 #if !defined(EPD_TX_FAST)
     #define EPD_TX_FAST 1
-#endif
-
-/* Drive variant B's panel through the hardware SPI block, as this firmware did
- * until 2026-08-12. Off by default: BOTH variants now bit-bang.
- *
- * Variant B genuinely has a usable SPI block on the panel's clock and data
- * pads, and using it was the obvious thing to do while the two variants were
- * separate images. It stops being obvious once they are one image, because the
- * pin map then comes off the tag at runtime (epd/epd_board.h) and a hardware
- * peripheral cannot follow it - the SPI block reaches the pads it reaches. A
- * single image has to drive the panel by a method that works for any pin map,
- * and bit-banging is the only such method.
- *
- * That is not merely our conclusion: the vendor's retail firmware ships one
- * image for every board and bit-bangs both variants from it (the loop is at
- * 0x07FC22A0, pins from its runtime table). So this follows the vendor rather
- * than departing from it.
- *
- * The cost was measured rather than assumed. On the fast loop a full frame's
- * transfer is ~2.1% of a refresh; the waveform is the rest. See
- * hema-local/docs/TAG_VARIANTS.md.
- *
- * Kept because it is the one path that does not depend on the bit loop being
- * fast enough or the pad handover being right, which makes it the thing to
- * compare against if a variant-B panel ever misbehaves.
- * tools/build.sh --spi-panel. */
-#if !defined(EPD_PANEL_SPI)
-    #define EPD_PANEL_SPI 0
 #endif
 
 /* Build in the controller's temperature reading. It feeds {T}, and on the OTP
@@ -552,49 +518,52 @@ void epd_geometry_init(void);
  * precisely what happened when a variant-B build was flashed to the variant-A
  * tag, so if a board goes quiet on the panel alone, check this first.
  * ---------------------------------------------------------------------- */
-#if !defined(EPD_BOARD_VARIANT_A) && !defined(EPD_BOARD_VARIANT_B)
-    /* Default: the variant-A tag, which is the one on the bench. */
-    #define EPD_BOARD_VARIANT_A
-#endif
-
-#if defined(EPD_BOARD_VARIANT_A)
-
 /* ------------------------------------------------------------------------
- * VARIANT A pin map, read from the retail firmware's own table.
+ * THE SEED PIN MAP - the vendor's built-in default, which is variant B.
  *
- *   EPD signal   DA14585 GPIO   table entry
- *   ----------   ------------   -----------
- *   SCK            P0_1           +0x06
- *   SDA (MOSI)     P2_0           +0x08
- *   D/C            P0_7           +0x0A
- *   CS             P2_1           +0x00
- *   RST            P1_0           +0x04   (the only entry ever pulsed low)
- *   BUSY (input)   P1_1           +0x0C
- *   enable         P2_3           +0x0E   (held high)
- *   enable         P2_2           +0x02   (held high — note B drives it LOW)
+ * These are no longer a choice. The map comes off the tag at boot (the record
+ * at flash 0x039000, decoded by epd/epd_board.h), and this is only what the
+ * table holds before that read happens - during the one flash transaction that
+ * performs it, and forever on a tag whose record cannot be read, which does not
+ * drive its panel at all.
  *
- * The panel is bit-banged here rather than driven by the hardware SPI block,
- * following the retail firmware, which bit-bangs these same two pins. It costs
- * nothing on this board and buys a real simplification: the panel pins are
- * disjoint from the boot flash's (P0_0/P0_3/P0_5/P0_6), so unlike variant B
- * there is no bus to share and no D/C-versus-MISO collision on P0_5.
+ * Variant B is the right seed for exactly the reason the vendor uses it: an
+ * erased record MEANS variant B, so a board that says nothing is claiming this
+ * map. It also makes the one pin that has to be right before the map is known -
+ * the panel's chip select, parked by epd_cs_park() so the panel does not hear
+ * the flash - correct on every tag we have, since CS is P2_1 in both maps.
+ *
+ * Recovered from the community firmware and cross-checked against the vendor's
+ * own runtime table at 0x07FD4310, which holds exactly these eight pairs:
+ *
+ *   EPD signal   DA14585 GPIO   QFN40 pin
+ *   ----------   ------------   ---------
+ *   SCK  (CLK)     P0_0            1     (shared with the boot flash)
+ *   SDA  (MOSI)    P0_6            9     (shared with the boot flash)
+ *   D/C            P0_5            7     (the flash's MISO during a claim)
+ *   CS             P2_1            8
+ *   RST            P0_7           10
+ *   BUSY (input)   P2_0           40
+ *   PWR-enable     P2_3           18
+ *
+ * The variant-A map is NOT here, and deliberately so: it lives on the tags that
+ * need it, which is the whole point. It is 21 22 10 01 20 07 11 23 packed, if
+ * you are checking a record by eye - see hema-local/docs/TAG_VARIANTS.md.
  * ---------------------------------------------------------------------- */
-#define EPD_BITBANG      1
-
 #define EPD_SCK_PORT     GPIO_PORT_0
-#define EPD_SCK_PIN      GPIO_PIN_1
+#define EPD_SCK_PIN      GPIO_PIN_0
 
-#define EPD_SDA_PORT     GPIO_PORT_2
-#define EPD_SDA_PIN      GPIO_PIN_0
+#define EPD_SDA_PORT     GPIO_PORT_0
+#define EPD_SDA_PIN      GPIO_PIN_6
 
 #define EPD_DC_PORT      GPIO_PORT_0
-#define EPD_DC_PIN       GPIO_PIN_7
+#define EPD_DC_PIN       GPIO_PIN_5
 
-#define EPD_RST_PORT     GPIO_PORT_1
-#define EPD_RST_PIN      GPIO_PIN_0
+#define EPD_RST_PORT     GPIO_PORT_0
+#define EPD_RST_PIN      GPIO_PIN_7
 
-#define EPD_BUSY_PORT    GPIO_PORT_1
-#define EPD_BUSY_PIN     GPIO_PIN_1
+#define EPD_BUSY_PORT    GPIO_PORT_2
+#define EPD_BUSY_PIN     GPIO_PIN_0
 
 #define EPD_CS_PORT      GPIO_PORT_2
 #define EPD_CS_PIN       GPIO_PIN_1
@@ -602,151 +571,12 @@ void epd_geometry_init(void);
 #define EPD_PWR_PORT     GPIO_PORT_2
 #define EPD_PWR_PIN      GPIO_PIN_3
 
-/* In variant A's retail pin table and held high there, so we hold it high too -
- * but on the Type 3 board this pad is not connected to anything: it runs to the
- * unpopulated resistor position R22 and stops. Do not read anything into its
- * state. (It was documented here as a "second enable line"; that was a guess,
- * and tracing the PCB disproved it.) */
-#define EPD_AUX_PORT     GPIO_PORT_2
-#define EPD_AUX_PIN      GPIO_PIN_2
+/* No EPD_AUX. Variant A names one (P2_2) and drives it high; the vendor's
+ * variant-B table names P1_1 there and drives it too. This firmware has never
+ * driven either, on any board, and starting now would be a behaviour change
+ * with no evidence behind it. The record carries the pin if it is ever wanted.
+ */
 
-#else   /* EPD_BOARD_VARIANT_B */
-
-/* Bit-banged as of 2026-08-12, like variant A - see EPD_PANEL_SPI above for
- * why, and --spi-panel to go back. The difference from variant A is entirely
- * in which pads: here the panel's clock and data ARE the SPI block's pads,
- * shared with the boot flash, so they change function back and forth as the
- * bus is handed over (EPD_PANEL_PADS_SHARED, below). */
-#define EPD_BITBANG      (!EPD_PANEL_SPI)
-
-/* ------------------------------------------------------------------------
- * VARIANT B pin assignments — RECOVERED FROM THE COMMUNITY FIRMWARE.
- *
- * These are no longer guesses. They were extracted from the community
- * `5_hema_clock_down_high_V1.57.bin` by decompiling both the pin-setup
- * function and the actual command/data/reset routines with a correctly
- * memory-mapped Ghidra project, and the two agree (see PROTOCOL_NOTES.md
- * §13). The firmware supports two board variants selected by a stored
- * config byte; the values below are "variant B" (config byte == 0), which
- * is the fully cross-checked one and whose control pins sit on physically
- * adjacent package pins (7/8/9/10) — consistent with a real board layout.
- *
- *   EPD signal   DA14585 GPIO   QFN40 pin
- *   ----------   ------------   ---------
- *   SCK  (CLK)     P0_0            1
- *   SDA  (MOSI)    P0_6            9     (SPI_DO, see user_periph_setup.h)
- *   D/C            P0_5            7
- *   CS             P2_1            8     (SPI_EN, see user_periph_setup.h)
- *   RST            P0_7           10
- *   BUSY (input)   P2_0           40
- *   PWR-enable     P2_3           18    (driven high by the stock firmware)
- *   aux (unknown)  P2_2           13    (driven low by the stock firmware)
- *
- * SCK and MOSI here are the hardware SPI block's pads (see
- * user_periph_setup.h), shared with the boot flash.
- * ---------------------------------------------------------------------- */
-#ifndef EPD_DC_PORT
-#define EPD_DC_PORT      GPIO_PORT_0
-#define EPD_DC_PIN       GPIO_PIN_5     /* QFN40 pin 7  */
-#endif
-
-#ifndef EPD_RST_PORT
-#define EPD_RST_PORT     GPIO_PORT_0
-#define EPD_RST_PIN      GPIO_PIN_7     /* QFN40 pin 10 */
-#endif
-
-#ifndef EPD_BUSY_PORT
-#define EPD_BUSY_PORT    GPIO_PORT_2
-#define EPD_BUSY_PIN     GPIO_PIN_0     /* QFN40 pin 40 */
-#endif
-
-/* Chip-select. Driven manually as a plain GPIO (the stock firmware bit-bangs
- * it too), NOT via the hardware SPI_EN function — so it must be configured
- * PID_GPIO. Physically confirmed on U4 connector pad 13. */
-#ifndef EPD_CS_PORT
-#define EPD_CS_PORT      GPIO_PORT_2
-#define EPD_CS_PIN       GPIO_PIN_1     /* QFN40 pin 8  */
-#endif
-
-/* Panel power-enable line: the stock firmware drives P2_3 high at init.
- * Almost certainly gates the EPD's supply / booster — configure and assert
- * it or the panel may stay dark regardless of correct SPI. */
-#ifndef EPD_PWR_PORT
-#define EPD_PWR_PORT     GPIO_PORT_2
-#define EPD_PWR_PIN      GPIO_PIN_3     /* QFN40 pin 18 */
-#endif
-
-/* Clock and data.
- *
- * These two pads are ALSO the hardware SPI block's (SPI_CLK_PORT / SPI_DO_PORT
- * in user_periph_setup.h) and must agree with it - they are the same two pins
- * the table above lists as SCK and SDA. Which peripheral they belong to at any
- * moment is not fixed: the boot flash needs them as PID_SPI_CLK / PID_SPI_DO,
- * and the panel now needs them as plain outputs to bit-bang. flash_bus_acquire()
- * takes them and epd_spi_claim() gives them back - see epd_store.c.
- *
- * The one hard rule is that the flash's chip select must be inactive whenever
- * the panel drives these, and the panel's whenever the flash does. Both are
- * plain GPIOs held high between transactions, so this holds by construction;
- * it is stated because nothing enforces it. */
-#ifndef EPD_SCK_PORT
-#define EPD_SCK_PORT     GPIO_PORT_0
-#define EPD_SCK_PIN      GPIO_PIN_0     /* QFN40 pin 1  */
-#endif
-
-#ifndef EPD_SDA_PORT
-#define EPD_SDA_PORT     GPIO_PORT_0
-#define EPD_SDA_PIN      GPIO_PIN_6     /* QFN40 pin 9  */
-#endif
-
-#endif  /* board variant */
-
-/* Does the panel's clock/data share pads with the hardware SPI block, and so
- * with the boot flash?
- *
- * Variant B: yes - P0_0 and P0_6 are both. Variant A: no - the panel is on
- * P0_1/P2_0 and the flash on P0_0/P0_3/P0_5/P0_6, disjoint.
- *
- * Worth a name of its own rather than testing the variant directly, because
- * the two questions are only accidentally the same one. Everywhere this is
- * used, what matters is the pad sharing - who has to hand the bus back, and
- * which pins must not be reserved twice - and none of it would change if a
- * fifth board turned up that bit-banged a pin map of its own onto the SPI
- * pads. Once the pin map comes off the tag rather than out of these macros,
- * this is the one thing about a board that still cannot be read from flash. */
-#if defined(EPD_BOARD_VARIANT_A)
-#define EPD_PANEL_PADS_SHARED   0
-#else
-#define EPD_PANEL_PADS_SHARED   1
-#endif
-
-/* Which wiring this image was built for, as a string, so the built binary can
- * say so out loud. tools/flash.sh reads it back out of the .bin and refuses to
- * program a tag whose variant was not stated and matched. A wrong variant is
- * otherwise silent - the tag boots and advertises normally and only the panel
- * stays dead - and it has cost a working tag twice. */
-#if defined(EPD_BOARD_VARIANT_A)
-#define EPD_BOARD_VARIANT_STR   "A"
-#else
-#define EPD_BOARD_VARIANT_STR   "B"
-#endif
-
-/* Literal the flasher greps for. Kept as one contiguous string so it survives
- * into .rodata verbatim and cannot be confused with any other text. */
-#define EPD_BOARD_VARIANT_TAG   "HEMA-BOARD-VARIANT-" EPD_BOARD_VARIANT_STR
-
-/* The same again for the geometry, which the wiring stamp says nothing about.
- * Nothing used to check it, so a high-res image on a low-res tag passed the
- * flasher and turned up as a garbled panel - a wrong build presenting as a
- * hardware fault, which is the failure mode this whole apparatus exists to
- * stop. Built from EPD_WIDTH/EPD_HEIGHT so it cannot disagree with them. */
-#define EPD__STR2(x)            #x
-#define EPD__STR(x)             EPD__STR2(x)
-/* _BUILD, not the runtime geometry: this stamp is what tools/flash.sh reads out
- * of the .bin before programming, so it has to describe the image on disk. The
- * panel the image ends up driving is the tag's business and is decided at boot. */
-#define EPD_PANEL_TAG           "HEMA-PANEL-" EPD__STR(EPD_WIDTH_BUILD) "x" \
-                                EPD__STR(EPD_HEIGHT_BUILD)
 
 /* And the type number itself, which is what a person actually says out loud
  * and what tools/flash.sh takes. It comes from config/tag_types.h, force-
@@ -835,7 +665,7 @@ void epd_spi_claim(void);
  *  (mirrors the two 30-byte LUT tables found in the reference firmware). */
 void epd_init(bool full_lut);
 
-#if EPD_BITBANG && EPD_PANEL_PROBE
+#if EPD_PANEL_PROBE
 /** True if a panel answers cmd 0x2F (Read Status Bit) with a driven level.
  *
  *  Diagnostic, not a gate: nothing refuses to run because this is false. It

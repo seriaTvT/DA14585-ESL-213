@@ -307,12 +307,12 @@ static const struct advertise_configuration user_adv_conf = {
 ///
 /// Filled in by user_dev_name_init() in user_empty_peripheral_template.c, which
 /// also explains why the patching has to happen on every advertising restart.
-/// The leading four characters are patched too, and for the same reason the
-/// address is: one image runs on every tag, so the build cannot know which one
-/// it is. They become T<type><variant><L|H> - "T3AL", "T1BH" - worked out at
-/// boot from the board record, which makes the advertised name describe the
-/// TAG rather than, as before, the image that happens to be on it.
-#define USER_DEVICE_NAME        "T?xx-000000"
+/// One name for every tag. It used to encode the type, variant and resolution -
+/// "T4BL-000000" - which described the IMAGE, and there is no longer an image
+/// per tag to describe. What distinguishes one tag from another in a scanner is
+/// the address, which is filled in below; what it IS, a client reads over GATT
+/// (render status bytes 10-13 give the real panel).
+#define USER_DEVICE_NAME        "Tag-000000"
 
 /// Device name length
 #define USER_DEVICE_NAME_LEN    (sizeof(USER_DEVICE_NAME)-1)

@@ -78,8 +78,7 @@ void epd_board_check(void)
         return;
     }
 
-    s_verdict = epd_board_matches_build(&s_board) ? EPD_BOARD_AGREES
-                                                  : EPD_BOARD_MISMATCH;
+    s_verdict = EPD_BOARD_AGREES;
 }
 
 epd_board_verdict_t epd_board_verdict(void)

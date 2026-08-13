@@ -1,74 +1,55 @@
 #!/usr/bin/env bash
 #
-# build.sh - build the firmware for one tag type, or for every type at once.
+# build.sh - build the firmware. There is one image, and it runs on every tag.
 #
-#   tools/build.sh --type 3        -> out/hema_epd_clock-type3.bin, on the
-#                                     Waveshare waveform: ~2.5x faster, and
-#                                     inert on some panel lots
-#   tools/build.sh --type 3 --otp  -> the panel's own OTP waveform instead:
-#                                     slower, and drives every lot we have
-#   tools/build.sh --all           -> the whole set, all of one vintage: both
-#                                     waveforms, both LUT shapes, and a -partial
-#                                     image for each. Twenty builds, a few minutes.
-#                                     Run it after any driver change.
-#   tools/build.sh --type 3 --clean
+#   tools/build.sh                 -> out/hema_epd_clock.bin
+#   tools/build.sh --otp           -> the panel's own OTP waveform instead
+#   tools/build.sh --all           -> every waveform/LUT/partial combination,
+#                                     all of one vintage. Run after a driver
+#                                     change. Five images, about a minute.
+#   tools/build.sh --clean
 #
-# Flash the default, look at the glass, and reach for --otp if the matrix did
-# not move. See HEMA_TAG_OTP_DEFAULT in src/config/tag_types.h for why that is
-# the way round it is.
+# THERE IS NO --type. There used to be four, one per tag, and choosing wrong
+# gave you a tag that booted, advertised and took connections with a dead panel.
+# The image now reads its wiring, its panel geometry and its default face out of
+# the record at flash 0x039000 at boot, so it fits any of them. Proven on
+# hardware: an image built for a variant-A 104x212 tag drove a variant-B 122x250
+# panel. See hema-local/docs/TAG_VARIANTS.md.
 #
-# Bench builds, for working out why a panel behaves as it does. Each gets its
-# own name on disk, for the same reason --fast does.
+# WHAT STILL VARIES is the waveform, and only the waveform. It is keyed to the
+# panel LOT, which nothing on the tag reports - two tags of the same type can
+# disagree. Flash the default, look at the glass, and reach for --otp if the
+# matrix did not move. See tag_types.h for the lot table.
 #
-#   --tx-profile     time the frame write into epd_tx_us/epd_tx_bytes, read
-#                    with hema-local/tools/tagread.py. Diagnostic; see
-#                    EPD_TX_PROFILE in epd/epd_ssd1680.h.
-#   --sweep          map the panel's OTP waveform against temperature. Blocks
-#                    for ~a minute at boot; read epd_sweep_ms over SWD.
+#   --otp            the panel's own waveform: slower, temperature-compensated,
+#                    and it drives every lot we have.
+#   --fast           pin the Waveshare table explicitly. It is the default;
+#                    passing it means a command written down today keeps its
+#                    meaning if the default ever changes.
+#   --lut-steps <n>  which LUT shape the hand-written table is written for: 7
+#                    (Waveshare's own) or 10 (measured on the A41 controller).
+#                    Waveshare path only. Check s_poll_count, not just the
+#                    glass: ~28 polls means the shape fits, ~4 means zero frames.
 #   --lut-gain <n>   multiply the Waveshare waveform's drive by n. Separates
-#                    "this lot needs more drive" from "our LUT is the wrong
-#                    shape for this controller". Needs the Waveshare path.
-#   --spi-panel      drive a variant-B panel from the hardware SPI block, the
-#                    way this firmware did until 2026-08-12. Both variants now
-#                    bit-bang, because one image cannot follow a runtime pin map
-#                    through a fixed peripheral. Variant B only; the fallback if
-#                    a variant-B panel ever objects to the bit loop.
-#   --panel-id       read cmd 0x2F/0x2E/0x2D into epd_panel_id_* over SWD, to
-#                    see whether the controller can say which lot it is.
-#   --lut-steps <n>  which LUT shape the hand-written waveform is written for:
-#                    7 (Waveshare's own) or 10 (measured on the A41 controller).
-#                    Waveshare path only. Check s_poll_count, not just the glass:
-#                    ~28 polls means the shape fits, ~4 means zero frames ran.
-#   --lut-probe      measure the controller's LUT layout, by timing an update
-#                    with one marker byte swept across the register. Blocks for
-#                    minutes and never returns; read epd_lut_probe_ms over SWD.
-#   --partial        repaint only changed rows with the partial waveform. Costs
-#                    EPD_BUF_SIZE of RAM and has two unmeasured values in it;
-#                    see EPD_PARTIAL in src/epd/epd_ssd1680.h before trusting it.
-#   --no-suota       leave the SUOTA service out. On by default, so the tag can
-#                    be updated over BLE rather than over SWD; this is how you
-#                    opt out, and the image is named -nosuota so the choice is
-#                    visible on disk. Think before using it: a tag running an
-#                    image without SUOTA can only be updated by attaching SWD to
-#                    it again.
+#                    "this lot needs more drive" from "wrong shape".
+#   --partial        repaint only changed rows. Costs EPD_BUF_SIZE_MAX of RAM
+#                    and has two unmeasured values in it; see EPD_PARTIAL.
+#   --no-suota       leave the SUOTA service out. Think before using it: a tag
+#                    running such an image can only be updated over SWD again.
 #
-# A tag type used to be two macros - the board variant and the panel size -
-# edited by hand in src/config/user_config.h, and kept consistent with the
-# letter passed to flash.sh by whoever remembered. That is one forgotten edit
-# away from an image built for the wrong tag, and the wrong tag is silent: it
-# boots, advertises and takes connections exactly as normal, and only the panel
-# stays dead. It has cost a working tag twice.
+# Bench options, each of which renames the image because these look identical
+# from the outside and one of them blocks for a minute at boot:
 #
-# So the type is one number now. It is passed to the compiler from here rather
-# than written into a source file, which means switching types touches nothing
-# that git tracks and `--all` is just a loop. The image is then checked against
-# the number before this script will say it built anything - see verify_stamp,
-# and note that a silently-unpatched build tree would otherwise hand you four
-# identical images with four different names.
+#   --tx-profile     time the frame write into epd_tx_us/epd_tx_bytes, read with
+#                    hema-local/tools/tagread.py.
+#   --tx-slow        the pre-2026-08-12 bit loop, via GPIO_SetActive(). The first
+#                    thing to try if a panel stops latching.
+#   --sweep          map the OTP waveform against temperature. Blocks ~a minute.
+#   --panel-id       read cmd 0x2F/0x2E/0x2D into epd_panel_id_* over SWD.
+#   --lut-probe      measure the controller's LUT layout. Blocks for minutes and
+#                    never returns; read epd_lut_probe_ms over SWD.
 #
-# Local build tree only. The VM path is still `tools/sync.sh --build`; the
-# toolchain has been on this machine since 2026-07-28 and produces a
-# byte-identical image (hema-local/docs/LOCAL_BUILD.md).
+# Local build tree only. The VM path is still `tools/sync.sh --build`.
 #
 # Configure with the environment if your paths differ:
 #   LOCAL_PROJ  the hema_epd_clock dir inside the SDK (same var sync.sh uses)
@@ -80,24 +61,15 @@ WORKSPACE=$(cd "$HERE/.." && pwd)
 LOCAL_PROJ=${LOCAL_PROJ:-$WORKSPACE/hema-local/toolchain/SDK_6.0.22.1401/DA145xx_SDK/6.0.22.1401/projects/target_apps/template/hema_epd_clock}
 OUT=${OUT:-$HERE/out}
 BUILD=$LOCAL_PROJ/e2studio/DA14585
-TABLE=$HERE/firmware/hema_epd_clock/src/config/tag_types.h
 
-usage() { sed -n '3,8p' "$0" >&2; }
+usage() { sed -n '3,10p' "$0" >&2; }
 
-# The set of types comes from the header rather than being listed here, so
-# adding a tag stays a one-row change in one file and --all picks it up.
-known_types() {
-    grep -oE 'HEMA_TAG_TYPE == [0-9]+' "$TABLE" | grep -oE '[0-9]+$' | sort -un
-}
-
-types=
 force_clean=0
 wf=
 also_alt=0
 sweep=0
 tx_profile=0
 tx_slow=0
-spi_panel=0
 panel_id=0
 partial=0
 suota=1
@@ -106,9 +78,7 @@ lut_steps=
 lut_gain=1
 while [ $# -gt 0 ]; do
     case "$1" in
-        --type)    types="${types}${types:+ }${2:-}"; shift 2 ;;
-        --type=*)  types="${types}${types:+ }${1#*=}"; shift ;;
-        --all)     types="$(known_types | tr '\n' ' ')"; also_alt=1; shift ;;
+        --all)     also_alt=1; shift ;;
         # Both directions stay available and explicit. --fast is not a no-op
         # just because it is now the default: it pins the waveform in the image
         # name and in the build, so a command written down today still means the
@@ -119,7 +89,6 @@ while [ $# -gt 0 ]; do
         --sweep)   sweep=1; shift ;;
         --tx-profile) tx_profile=1; shift ;;
         --tx-slow) tx_slow=1; shift ;;
-        --spi-panel) spi_panel=1; shift ;;
         --panel-id) panel_id=1; shift ;;
         --partial) partial=1; shift ;;
         --suota)   suota=1; shift ;;            # the default; kept explicit
@@ -143,19 +112,6 @@ case "$lut_gain" in
     ''|*[!0-9]*) echo "build.sh: --lut-gain wants a whole number, got '$lut_gain'" >&2; exit 2 ;;
 esac
 [ "$lut_gain" -ge 1 ] || { echo "build.sh: --lut-gain is a multiplier; 1 means unmodified" >&2; exit 2; }
-
-[ -n "$types" ] || { usage; exit 2; }
-[ -r "$TABLE" ] || { echo "build.sh: cannot read $TABLE" >&2; exit 1; }
-
-for t in $types; do
-    if ! known_types | grep -qx -- "$t"; then
-        echo "build.sh: '$t' is not a known tag type." >&2
-        echo "          Known: $(known_types | tr '\n' ' ')" >&2
-        echo "          A new one is a row in $TABLE" >&2
-        echo "          and a row in hema-local/docs/TAG_VARIANTS.md." >&2
-        exit 2
-    fi
-done
 
 [ -d "$BUILD" ] || {
     echo "build.sh: no build tree at $BUILD" >&2
@@ -195,11 +151,12 @@ ensure_tag_defs() {
 # the previous type, a make that decided nothing needed rebuilding) produces a
 # working image for the *wrong* tag rather than an error.
 verify_stamp() {
-    local bin=$1 want=$2 got
-    got=$(strings -a "$bin" | grep -om1 'HEMA-TAG-TYPE-[0-9]\+' || true)
-    if [ "$got" != "HEMA-TAG-TYPE-$want" ]; then
+    local bin=$1 want_waveshare=$2 got want
+    got=$(strings -a "$bin" | grep -om1 'HEMA-WAVEFORM-[A-Z]\+' || true)
+    [ "$want_waveshare" = 1 ] && want=HEMA-WAVEFORM-WAVESHARE || want=HEMA-WAVEFORM-OTP
+    if [ "$got" != "$want" ]; then
         echo >&2
-        echo "build.sh: REFUSING - asked for type $want, the image says" >&2
+        echo "build.sh: REFUSING - asked for $want, the image says" >&2
         echo "          '${got:-nothing at all}'." >&2
         echo "          Either the build tree is not honouring \$(TAG_DEFS)," >&2
         echo "          or this is not our firmware. Try --clean." >&2
@@ -208,8 +165,8 @@ verify_stamp() {
 }
 
 build_one() {
-    local t=$1 want=$2 defs suffix label last= is_waveshare
-    defs="-DHEMA_TAG_TYPE=$t"
+    local want=$1 defs suffix label last= is_waveshare
+    defs=
     suffix=
 
     # Pin the waveform, or leave it to the header. Either way the image carries
@@ -225,12 +182,8 @@ build_one() {
     # if a type's default changes.
     if [ "$want" = otp ]; then
         is_waveshare=0
-    elif [ "$want" = fast ]; then
-        is_waveshare=1
-    elif type_defaults_to_otp "$t"; then
-        is_waveshare=0
     else
-        is_waveshare=1
+        is_waveshare=1          # the default, and --fast pins it explicitly
     fi
 
     # Bench options. Each one changes the suffix as well as the defines: these
@@ -243,19 +196,6 @@ build_one() {
     if [ "$tx_slow" = 1 ]; then
         defs="$defs -DEPD_TX_FAST=0"
         suffix="$suffix-txslow"
-    fi
-    if [ "$spi_panel" = 1 ]; then
-        # Variant B only - variant A has no SPI block on the panel's pins and
-        # never had this path. Refused rather than ignored on A, because a flag
-        # that silently does nothing is how you convince yourself you have
-        # tested something you have not.
-        if [ "$(variant_of "$t")" = A ]; then
-            echo "build.sh: --spi-panel drives the panel from the hardware SPI block," >&2
-            echo "          which only variant B has on those pins. Type $t is variant A." >&2
-            exit 2
-        fi
-        defs="$defs -DEPD_PANEL_SPI=1"
-        suffix="$suffix-spi"
     fi
     if [ "$tx_profile" = 1 ]; then
         defs="$defs -DEPD_TX_PROFILE=1"
@@ -342,11 +282,11 @@ build_one() {
         suffix="$suffix-gain$lut_gain"
     fi
 
-    label="$t$suffix"
+    label="${suffix:-default}"
     [ -r "$BUILD/.tag_type" ] && last=$(cat "$BUILD/.tag_type")
 
-    # The type reaches every file through user_config.h, which is force-
-    # included into every translation unit, so a switch rebuilds everything
+    # The defines reach every file through user_config.h, which is force-
+    # included into every translation unit, so a change rebuilds everything
     # anyway - and make cannot see a define change on its own. Clean rather
     # than trust it.
     if [ "$force_clean" = 1 ] || [ "$last" != "$label" ]; then
@@ -358,47 +298,21 @@ build_one() {
     fi
 
     echo
-    echo "=== type $label ==="
+    echo "=== $label ==="
     make -C "$BUILD" -j4 TAG_DEFS="$defs" all | tail -3
     echo "$label" > "$BUILD/.tag_type"
 
-    verify_stamp "$BUILD/hema_epd_clock.bin" "$t"
+    verify_stamp "$BUILD/hema_epd_clock.bin" "$is_waveshare"
 
     mkdir -p "$OUT"
-    cp "$BUILD/hema_epd_clock.bin" "$OUT/hema_epd_clock-type$t$suffix.bin"
-    cp "$BUILD/hema_epd_clock.elf" "$OUT/hema_epd_clock-type$t$suffix.elf"
+    cp "$BUILD/hema_epd_clock.bin" "$OUT/hema_epd_clock$suffix.bin"
+    cp "$BUILD/hema_epd_clock.elf" "$OUT/hema_epd_clock$suffix.elf"
 
     # Echo back what the binary itself says, not what we asked for.
-    printf '  %s  %s  %s  %s\n      -> out/hema_epd_clock-type%s%s.bin\n' \
-        "$(strings -a "$BUILD/hema_epd_clock.bin" | grep -om1 'HEMA-TAG-TYPE-[0-9]\+')" \
-        "$(strings -a "$BUILD/hema_epd_clock.bin" | grep -om1 'HEMA-BOARD-VARIANT-[AB]')" \
-        "$(strings -a "$BUILD/hema_epd_clock.bin" | grep -om1 'HEMA-PANEL-[0-9x]\+')" \
+    printf '  %s  %s\n      -> out/hema_epd_clock%s.bin\n' \
         "$(strings -a "$BUILD/hema_epd_clock.bin" | grep -om1 'HEMA-WAVEFORM-[A-Z]\+')" \
-        "$t" "$suffix"
-}
-
-# Which waveform a type takes when nothing overrides it. Read from the header so
-# there is one source of truth: flipping a default there changes what --all
-# builds, with no matching edit needed here.
-type_defaults_to_otp() {
-    grep -A4 "HEMA_TAG_TYPE == $1\$" "$TABLE" \
-        | grep -qE 'HEMA_TAG_OTP_DEFAULT[[:space:]]+1'
-}
-
-# Which board wiring a type is built for. Read out of the table for the same
-# reason type_defaults_to_otp() is: restating it here is one edit away from
-# disagreeing with the header that actually decides.
-#
-# -A2, not more: a type's block is two or three lines, so -A4 would run into the
-# NEXT type's #elif and read its variant instead. Type 1 is variant B and type 2
-# is variant A directly below it, which is exactly the pair that would go wrong.
-variant_of() {
-    if grep -A2 "HEMA_TAG_TYPE == $1\$" "$TABLE" \
-        | grep -qE 'define[[:space:]]+EPD_BOARD_VARIANT_A'; then
-        echo A
-    else
-        echo B
-    fi
+        "$(strings -a "$BUILD/hema_epd_clock.bin" | grep -om1 'HEMA-COMPAT-[A-Za-z0-9-]\+')" \
+        "$suffix"
 }
 
 "$HERE/tools/sync.sh" --local
@@ -407,55 +321,48 @@ variant_of() {
 # it came from a tree that predates the patch.
 python3 "$HERE/tools/register_sources.py" "$BUILD"
 ensure_tag_defs
-for t in $types; do
-    build_one "$t" "$wf"
-    # --all also builds the OTHER waveform for each type, so the fallback is
-    # already on disk when a panel turns out not to take the default. Which one
-    # that is depends on the type's default, hence the lookup rather than a
-    # hardcoded "also build fast".
-    if [ "$also_alt" = 1 ] && [ -z "$wf" ]; then
-        if type_defaults_to_otp "$t"; then
-            build_one "$t" fast
-        else
-            build_one "$t" otp
-        fi
+build_one "$wf"
 
-        # And the partial image, for the waveform that can actually do one.
-        #
-        # Here because a mixed-age out/ is genuinely dangerous: on 2026-08-09 two
-        # already-fixed bugs were re-reported from tags flashed with -partial
-        # images built before the fixes, sitting beside freshly built defaults
-        # under names that gave no hint of their age. The images were right about
-        # which tag they were for and silently wrong about everything else.
-        #
-        # So --all means "the whole set, all of one vintage". One command to run
-        # after a driver change, and nothing to remember per variant.
-        if [ "$partial" != 1 ] && ! type_defaults_to_otp "$t"; then
+# --all is "the whole set, all of one vintage".
+#
+# It exists because a mixed-age out/ is genuinely dangerous: on 2026-08-09 two
+# already-fixed bugs were re-reported from tags flashed with -partial images
+# built before the fixes, sitting beside freshly built defaults under names that
+# gave no hint of their age.
+#
+# It used to be twenty images, four tag types by five options. The types are
+# gone, so it is five: the default, the other waveform, the partial, and both
+# LUT shapes. One command to run after a driver change.
+if [ "$also_alt" = 1 ] && [ -z "$wf" ]; then
+    build_one otp
+
+    if [ "$partial" != 1 ]; then
+        partial=1
+        build_one ""
+        partial=0
+
+        # And both again at ten steps. Two of the five panels in hand run a
+        # ten-step controller, so leaving these out would recreate exactly the
+        # mixed-age out/ this arrangement exists to prevent.
+        if [ -z "$lut_steps" ]; then
+            lut_steps=10
+            build_one ""
             partial=1
-            build_one "$t" ""
+            build_one ""
             partial=0
-
-            # And both again at ten steps. Two of the five panels in hand run a
-            # ten-step controller, so leaving these out of --all would recreate
-            # exactly the mixed-age out/ this whole arrangement exists to prevent:
-            # the -s10 images would be whatever vintage they were last built at,
-            # under names that give no hint of it.
-            if [ -z "$lut_steps" ]; then
-                lut_steps=10
-                build_one "$t" ""
-                partial=1
-                build_one "$t" ""
-                partial=0
-                lut_steps=
-            fi
+            lut_steps=
         fi
     fi
-done
+fi
 
 cat <<EOF
 
-Built: $(echo $types | tr ' ' ',')
-Images are in $OUT, named by type. Flash one with:
+Images are in $OUT. There is no tag type to choose - flash any of them to any
+tag and it will read what it needs off the board:
 
-  tools/flash.sh --type <n> $OUT/hema_epd_clock-type<n>.bin
+  tools/flash.sh $OUT/hema_epd_clock.bin
+
+If the matrix does not move, the panel lot wants the other waveform:
+
+  tools/flash.sh $OUT/hema_epd_clock-otp.bin
 EOF

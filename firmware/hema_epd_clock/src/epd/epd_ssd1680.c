@@ -51,24 +51,20 @@
 #include "epd_gfx.h"
 #endif
 
-/* Stamp the board variant into the image so tools/flash.sh can check it
- * against the variant named on its command line before programming a tag.
+/* The board-variant, panel-geometry and tag-type stamps used to live here, so
+ * that tools/flash.sh could refuse an image built for a different tag. All
+ * three are gone, and the reason is that they became untrue rather than
+ * unnecessary: the image no longer HAS a variant, a geometry or a type. It
+ * reads all three off the tag at boot. A stamp that says "A41" on a binary
+ * which will happily drive an A53 is not a safety check, it is a lie that a
+ * flasher would enforce.
  *
- * `used` is not optional: nothing in the firmware reads this, and the build
- * is -flto, so without it the string is dropped and the flasher would see
- * every image as variant-less. */
-__attribute__((used))
-const char epd_board_variant_tag[] = EPD_BOARD_VARIANT_TAG;
-
-/* The panel geometry and the tag type, stamped the same way and for the same
- * reason - see EPD_PANEL_TAG. `used` for the same reason too: nothing reads
- * these, and -flto would otherwise drop them. */
-__attribute__((used))
-const char epd_panel_tag[] = EPD_PANEL_TAG;
-
-__attribute__((used))
-const char hema_tag_type_tag[] = HEMA_TAG_TYPE_TAG;
-
+ * What remains worth stamping is what a flash could still get wrong, which is
+ * the waveform - see HEMA_WAVEFORM_TAG and hema_compat_tag below.
+ *
+ * `used` is not optional on any of these: nothing in the firmware reads them,
+ * and the build is -flto, so without it the strings are dropped and the
+ * flasher sees an unstamped image. */
 __attribute__((used))
 const char hema_waveform_tag[] = HEMA_WAVEFORM_TAG;
 
@@ -185,9 +181,6 @@ static epd_pin_t s_pin[EPD_BOARD_NPINS] = {
     [EPD_BOARD_DC]   = { EPD_DC_PORT,   EPD_DC_PIN   },
     [EPD_BOARD_BUSY] = { EPD_BUSY_PORT, EPD_BUSY_PIN },
     [EPD_BOARD_PWR]  = { EPD_PWR_PORT,  EPD_PWR_PIN  },
-#ifdef EPD_AUX_PORT
-    [EPD_BOARD_AUX]  = { EPD_AUX_PORT,  EPD_AUX_PIN  },
-#endif
 };
 
 /* Whether the table above came off the tag or out of the build. Nothing reads
@@ -253,13 +246,8 @@ static void epd_pins_init(void)
      * variant-B map, which is what an erased record MEANS. Note this is now the
      * only source: on a board that disagrees with the build, the board wins. */
     for (uint8_t i = 0; i < EPD_BOARD_NPINS; i++) {
-#ifndef EPD_AUX_PORT
-        /* Not ours to drive on this build - see above. Skipped rather than
-         * stored, so nothing downstream can start using it by accident. */
-        if (i == EPD_BOARD_AUX) {
-            continue;
-        }
-#endif
+        /* AUX is stored but never driven - see the note above. Kept in the
+         * table so a future use has the pin the record actually names. */
         s_pin[i].port = b->port[i];
         s_pin[i].pin  = b->pin[i];
     }
@@ -267,7 +255,7 @@ static void epd_pins_init(void)
     s_pins_from_board = true;
 }
 
-#if EPD_BITBANG && EPD_TX_FAST
+#if EPD_TX_FAST
 /* The four GPIO registers the bit loop writes, and the two bit masks, worked
  * out once instead of eight times per byte.
  *
@@ -349,10 +337,8 @@ void epd_cs_park(void)
 static void epd_cs_low(void)  { GPIO_SetInactive(EPD_PIN(CS)); }
 static void epd_cs_high(void) { GPIO_SetActive(EPD_PIN(CS)); }
 
-#if EPD_BITBANG
-
-/* Variant A drives the panel with two plain GPIOs instead of the SPI block,
- * exactly as that board's retail firmware does. Mode 0: clock idles low, the
+/* The panel is driven with two plain GPIOs rather than the SPI block, on every
+ * board, exactly as the vendor's retail firmware does. Mode 0: clock idles low, the
  * bit is presented while SCK is low and the panel latches it on the rising
  * edge; MSB first. Both were read off the retail driver's own bit loop rather
  * than assumed - it tests bit 7 first and pulses SCK high-then-low per bit.
@@ -441,15 +427,6 @@ static void epd_tx(const uint8_t *buf, uint16_t len)
 }
 
 #endif  /* EPD_TX_FAST */
-
-#else   /* EPD_BITBANG */
-
-static void epd_tx(const uint8_t *buf, uint16_t len)
-{
-    spi_send(buf, len, SPI_OP_BLOCKING);
-}
-
-#endif
 
 static void epd_write_cmd(uint8_t cmd)
 {
@@ -658,8 +635,6 @@ static const uint8_t epd_lut_partial[EPD_LUT_BYTES + EPD_LUT_TRAILER] = {
 
 /* ---- public API ----------------------------------------------------------- */
 
-#if EPD_BITBANG
-
 /* Take the panel's pads back as plain outputs, with the clock idle low.
  *
  * Called at init and, more importantly, by epd_store.c every time it finishes
@@ -694,32 +669,6 @@ void epd_spi_claim(void)
 #endif
 }
 
-#else
-
-/* The panel does not own the SPI bus outright: the boot flash hangs off the
- * same CLK (P0_0) and MOSI (P0_6), and worse, P0_5 is the panel's D/C but the
- * flash's MISO. Whoever used the bus last must therefore hand it back before
- * the other can use it - see epd_store.c, which calls this on release. */
-static const spi_cfg_t epd_spi_cfg = {
-    .spi_ms    = SPI_MS_MODE_MASTER,
-    .spi_cp    = SPI_CP_MODE_0,
-    .spi_speed = SPI_SPEED_MODE_8MHz,
-    .spi_wsz   = SPI_MODE_8BIT,
-    .spi_cs    = SPI_CS_0,
-    .spi_irq   = SPI_IRQ_DISABLED,
-    /* Same pad as SPI_EN_PORT/PIN in user_periph_setup.h, named here in the
-     * panel driver's own terms - CS is driven manually by epd_cs_low/high. */
-    .cs_pad    = { .port = EPD_CS_PORT, .pin = EPD_CS_PIN },
-};
-
-void epd_spi_claim(void)
-{
-    /* D/C back to a plain output - the flash driver leaves it as SPI_DI. */
-    GPIO_ConfigurePin(EPD_PIN(DC), OUTPUT, PID_GPIO, false);
-    spi_initialize(&epd_spi_cfg);
-}
-
-#endif  /* EPD_BITBANG */
 
 void epd_gpio_init(void)
 {
@@ -729,7 +678,6 @@ void epd_gpio_init(void)
      * table would quietly mean "every signal is P0_0". */
     epd_pins_init();
 
-#if EPD_BITBANG
     /* Panel clock and data as plain outputs, both idle low. */
     GPIO_ConfigurePin(EPD_PIN(SCK), OUTPUT, PID_GPIO, false);
     GPIO_ConfigurePin(EPD_PIN(SDA), OUTPUT, PID_GPIO, false);
@@ -745,10 +693,6 @@ void epd_gpio_init(void)
      * firmware leaves it alone on that board - guarded on the pin being named
      * rather than on the variant, since "we have a pin for this" is the actual
      * precondition. */
-#ifdef EPD_AUX_PORT
-    GPIO_ConfigurePin(EPD_PIN(AUX), OUTPUT, PID_GPIO, true);
-#endif
-#endif
 
     /* CS as GPIO output, idle high (inactive). Must be PID_GPIO so the
      * GPIO SET/RESET registers (used by epd_cs_low/high) actually drive it. */
@@ -775,7 +719,7 @@ void epd_gpio_init(void)
     GPIO_ConfigurePin(EPD_PIN(PWR),  OUTPUT, PID_GPIO, true);
 }
 
-#if (EPD_BITBANG && EPD_PANEL_PROBE) || EPD_TEMP_READ || EPD_PANEL_ID
+#if EPD_PANEL_PROBE || EPD_TEMP_READ || EPD_PANEL_ID
 
 /* Clock bytes back out of the controller, MSB first.
  *
@@ -799,15 +743,6 @@ void epd_gpio_init(void)
  */
 static void epd_read_begin(uint32_t sda_mode)
 {
-#if !EPD_BITBANG
-    /* Variant B writes through the hardware SPI block, so its clock and data
-     * pads are PID_SPI_CLK/PID_SPI_DO and cannot be driven by hand as they
-     * stand. Borrow them as GPIOs for the turnaround and give them back at
-     * the end. CS is manual on both variants and D/C is already an output, so
-     * those need nothing. */
-    GPIO_ConfigurePin(EPD_PIN(SCK), OUTPUT, PID_GPIO, false);
-#endif
-
     epd_cs_low();
     GPIO_SetInactive(EPD_PIN(SCK));
     GPIO_SetActive(EPD_PIN(DC));      /* data phase */
@@ -830,22 +765,13 @@ static uint8_t epd_read_bits(void)
 
 static void epd_read_end(void)
 {
-#if EPD_BITBANG
     GPIO_ConfigurePin(EPD_PIN(SDA), OUTPUT, PID_GPIO, false);
     epd_cs_high();
-#else
-    epd_cs_high();
-    /* Back to the SPI block, exactly as set_pad_functions() configures them.
-     * Note this does NOT re-run spi_initialize(): the block itself was never
-     * touched, only which pads it reaches. */
-    GPIO_ConfigurePin(EPD_PIN(SCK), OUTPUT, PID_SPI_CLK, false);
-    GPIO_ConfigurePin(EPD_PIN(SDA), OUTPUT, PID_SPI_DO,  false);
-#endif
 }
 
 #endif  /* read primitive */
 
-#if (EPD_BITBANG && EPD_PANEL_PROBE) || EPD_TEMP_READ
+#if EPD_PANEL_PROBE || EPD_TEMP_READ
 
 static uint8_t epd_read_byte(uint32_t sda_mode)
 {
@@ -1185,7 +1111,7 @@ void epd_lut_probe(void)
 
 #endif  /* EPD_LUT_PROBE */
 
-#if EPD_BITBANG && EPD_PANEL_PROBE
+#if EPD_PANEL_PROBE
 
 /* Is a panel actually answering?
  *
@@ -1240,7 +1166,7 @@ bool epd_panel_present(void)
     return epd_probe_pullup == epd_probe_pulldown;
 }
 
-#endif  /* EPD_BITBANG && EPD_PANEL_PROBE */
+#endif  /* EPD_PANEL_PROBE */
 
 #if EPD_PANEL_ID
 

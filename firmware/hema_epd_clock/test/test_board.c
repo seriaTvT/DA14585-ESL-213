@@ -117,35 +117,20 @@ int main(void)
     check(epd_board_decode(bad_pin, &b) == false, "rejected");
 
     /* --- The build-agreement check, both ways --------------------------- */
-    printf("Build agreement (this build: %s, %s)\n",
-#if defined(EPD_BOARD_VARIANT_A)
-           "variant A",
-#else
-           "variant B",
-#endif
-#if defined(EPD_PANEL_LOW_RES)
-           "A41 104x212"
-#else
-           "A53 122x250"
-#endif
-          );
-    epd_board_decode(type3, &b);
-    check(epd_board_matches_build(&b) ==
-#if defined(EPD_BOARD_VARIANT_A) && defined(EPD_PANEL_LOW_RES)
-          true,
-#else
-          false,
-#endif
-          "Type 3's record judged against this build");
-
+    /* The "does this record agree with the build?" cases lived here and are
+     * gone with the function they tested. There is no build-specific target to
+     * agree with any more: one image reads its wiring and geometry out of the
+     * record, so the record cannot disagree with it.
+     *
+     * What is still worth asserting is that a blank record decodes to the
+     * BUILT-IN case rather than to nothing, because that is what every
+     * variant-B tag carries and what the firmware then drives. */
     epd_board_decode(blank, &b);
-    check(epd_board_matches_build(&b) ==
-#if defined(EPD_BOARD_VARIANT_A)
-          false,
-#else
-          true,
-#endif
-          "a blank record reads as variant B, panel not asserted");
+    check(b.have_pinmap == false, "a blank record claims no explicit map");
+    check(b.panel == EPD_BOARD_PANEL_UNKNOWN,
+          "a blank record asserts no panel, rather than guessing one");
+    check(b.port[EPD_BOARD_CS] == 2 && b.pin[EPD_BOARD_CS] == 1,
+          "and still yields the built-in map, CS on P2_1");
 
     printf("\n%s (%d failure%s)\n", failures ? "FAILED" : "all passed",
            failures, failures == 1 ? "" : "s");

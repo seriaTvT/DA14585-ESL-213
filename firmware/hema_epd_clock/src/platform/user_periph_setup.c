@@ -260,33 +260,11 @@ void periph_init(void)
     // commands arrive over the command GATT characteristic.
     epd_spi_claim();
 
-    /* Refusing to drive a panel the board says we are not built for.
-     *
-     * OFF BY DEFAULT, and the reason is worth stating rather than assuming.
-     * The verdict rests on one inference from three tags - that a written pin
-     * map means variant A, and an erased record means variant B. That
-     * inference has a known way to be wrong: tools/mksuota.py --no-fallback
-     * synthesises an image with 0x039000 erased, so OUR OWN tooling can turn a
-     * variant-A board into one that claims to be variant B. Enforcing on that
-     * would leave a working tag blank, which is the failure this whole check
-     * exists to prevent.
-     *
-     * What it protects when enabled is real but one-directional. A variant-A
-     * build drives P2_0 as SDA; on a variant-B board that pin is BUSY, a panel
-     * output, so the two fight. The other way round is harmless - our
-     * variant-B map never touches P1_1, which is variant A's only panel
-     * output. So the case worth refusing is a variant-A build on a board that
-     * says variant B, and that is exactly what a mismatch means here. */
-#if defined(EPD_BOARD_CHECK) && (EPD_BOARD_CHECK)
-    if (epd_board_verdict() == EPD_BOARD_MISMATCH) {
-        return;         /* keeps time and stays reachable over BLE */
-    }
-#endif
 
     /* Ask the panel whether it is there before driving it. The answer is only
      * recorded, never acted on - see epd_panel_present(). A tag whose flex has
      * come loose should still keep time and stay reachable over BLE. */
-#if EPD_BITBANG && EPD_PANEL_PROBE
+#if EPD_PANEL_PROBE
     (void)epd_panel_present();
 #endif
 

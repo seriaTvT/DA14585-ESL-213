@@ -50,8 +50,14 @@ back to something that works - and that is what --fallback is for.
 them even though the bootloader does not. See build_header().
 
 Usage:  mksuota.py [--fallback <stock_dump.bin>] [--bootloader <boot.bin>]
-                   [--otp-boot] <firmware.bin> <out.bin> [bank]
+                   [--otp-boot] [--board <a53-b|a53-a|a41-a|a41-b>]
+                   <firmware.bin> <out.bin> [bank]
         bank defaults to 1.
+
+--board writes the tag's board record at 0x039000. Normally you do NOT want it:
+tools/flash.sh reads the record off the tag and writes it back, because that
+record is the tag's identity and the only copy. Use --board only for a tag whose
+record is blank.
 
         mksuota.py --ota <firmware.bin> <out.img>
 
@@ -237,43 +243,44 @@ def build_header(payload: bytes, imageid: int) -> bytes:
     return bytes(h)
 
 
-def board_record(compat: bytes) -> bytes | None:
-    """The 16-byte record at 0x039000, derived from the image's own identity.
+def board_record(spec: str | None) -> bytes | None:
+    """The 16-byte record at 0x039000, from an explicit board spec.
 
-    Reproduces exactly what a factory tag carries, which is worth stating
-    because it is not the obvious layout. The panel byte is written on EVERY
-    board; it is the SELECTOR that distinguishes the variants, and an erased
-    selector is variant B's positive answer rather than an absence:
+    It used to be derived from the image's own HEMA-COMPAT stamp, which named
+    the variant and the geometry. That stamp no longer does - one image runs on
+    every tag, so it has no opinion about either - and inventing a record from
+    a build is exactly the wrong direction: the record is what TELLS the build
+    what the tag is. tools/flash.sh preserves the tag's own by default and only
+    passes --board for a tag whose record is blank.
+
+    Reproduces what a factory tag carries, which is not the obvious layout. The
+    panel byte is written on EVERY board; it is the SELECTOR that distinguishes
+    the variants, and an erased selector is variant B's positive answer rather
+    than an absence:
 
         Type 1  14 ff ff...              A53, built-in map  -> variant B
         Type 4  09 ff ff...              A41, built-in map  -> variant B
         Type 3  09 01 ff*6 21 22 10 01 20 07 11 23          -> variant A
-
-    Returns None if the identity cannot be read, in which case the caller
-    should leave the sector erased rather than guess - a wrong record is worse
-    than none, because the firmware trusts it.
     """
-    if not compat:
+    if not spec:
         return None
-    s = compat.decode(errors='replace')          # e.g. "T3A-104x212-W7"
     try:
-        variant = s[2]
-        geom = s.split('-')[1]
-    except (IndexError, ValueError):
+        geom, variant = spec.lower().split('-')
+    except ValueError:
         return None
-    if variant not in 'AB' or geom not in ('104x212', '122x250'):
+    if geom not in ('a53', 'a41') or variant not in ('a', 'b'):
         return None
 
     rec = bytearray(b'\xFF' * 16)
-    rec[0] = 0x09 if geom == '104x212' else 0x14
-    if variant == 'A':
+    rec[0] = 0x14 if geom == 'a53' else 0x09
+    if variant == 'a':
         rec[1] = 0x01
         rec[8:16] = bytes((0x21, 0x22, 0x10, 0x01, 0x20, 0x07, 0x11, 0x23))
     return bytes(rec)
 
 
 def synth_flash(size: int, boot: bytes, otp_boot: bool,
-                compat: bytes = b'') -> bytearray:
+                board: str | None = None) -> bytearray:
     """A blank retail-layout flash image: erased, plus bootloader and header."""
     flash = bytearray(b'\xFF' * size)
     if boot:
@@ -291,7 +298,7 @@ def synth_flash(size: int, boot: bytes, otp_boot: bool,
     # erased sector on a variant-A tag is no longer a lost annotation - it is
     # that tag being told it is variant B, and driving variant B's pins into a
     # dead panel. Written from the image's own identity instead.
-    rec = board_record(compat)
+    rec = board_record(board)
     if rec:
         flash[BOARD_REC_OFF:BOARD_REC_OFF + len(rec)] = rec
         print(f"  board record @ 0x{BOARD_REC_OFF:06x}: "
@@ -300,10 +307,10 @@ def synth_flash(size: int, boot: bytes, otp_boot: bool,
     else:
         # Guessing here would be worse than not writing: the firmware trusts
         # this, so a wrong record is a wrong pin map.
-        print(f"  WARNING: board record @ 0x{BOARD_REC_OFF:06x} left erased - "
-              f"could not read the\n           image's HEMA-COMPAT stamp. The "
-              f"firmware will read this tag as\n           variant B. Use "
-              f"--fallback to keep the tag's own record.")
+        print(f"  board record @ 0x{BOARD_REC_OFF:06x}: left erased. "
+              f"tools/flash.sh writes\n           the tag's own back over this; "
+              f"if you are calling mksuota.py\n           directly, pass "
+              f"--board or the tag loses its identity.")
     print(f"  bootloader @ 0x000000: "
           + (f"{len(boot)} bytes" if boot
              else "NONE - relying on the OTP boot chain (--otp-boot)"))
@@ -313,7 +320,7 @@ def synth_flash(size: int, boot: bytes, otp_boot: bool,
 def main() -> int:
     args = []
     ota = False
-    fallback = boot_path = None
+    fallback = boot_path = board = None
     otp_boot = False
     argv = sys.argv[1:]
     i = 0
@@ -327,6 +334,8 @@ def main() -> int:
             i += 1; boot_path = argv[i]
         elif a == '--otp-boot':
             otp_boot = True
+        elif a == '--board':
+            i += 1; board = argv[i]
         elif a.startswith('-'):
             print(f"unknown option: {a}\n"); print(__doc__); return 2
         else:
@@ -373,10 +382,7 @@ def main() -> int:
                   "and which ignores\n  offset 0. Or --fallback <dump> to base "
                   "the image on a stock one.", file=sys.stderr)
             return 2
-        # compat_of() again here rather than reusing the value computed further
-        # down: the board record has to be written while the image is being
-        # laid out, and that happens before the header work.
-        flash = synth_flash(0x80000, boot, otp_boot, compat_of(payload))
+        flash = synth_flash(0x80000, boot, otp_boot, board)
         ph, b1, b2 = PROD_HDR_OFF, RETAIL_BANK1, RETAIL_BANK2
 
     if ota:

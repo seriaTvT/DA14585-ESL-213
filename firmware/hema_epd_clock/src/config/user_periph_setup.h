@@ -43,7 +43,7 @@
 #include "gpio.h"
 #include "uart.h"
 
-/* Pulled in for EPD_BOARD_VARIANT_A / EPD_BITBANG: which pads the hardware SPI
+/* Pulled in for the panel pin names: which pads the hardware SPI
  * block gets depends on the board variant, because on variant B the panel and
  * the boot flash share it and on variant A they do not. This has to come before
  * the SPI section below, so it is an include rather than a comment telling the

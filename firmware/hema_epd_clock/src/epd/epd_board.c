@@ -98,37 +98,17 @@ bool epd_board_decode(const uint8_t *rec, epd_board_t *out)
     return true;
 }
 
-/* The build's own idea of itself, so the comparison below is against what this
- * image will actually do rather than against a number someone typed. */
-#if defined(EPD_BOARD_VARIANT_A)
-    #define BUILD_IS_VARIANT_A  1
-#else
-    #define BUILD_IS_VARIANT_A  0
-#endif
-
-#if defined(EPD_PANEL_LOW_RES)
-    #define BUILD_PANEL         EPD_BOARD_PANEL_A41
-#else
-    #define BUILD_PANEL         EPD_BOARD_PANEL_A53
-#endif
-
-bool epd_board_matches_build(const epd_board_t *b)
-{
-    /* A written map means variant A: variant B is the vendor's default and
-     * never carries one. That is an inference from three tags, not from the
-     * code, so it is stated here where it can be found rather than buried. */
-    bool board_is_variant_a = b->have_pinmap;
-
-    if (board_is_variant_a != (BUILD_IS_VARIANT_A != 0)) {
-        return false;
-    }
-
-    /* An unreadable panel byte is not evidence of a mismatch. Refusing on a
-     * blank record would brick bring-up on any tag whose record we have not
-     * seen, which is exactly the tag most likely to need bring-up. */
-    if (b->panel != EPD_BOARD_PANEL_UNKNOWN && b->panel != BUILD_PANEL) {
-        return false;
-    }
-
-    return true;
-}
+/* epd_board_matches_build() lived here and is gone.
+ *
+ * It compared the record against EPD_BOARD_VARIANT_A/B and EPD_PANEL_LOW_RES -
+ * against what the image was built for. There is no such thing any longer: one
+ * image drives every tag and takes its wiring, geometry and default face from
+ * the record. A comparison whose right-hand side does not exist can only
+ * produce false alarms, and a false alarm here refused to drive a working
+ * panel.
+ *
+ * What replaced it is not another check but the absence of anything to check:
+ * the record is not compared to the build, it IS the configuration. The one
+ * verdict still worth having is whether the record could be READ at all
+ * (EPD_BOARD_UNREADABLE), because a tag that cannot say what it is must not be
+ * driven on a guess - see epd_board_flash.c. */

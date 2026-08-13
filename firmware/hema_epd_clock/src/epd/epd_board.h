@@ -27,15 +27,16 @@
  * where variant B drives it as an enable - so probing by driving pins risks
  * contention against the panel. Reading flash costs nothing and risks nothing.
  *
- * WHAT THIS IS FOR TODAY. The firmware still selects its wiring and geometry
- * at build time (see config/tag_types.h). This module reads what the board
- * says so the two can be COMPARED - a wrong-variant image is otherwise silent,
- * booting and advertising normally with only a dead panel to show for it, which
- * reads as broken hardware rather than a bad flash. It has cost a working tag
- * twice. Making the driver consume this instead of the macros is the next step
- * and a larger one: the variants differ in more than pin numbers (variant A
- * bit-bangs where B uses the hardware SPI block it shares with the boot flash),
- * and the geometry sizes the framebuffer.
+ * WHAT THIS IS FOR. This record IS the configuration - it is not compared with
+ * anything. The driver takes its eight pins from it (epd_pins_init()), the
+ * geometry from its panel byte (epd_geometry_init()), and even the default
+ * clock face follows the width. One image therefore drives every tag.
+ *
+ * There is nothing left to compare it against, which is why there is no
+ * "matches the build" call any more: the build has no opinion to disagree with.
+ * The only verdict that still means something is whether the record could be
+ * READ, because a tag that cannot say what it is must not be driven on a
+ * guess - see epd_board_flash.c.
  *
  ****************************************************************************************
  */
@@ -112,17 +113,15 @@ bool epd_board_read(epd_board_t *out);
  *  same way epd_store_last_load() is. */
 typedef enum {
     EPD_BOARD_UNCHECKED = 0,    /**< epd_board_check() has not run           */
-    EPD_BOARD_AGREES,           /**< record matches this build, or is blank  */
-    EPD_BOARD_UNREADABLE,       /**< the flash read failed - not a mismatch  */
-    EPD_BOARD_MISMATCH          /**< the board says it is the other variant  */
+    EPD_BOARD_AGREES,           /**< the record was read; use it              */
+    EPD_BOARD_UNREADABLE        /**< the flash read failed - drive nothing    */
+    /* No MISMATCH. Values are pinned and appended, never renumbered, so the
+     * gap where it was stays a gap - these are read by eye over SWD. */
 } epd_board_verdict_t;
 
 /**
- * @brief Read the record and record what it says about this build. Once, at boot.
- *
- * Never changes behaviour on its own. Whether a mismatch stops the panel being
- * driven is EPD_BOARD_CHECK's business, and that defaults to off - see
- * user_periph_setup.c for why.
+ * @brief Read the record and remember it. Once, at boot, before any panel pin
+ *        is configured - the pins to configure are in it.
  */
 void epd_board_check(void);
 
@@ -130,14 +129,5 @@ void epd_board_check(void);
 epd_board_verdict_t epd_board_verdict(void);
 const epd_board_t *epd_board_last(void);
 
-/**
- * @brief Does the board agree with what this image was built for?
- *
- * Compares the decoded record against EPD_BOARD_VARIANT_A/B and
- * EPD_PANEL_LOW_RES. A board whose record is erased claims variant B.
- * UNKNOWN panel or absent pin map means "cannot tell", which counts as
- * agreement - never refuse on the strength of a blank record.
- */
-bool epd_board_matches_build(const epd_board_t *b);
 
 #endif /* _EPD_BOARD_H_ */
