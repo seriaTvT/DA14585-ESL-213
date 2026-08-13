@@ -93,7 +93,7 @@ frame size and the right default face.
 
 **What you must not lose is that record.** It is the only copy of the tag's
 identity, and a full-flash write erases it — so `tools/flash.sh` refuses unless
-you give it `--fallback <a stock dump of this tag>` or `--board <spec>`. An
+you give it `--fallback <a stock dump of this tag>` or `--type <n>`. An
 erased record reads as the built-in case, variant B and 122×250: right for a
 Type 1, and a dark or garbled panel on the others with nothing to say why.
 
@@ -250,11 +250,13 @@ tools/flash.sh --fallback stock_flash_512k.bin out/hema_epd_clock.bin
 ```
 
 The dump must be **of this tag**: it supplies the board record that the write
-would otherwise erase, and it fills the other bank. If you have no dump, state
-the board instead — `--board a53-b` (Type 1), `a53-a` (2), `a41-a` (3),
-`a41-b` (4). `flash.sh` refuses without one rather than quietly erasing the
-tag's identity. `--force` skips both, for bench work; it leaves no fallback and
-an erased record.
+would otherwise erase, and it fills the other bank. If you have no dump, state the tag
+instead — `--type 1` (A53/variant B), `2` (A53/variant A), `3` (A41/variant A),
+`4` (A41/variant B). That number says what the **tag** is, not what to build;
+there is one image. `flash.sh` refuses without one rather than quietly erasing
+the tag's identity, and that refusal is load-bearing: a flash really does erase
+the record, tested, and the tag then comes up with a dead panel and nothing else
+wrong. `--force` skips both, for bench work.
 
 A secondary bootloader reads a product header at `0x038000` to find two image
 banks and boots the newest valid one. This writes **bank 1** and leaves the stock

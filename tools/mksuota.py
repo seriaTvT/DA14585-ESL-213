@@ -50,14 +50,16 @@ back to something that works - and that is what --fallback is for.
 them even though the bootloader does not. See build_header().
 
 Usage:  mksuota.py [--fallback <stock_dump.bin>] [--bootloader <boot.bin>]
-                   [--otp-boot] [--board <a53-b|a53-a|a41-a|a41-b>]
+                   [--otp-boot] [--type <1|2|3|4>]
                    <firmware.bin> <out.bin> [bank]
         bank defaults to 1.
 
---board writes the tag's board record at 0x039000. Normally you do NOT want it:
-tools/flash.sh reads the record off the tag and writes it back, because that
-record is the tag's identity and the only copy. Use --board only for a tag whose
-record is blank.
+--type writes that tag type's board record at 0x039000. It describes the TAG,
+not the image - one image runs on all of them. Needed only when the record is
+blank or has been lost; normally --fallback carries the tag's own.
+
+  1  A53 122x250, variant B      3  A41 104x212, variant A
+  2  A53 122x250, variant A      4  A41 104x212, variant B
 
         mksuota.py --ota <firmware.bin> <out.img>
 
@@ -243,15 +245,24 @@ def build_header(payload: bytes, imageid: int) -> bytes:
     return bytes(h)
 
 
-def board_record(spec: str | None) -> bytes | None:
-    """The 16-byte record at 0x039000, from an explicit board spec.
+BOARD_BY_TYPE = {
+    # type: (panel byte, variant)   - see hema-local/docs/TAG_VARIANTS.md
+    1: (0x14, 'b'),     # A53 122x250, variant B
+    2: (0x14, 'a'),     # A53 122x250, variant A
+    3: (0x09, 'a'),     # A41 104x212, variant A
+    4: (0x09, 'b'),     # A41 104x212, variant B
+}
+
+
+def board_record(tag_type: int | None) -> bytes | None:
+    """The 16-byte record at 0x039000, for a stated tag type.
 
     It used to be derived from the image's own HEMA-COMPAT stamp, which named
     the variant and the geometry. That stamp no longer does - one image runs on
     every tag, so it has no opinion about either - and inventing a record from
     a build is exactly the wrong direction: the record is what TELLS the build
     what the tag is. tools/flash.sh preserves the tag's own by default and only
-    passes --board for a tag whose record is blank.
+    passes --type for a tag whose record is blank.
 
     Reproduces what a factory tag carries, which is not the obvious layout. The
     panel byte is written on EVERY board; it is the SELECTOR that distinguishes
@@ -262,17 +273,14 @@ def board_record(spec: str | None) -> bytes | None:
         Type 4  09 ff ff...              A41, built-in map  -> variant B
         Type 3  09 01 ff*6 21 22 10 01 20 07 11 23          -> variant A
     """
-    if not spec:
+    if tag_type is None:
         return None
-    try:
-        geom, variant = spec.lower().split('-')
-    except ValueError:
+    if tag_type not in BOARD_BY_TYPE:
         return None
-    if geom not in ('a53', 'a41') or variant not in ('a', 'b'):
-        return None
+    panel, variant = BOARD_BY_TYPE[tag_type]
 
     rec = bytearray(b'\xFF' * 16)
-    rec[0] = 0x14 if geom == 'a53' else 0x09
+    rec[0] = panel
     if variant == 'a':
         rec[1] = 0x01
         rec[8:16] = bytes((0x21, 0x22, 0x10, 0x01, 0x20, 0x07, 0x11, 0x23))
@@ -280,7 +288,7 @@ def board_record(spec: str | None) -> bytes | None:
 
 
 def synth_flash(size: int, boot: bytes, otp_boot: bool,
-                board: str | None = None) -> bytearray:
+                board: int | None = None) -> bytearray:
     """A blank retail-layout flash image: erased, plus bootloader and header."""
     flash = bytearray(b'\xFF' * size)
     if boot:
@@ -309,7 +317,7 @@ def synth_flash(size: int, boot: bytes, otp_boot: bool,
         # this, so a wrong record is a wrong pin map.
         print(f"  board record @ 0x{BOARD_REC_OFF:06x}: left erased. The tag "
               f"will read as the\n           built-in case - variant B, 122x250 "
-              f"- which is right only for a\n           Type 1. Pass --board to "
+              f"- which is right only for a\n           Type 1. Pass --type to "
               f"write the real one.")
     print(f"  bootloader @ 0x000000: "
           + (f"{len(boot)} bytes" if boot
@@ -334,8 +342,12 @@ def main() -> int:
             i += 1; boot_path = argv[i]
         elif a == '--otp-boot':
             otp_boot = True
-        elif a == '--board':
-            i += 1; board = argv[i]
+        elif a == '--type':
+            i += 1
+            try:
+                board = int(argv[i])
+            except ValueError:
+                print(f"--type wants a number, got {argv[i]}"); return 2
         elif a.startswith('-'):
             print(f"unknown option: {a}\n"); print(__doc__); return 2
         else:

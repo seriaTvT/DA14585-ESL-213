@@ -19,7 +19,7 @@
 #
 #   * A tag whose record is blank stays blank, and will come up as the built-in
 #     case: variant B wiring, 122x250. Correct for a Type 1, wrong for the
-#     others. Use --board to state what it is; see below.
+#     others. Use --type to state what it is; see below.
 #   * A stock dump is no longer needed to preserve identity. It is still useful
 #     as the FALLBACK image for the other bank, which is a real feature of the
 #     bootloader rather than a convention: on a CRC failure it loads and
@@ -32,12 +32,11 @@
 #
 #   --fallback <dump>  put this stock image in the other bank, so a bad build
 #                      falls back to something that works. Recommended.
-#   --board <spec>     write a board record instead of preserving the tag's.
-#                      Only for a tag whose record is blank or wrong. One of:
-#                        a53-b   122x250, variant B  (Type 1)
-#                        a53-a   122x250, variant A  (Type 2)
-#                        a41-a   104x212, variant A  (Type 3)
-#                        a41-b   104x212, variant B  (Type 4)
+#   --type <n>         write this tag type's board record. The type describes
+#                      the TAG, not the image - there is one image, and it does
+#                      not care. Needed when the record is blank or lost:
+#                        1  A53 122x250, variant B    3  A41 104x212, variant A
+#                        2  A53 122x250, variant A    4  A41 104x212, variant B
 #   --keep-record      accept a blank record without the warning. For a tag you
 #                      know is a Type 1.
 #   --force            program with no fallback image and no board record, and
@@ -48,7 +47,7 @@
 #                        * an erased board record, so the tag comes up as the
 #                          built-in case - variant B, 122x250. On a Type 1 that
 #                          is right; on a Type 3 or 4 the panel goes dark and
-#                          nothing says why. Reflash with --board to undo it.
+#                          nothing says why. Reflash with --type to undo it.
 #   --speed <kHz>      SWD clock, default 4000. Lower it (1000) if the loader
 #                      fails to download - that is the link, not the target.
 #   --bootloader <f>   secondary bootloader for flash offset 0. Not needed on
@@ -85,8 +84,8 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --fallback)     FALLBACK=${2:-}; shift 2 ;;
         --fallback=*)   FALLBACK=${1#*=}; shift ;;
-        --board)        BOARD=${2:-}; shift 2 ;;
-        --board=*)      BOARD=${1#*=}; shift ;;
+        --type)         BOARD=${2:-}; shift 2 ;;
+        --type=*)       BOARD=${1#*=}; shift ;;
         --keep-record)  KEEP_RECORD=1; shift ;;
         --force)        FORCE=1; shift ;;
         --speed)        SPEED=${2:-}; shift 2 ;;
@@ -105,8 +104,10 @@ BANK=${args[1]:-1}
 [ -r "$FW" ] || { echo "flash.sh: cannot read $FW" >&2; exit 1; }
 
 case "$BOARD" in
-    ''|a53-b|a53-a|a41-a|a41-b) ;;
-    *) echo "flash.sh: --board must be one of a53-b a53-a a41-a a41-b" >&2; exit 2 ;;
+    ''|1|2|3|4) ;;
+    *) echo "flash.sh: --type must be 1, 2, 3 or 4 - see the table above." >&2
+       echo "          It says what the TAG is, not what to build." >&2
+       exit 2 ;;
 esac
 
 # The waveform is the one thing a flash can still get wrong, so it is said out
@@ -147,7 +148,7 @@ jlink() {
 # right for a Type 1 and silently wrong for every other tag.
 if [ "$FORCE" = 1 ] && { [ -n "$FALLBACK" ] || [ -n "$BOARD" ]; }; then
     echo "flash.sh: --force means no fallback and no board record; passing" >&2
-    echo "          --fallback or --board with it asks for both." >&2
+    echo "          --fallback or --type with it asks for both." >&2
     exit 2
 fi
 
@@ -155,9 +156,9 @@ if [ "$FORCE" = 1 ]; then
     echo "record:   NOT WRITTEN (--force). This tag will read as the built-in"
     echo "          case: variant B, 122x250. Correct only for a Type 1."
 elif [ -n "$FALLBACK" ] && [ -n "$BOARD" ]; then
-    echo "flash.sh: --fallback and --board both supply the board record." >&2
+    echo "flash.sh: --fallback and --type both supply the board record." >&2
     echo "          Pick one. The dump carries the record of the tag it came" >&2
-    echo "          from; --board writes one you state." >&2
+    echo "          from; --type writes one you state." >&2
     exit 2
 fi
 
@@ -170,7 +171,7 @@ if [ -n "$FALLBACK" ]; then
         echo "flash.sh: that dump's board record is BLANK, so it cannot tell" >&2
         echo "          this tag apart from a Type 1. If the tag really is a" >&2
         echo "          Type 1 this is correct - pass --keep-record. Otherwise" >&2
-        echo "          use --board." >&2
+        echo "          use --type." >&2
         [ "$KEEP_RECORD" = 1 ] || exit 1
     fi
 elif [ -n "$BOARD" ]; then
@@ -190,8 +191,8 @@ flash.sh: nothing to take the board record from, refusing.
           Give it one of:
             --fallback <dump>   a stock dump OF THIS TAG. Also puts a working
                                 image in the other bank, which is worth having.
-            --board <spec>      a53-b (Type 1), a53-a (Type 2),
-                                a41-a (Type 3), a41-b (Type 4)
+            --type <n>          1 = A53/variant B, 2 = A53/variant A,
+                                3 = A41/variant A, 4 = A41/variant B
 EOF
     exit 2
 fi
@@ -204,7 +205,7 @@ if [ -n "$BOOTLOADER" ]; then
 else
     MK+=(--otp-boot)
 fi
-[ -n "$BOARD" ] && MK+=(--board "$BOARD")
+[ -n "$BOARD" ] && MK+=(--type "$BOARD")
 python3 "${MK[@]}" "$FW" "$IMG" "$BANK"
 
 # ---- 3. program ------------------------------------------------------------
