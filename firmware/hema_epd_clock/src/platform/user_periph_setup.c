@@ -125,12 +125,13 @@ void GPIO_reservations(void)
     RESERVE_GPIO(EPD_AUX_A,  GPIO_PORT_2, GPIO_PIN_2, PID_GPIO);
     RESERVE_GPIO(EPD_PWR,    GPIO_PORT_2, GPIO_PIN_3, PID_GPIO);
 
-#if !defined(EPD_BOARD_VARIANT_A)
-    /* Variant B's D/C. On variant A this same pad is the flash's MISO and was
-     * reserved as SPI_DI above, so claiming it again would trip the check the
-     * comment above describes. */
-    RESERVE_GPIO(EPD_DC_B, GPIO_PORT_0, GPIO_PIN_5, PID_GPIO);
-#endif
+    /* P0_5: variant B's D/C, and the boot flash's MISO on every board.
+     *
+     * Unconditional now, and safe to be: SPI_DI parks on P0_2 for both variants
+     * (see user_periph_setup.h), so nothing else claims this pad. It used to be
+     * guarded, because on variant A the same pin was reserved as SPI_MISO and a
+     * second RESERVE_GPIO would have tripped GPIO_init()'s own __BKPT. */
+    RESERVE_GPIO(FLASH_DI, GPIO_PORT_0, GPIO_PIN_5, PID_GPIO);
 
     /* Boot-flash chip select, driven by epd_store.c when it borrows the bus to
      * persist the template. Every pin passed to GPIO_ConfigurePin() has to be

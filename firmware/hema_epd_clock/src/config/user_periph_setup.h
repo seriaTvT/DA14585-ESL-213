@@ -96,15 +96,36 @@
     #define SPI_DI_PORT             GPIO_PORT_0
     #define SPI_DI_PIN              GPIO_PIN_3
 
-#elif !defined (__DA14586__) && defined (EPD_BOARD_VARIANT_A)
-    /* Variant A: the hardware SPI block serves the BOOT FLASH ONLY. The panel
-     * is bit-banged on its own pins (P0_1/P2_0, see epd_ssd1680.h), so unlike
-     * variant B nothing here is shared with it.
-     *   CS = P0_3   CLK = P0_0   MOSI/DO = P0_6   MISO/DI = P0_5
-     * DI can simply be the flash's own P0_5 here: variant B had to park it on
-     * P0_2 only because P0_5 doubled as that board's D/C line. That whole
-     * detach-and-restore dance in epd_store.c therefore becomes a no-op on this
-     * board - it reconfigures P0_5 to the function it already has. */
+#elif !defined (__DA14586__)
+    /* ONE SET OF PADS FOR BOTH VARIANTS.
+     *
+     * These used to be split on EPD_BOARD_VARIANT_A, which looked unavoidable:
+     * the two boards really do differ. They differ less than the split implied,
+     * and the part that differs is not the flash.
+     *
+     * The BOOT FLASH sits on the same four pads on every tag - CLK P0_0,
+     * DO P0_6, DI P0_5, CS P0_3 - and epd_store.c has always hardcoded the last
+     * two (FLASH_CS_PORT, FLASH_DI_PORT) for both boards, which is why the same
+     * code reads the store on a Type 3 and a Type 4. That is not a coincidence
+     * to be grateful for, it is forced: the OTP bootloader is byte-identical on
+     * every tag dumped and loads the image from flash on all of them, so a
+     * single fixed set of flash pads has to work everywhere or none of these
+     * tags would boot.
+     *
+     * What genuinely differed was only where SPI_DI PARKS while the flash is
+     * idle. Variant B parks it on P0_2 because P0_5 doubles as that board's D/C
+     * and would fight the panel; variant A left it on P0_5, where parking was
+     * unnecessary. Parking on P0_2 always is correct for both - P0_2 carries
+     * nothing on either board - and it costs variant A only the detach-and-
+     * restore that variant B already does on every flash access.
+     *
+     *   CLK = P0_0   MOSI/DO = P0_6   MISO/DI parked on P0_2   flash CS = P0_3
+     *
+     * SPI_EN is not used by any code here: the flash's chip select is named in
+     * flash_spi_cfg.cs_pad and the panel's is driven by hand (epd_cs_park()).
+     * Kept pointing at the flash's own CS so that a reader who goes looking is
+     * not misled about which line the SDK would toggle if something did use it.
+     */
     #define SPI_EN_PORT             GPIO_PORT_0
     #define SPI_EN_PIN              GPIO_PIN_3
 
@@ -114,31 +135,10 @@
     #define SPI_DO_PORT             GPIO_PORT_0
     #define SPI_DO_PIN              GPIO_PIN_6
 
-    #define SPI_DI_PORT             GPIO_PORT_0
-    #define SPI_DI_PIN              GPIO_PIN_5
-
-#elif !defined (__DA14586__)
-    /* EPD SPI pins recovered from the community firmware (variant B) — see
-     * epd_ssd1680.h and PROTOCOL_NOTES.md §13.
-     *   CS  = P2_1 (QFN pin 8)   CLK = P0_0 (pin 1)   MOSI/DO = P0_6 (pin 9)
-     * The SDK's spi_cs_low()/spi_cs_high() drive SPI_EN, so setting SPI_EN to
-     * P2_1 makes the driver toggle the correct chip-select line. */
-    #define SPI_EN_PORT             GPIO_PORT_2
-    #define SPI_EN_PIN              GPIO_PIN_1
-
-    #define SPI_CLK_PORT            GPIO_PORT_0
-    #define SPI_CLK_PIN             GPIO_PIN_0
-
-    #define SPI_DO_PORT             GPIO_PORT_0
-    #define SPI_DO_PIN              GPIO_PIN_6
-
-    /* MISO is unused — the EPD is write-only. NOTE: the DA14585 boot ROM's
-     * flash-MISO default is P0_5, which this board reuses as the EPD D/C
-     * line (the stock firmware time-shares P0_5 between the boot flash and
-     * the panel, since the flash and panel have separate chip-selects). So
-     * SPI_DI must NOT be left on P0_5 here or it will fight EPD_DC. Parked on
-     * P0_2 as a harmless don't-care; confirm P0_2 is unconnected on your
-     * board, or drop the DI pad from spi_initialize() entirely. */
+    /* Parked, not connected. The DA14585 boot ROM's flash-MISO default is P0_5,
+     * which variant B reuses as the panel's D/C, so DI must not idle there.
+     * flash_bus_acquire() moves it to P0_5 for the duration of a transaction
+     * and flash_bus_release() brings it back here. */
     #define SPI_DI_PORT             GPIO_PORT_0
     #define SPI_DI_PIN              GPIO_PIN_2
 #endif
