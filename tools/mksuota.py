@@ -8,8 +8,10 @@ table in SysRAM, which erased flash cannot supply). That bootloader ignores
 offset 0 and instead reads a *product header* to find two SUOTA image banks,
 picks the valid one with the newest image id, checks its CRC, copies it to
 SysRAM and jumps. So a bootable firmware has to be a SUOTA image in a bank,
-not a raw image at offset 0 - see tools/mkbootimg.py for that other format,
-which is the right one only when the ROM itself does the loading.
+not a raw image at offset 0. That other format (AN-B-001) would only ever be
+right if the ROM itself did the loading, and on every tag dumped it does not -
+so the tool that built it was removed on 2026-08-13 rather than left as a
+plausible-looking wrong answer.
 
 Layout on this tag (recovered from the stock 256 KiB dump):
 
