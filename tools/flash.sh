@@ -38,8 +38,17 @@
 #                        a53-a   122x250, variant A  (Type 2)
 #                        a41-a   104x212, variant A  (Type 3)
 #                        a41-b   104x212, variant B  (Type 4)
-#   --keep-record      preserve the tag's record even if it is blank, without
-#                      the warning. For a tag you know is a Type 1.
+#   --keep-record      accept a blank record without the warning. For a tag you
+#                      know is a Type 1.
+#   --force            program with no fallback image and no board record, and
+#                      do not check the image is ours. For bench work.
+#                      WHAT IT COSTS, so it is a choice rather than a habit:
+#                        * no fallback in the other bank, so a bad build has
+#                          nothing to fall back to and the tag needs SWD again;
+#                        * an erased board record, so the tag comes up as the
+#                          built-in case - variant B, 122x250. On a Type 1 that
+#                          is right; on a Type 3 or 4 the panel goes dark and
+#                          nothing says why. Reflash with --board to undo it.
 #   --speed <kHz>      SWD clock, default 4000. Lower it (1000) if the loader
 #                      fails to download - that is the link, not the target.
 #   --bootloader <f>   secondary bootloader for flash offset 0. Not needed on
@@ -69,6 +78,7 @@ FALLBACK=
 BOOTLOADER=
 BOARD=
 KEEP_RECORD=0
+FORCE=0
 args=()
 
 while [ $# -gt 0 ]; do
@@ -78,6 +88,7 @@ while [ $# -gt 0 ]; do
         --board)        BOARD=${2:-}; shift 2 ;;
         --board=*)      BOARD=${1#*=}; shift ;;
         --keep-record)  KEEP_RECORD=1; shift ;;
+        --force)        FORCE=1; shift ;;
         --speed)        SPEED=${2:-}; shift 2 ;;
         --speed=*)      SPEED=${1#*=}; shift ;;
         --bootloader)   BOOTLOADER=${2:-}; shift 2 ;;
@@ -104,10 +115,13 @@ esac
 WAVE=$(strings -a "$FW" | grep -om1 'HEMA-WAVEFORM-[A-Z]\+' || true)
 COMPAT=$(strings -a "$FW" | grep -om1 'HEMA-COMPAT-[A-Za-z0-9-]\+' || true)
 if [ -z "$COMPAT" ]; then
-    echo "flash.sh: $FW carries no HEMA-COMPAT stamp." >&2
-    echo "          Either it is not our firmware, or it predates the stamp." >&2
-    echo "          Rebuild it with tools/build.sh." >&2
-    exit 1
+    if [ "$FORCE" != 1 ]; then
+        echo "flash.sh: $FW carries no HEMA-COMPAT stamp." >&2
+        echo "          Either it is not our firmware, or it predates the" >&2
+        echo "          stamp. Rebuild it with tools/build.sh, or --force." >&2
+        exit 1
+    fi
+    echo "          WARNING: no HEMA-COMPAT stamp; forced."
 fi
 echo "image:    $FW"
 echo "          ${WAVE:-waveform not stated}   $COMPAT"
@@ -131,7 +145,16 @@ jlink() {
 # guess. Guessing means writing 0xFF, and an erased record is not neutral: the
 # firmware reads it as the built-in case - variant B wiring, 122x250 - which is
 # right for a Type 1 and silently wrong for every other tag.
-if [ -n "$FALLBACK" ] && [ -n "$BOARD" ]; then
+if [ "$FORCE" = 1 ] && { [ -n "$FALLBACK" ] || [ -n "$BOARD" ]; }; then
+    echo "flash.sh: --force means no fallback and no board record; passing" >&2
+    echo "          --fallback or --board with it asks for both." >&2
+    exit 2
+fi
+
+if [ "$FORCE" = 1 ]; then
+    echo "record:   NOT WRITTEN (--force). This tag will read as the built-in"
+    echo "          case: variant B, 122x250. Correct only for a Type 1."
+elif [ -n "$FALLBACK" ] && [ -n "$BOARD" ]; then
     echo "flash.sh: --fallback and --board both supply the board record." >&2
     echo "          Pick one. The dump carries the record of the tag it came" >&2
     echo "          from; --board writes one you state." >&2
@@ -152,6 +175,8 @@ if [ -n "$FALLBACK" ]; then
     fi
 elif [ -n "$BOARD" ]; then
     :   # mksuota writes it; it prints what it wrote
+elif [ "$FORCE" = 1 ]; then
+    :   # said its piece above
 else
     cat >&2 <<'EOF'
 flash.sh: nothing to take the board record from, refusing.

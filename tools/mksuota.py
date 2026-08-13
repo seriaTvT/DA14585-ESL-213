@@ -307,10 +307,10 @@ def synth_flash(size: int, boot: bytes, otp_boot: bool,
     else:
         # Guessing here would be worse than not writing: the firmware trusts
         # this, so a wrong record is a wrong pin map.
-        print(f"  board record @ 0x{BOARD_REC_OFF:06x}: left erased. "
-              f"tools/flash.sh writes\n           the tag's own back over this; "
-              f"if you are calling mksuota.py\n           directly, pass "
-              f"--board or the tag loses its identity.")
+        print(f"  board record @ 0x{BOARD_REC_OFF:06x}: left erased. The tag "
+              f"will read as the\n           built-in case - variant B, 122x250 "
+              f"- which is right only for a\n           Type 1. Pass --board to "
+              f"write the real one.")
     print(f"  bootloader @ 0x000000: "
           + (f"{len(boot)} bytes" if boot
              else "NONE - relying on the OTP boot chain (--otp-boot)"))

@@ -72,69 +72,53 @@ a reload.
 
 ## Does this fit my tag?
 
-Four physically distinct tags have been handled. They vary along **three
-independent axes** — board wiring, panel model, and which waveform the panel's
-controller runs — and those axes do not move together.
+**One image runs on every one of them.** The firmware reads the board's own
+16-byte record at flash `0x039000` when it starts, and takes its pin map, its
+panel geometry and its default clock face from that. There is no tag type to
+choose and no variant to state.
 
-| Type | Board | Panel | Panel bus | Status |
-|---|---|---|---|---|
-| **1** | variant B | A53, 122×250 | hardware SPI, shared with the boot flash | driven |
-| **2** | variant A | A53, 122×250 | bit-banged, separate from the flash | **untested — see below** |
-| **3** | variant A | A41, 104×212 | bit-banged, separate from the flash | driven |
-| **4** | variant B | A41, 104×212 | hardware SPI, shared with the boot flash | driven |
+Four physically distinct tags have been handled, and the differences that used
+to matter are now the tag's business rather than yours:
 
-The type number is the only thing you ever type. It selects the wiring and the
-geometry (the table is in
-[`src/config/tag_types.h`](firmware/hema_epd_clock/src/config/tag_types.h)) and is
-stamped into the built image, so the flasher can refuse a mismatch before writing.
+| Type | Board | Panel | Status |
+|---|---|---|---|
+| **1** | variant B | A53, 122×250 | driven |
+| **2** | variant A | A53, 122×250 | **untested — suspected dead panel** |
+| **3** | variant A | A41, 104×212 | driven |
+| **4** | variant B | A41, 104×212 | driven |
 
-**Type 2 is untested because of a suspected dead panel, not because the build is
-wrong.** On the single Type 2 unit here the panel rail sits steady at 3.3 V, BUSY
-continuity is good, the pin configuration reads back correct and a properly
-rendered framebuffer reaches the tag — and the controller answers on no line at
-all. Everything measurable about the board is healthy, so the panel itself looks
-damaged. The pairing is the right build on paper and nobody has yet seen it work.
-If you have one, RST continuity from FPC pad 10 to `P1_0` was never measured here;
-check that first, because an open reset line produces exactly this picture with a
-healthy panel behind it.
+Verified by building for one and running it on another: an image whose
+compile-time seed is 122×250 drives a 104×212 tag with the right pins, the right
+frame size and the right default face.
 
-> **Getting the type wrong is silent in the worst way.** The tag boots, advertises
-> and takes connections exactly as normal, and only the panel stays dead — so it
-> presents as a broken screen rather than a wrong image. That has cost a working
-> tag twice. Establish the type before you flash.
+**What you must not lose is that record.** It is the only copy of the tag's
+identity, and a full-flash write erases it — so `tools/flash.sh` refuses unless
+you give it `--fallback <a stock dump of this tag>` or `--board <spec>`. An
+erased record reads as the built-in case, variant B and 122×250: right for a
+Type 1, and a dark or garbled panel on the others with nothing to say why.
 
-### Identifying it
+**Type 2 is untested because of a suspected dead panel, not a wrong build.** On
+the single unit here the panel rail sits steady at 3.3 V, BUSY continuity is
+good, the pin configuration reads back correct and a properly rendered
+framebuffer reaches the tag — and the controller answers on no line at all. If
+you have one, RST continuity from FPC pad 10 to `P1_0` was never measured here;
+check that first.
 
-**Read the panel label off the flex.** `A53` → 122×250. `A41` or `A07` → 104×212.
+### What the record says
 
-![The four boards side by side. Types 2 and 3 carry an Alibaba Group silkscreen
-and labelled RST/GND/URX/UTX/VBAT and SWDIO/SWCLK pads; Types 1 and 4 have an
-unlabelled TP1–TP8 row instead](docs/img/boards.jpg)
+| offset | meaning |
+|---|---|
+| `+0x00` | panel: `0x14` = A53 122×250, `0x09` = A41 104×212 |
+| `+0x01` | pin map: `0x01` = the map below applies, `0xFF` = built-in |
+| `+0x08`–`+0x0F` | the map, one byte per signal, packed `(port << 4) \| pin` |
 
-At a glance the variant-A boards carry an **Alibaba Group** silkscreen and bring
-SWD out on pads labelled `SWDIO`/`SWCLK`, while variant-B has an unlabelled
-`TP1`–`TP8` row in roughly the same place. A first glance, not a verdict — confirm
-by continuity-testing the panel FPC back to the DA14585:
+Only a variant-A board carries a map; variant B is the built-in case and leaves
+it erased. A factory Type 3 reads
+`09 01 ff ff ff ff ff ff 21 22 10 01 20 07 11 23`.
 
-| Panel signal | variant A (bit-banged) | variant B (hardware SPI) |
-|---|---|---|
-| SCK | `P0_1` | `P0_0` |
-| SDA / MOSI | `P2_0` (bidirectional) | `P0_6` |
-| D/C | `P0_7` | `P0_5` |
-| RST | `P1_0` | `P0_7` |
-| BUSY | `P1_1` | `P2_0` |
-| CS | `P2_1` | `P2_1` |
-| Panel power | `P2_3` | `P2_3` |
-| Aux enable | `P2_2` | — |
-
-On variant B the panel shares CLK/MOSI with the boot flash and `P0_5` is both the
-panel's D/C *and* the flash's MISO, which is why the driver claims and releases the
-bus. Variant A's panel pins are disjoint from the flash's.
-
-**Do not** identify the variant by sampling GPIO modes at boot. It reads as variant
-B on a variant-A board every time: the bit-banged pins are outputs only during a
-transfer, e-paper is bistable so a tag need not refresh at boot, and the pins
-driven early belong to both maps.
+This is the same mechanism the vendor uses — their retail firmware is one
+byte-identical image across all four tags, with a runtime descriptor at
+`0x07FD4320` holding the pin table, the geometry and the frame size.
 
 ### The waveform, and the LUT's shape
 
@@ -154,9 +138,9 @@ while the border electrode still flickers — which reads as a broken screen rat
 than a wrong build.
 
 ```sh
-tools/build.sh --type 4                    # Waveshare, 7 steps (the default)
-tools/build.sh --type 4 --lut-steps 10     # Waveshare, 10 steps
-tools/build.sh --type 4 --otp              # the panel's own waveform
+tools/build.sh                    # Waveshare, 7 steps (the default)
+tools/build.sh --lut-steps 10     # Waveshare, 10 steps
+tools/build.sh --otp              # the panel's own waveform
 tools/build.sh --all                       # every type, every variant
 ```
 
@@ -245,30 +229,32 @@ Toolchain for Arm) and those makefiles.
 
 ```sh
 export LOCAL_PROJ="$SDK/projects/target_apps/template/hema_epd_clock"
-tools/build.sh --type 3
+tools/build.sh                # -> out/hema_epd_clock.bin
 tools/build.sh --all          # after any driver change - see below
 ```
 
-`build.sh` mirrors the repo's sources into that tree on every run, so from here on
-you edit in the repo and never touch the copy. The type is passed as
-`-DHEMA_TAG_TYPE=n`, so switching types touches nothing git tracks, and the
-finished binary's own stamp is **checked against what you asked for** before the
-script reports success — every way this can go wrong yields a working image for
-the wrong tag rather than an error.
+`build.sh` mirrors the repo's sources into that tree on every run, so from here
+on you edit in the repo and never touch the copy. There is no tag type to pass;
+the one option that still changes the image is the waveform, because that is
+keyed to the panel's lot rather than to the board.
 
-Use `--all` after changing the driver. A mixed-age `out/` is a real trap: images
-are correctly named for their tag type and give no hint of their age, so a stale
-one reproduces a bug you already fixed. `--all` builds the whole set of one
-vintage. `tools/build.sh -h` lists the bench options.
+Use `--all` after changing the driver. A mixed-age `out/` is a real trap: a stale
+image gives no hint of its age and reproduces a bug you already fixed. `--all`
+builds all five of one vintage — the default, `--otp`, `--partial`, and both LUT
+shapes. `tools/build.sh -h` lists the bench options.
 
 ### 3. Flash
 
 ```sh
-tools/flash.sh --type 3 stock_flash_512k.bin out/hema_epd_clock-type3.bin
+tools/flash.sh --fallback stock_flash_512k.bin out/hema_epd_clock.bin
 ```
 
-Or drop the dump argument and keep dumps at
-`$HEMA_STOCK_DIR/type<n>/stock_flash_512k.bin`.
+The dump must be **of this tag**: it supplies the board record that the write
+would otherwise erase, and it fills the other bank. If you have no dump, state
+the board instead — `--board a53-b` (Type 1), `a53-a` (2), `a41-a` (3),
+`a41-b` (4). `flash.sh` refuses without one rather than quietly erasing the
+tag's identity. `--force` skips both, for bench work; it leaves no fallback and
+an erased record.
 
 A secondary bootloader reads a product header at `0x038000` to find two image
 banks and boots the newest valid one. This writes **bank 1** and leaves the stock
@@ -278,9 +264,8 @@ board. `mksuota.py` builds the bank image and blanks the template store, so the
 tag returns to the built-in default face; `mkbootimg.py` is the other format
 (AN-B-001) and not what you want.
 
-`flash.sh` cross-checks the type, wiring and geometry stamped in the binary and
-refuses on any mismatch. It treats J-Link's error lines as fatal, because
-`JLinkExe` exits 0 even when it never reached the probe.
+`flash.sh` treats J-Link's error lines as fatal, because `JLinkExe` exits 0 even
+when it never reached the probe.
 
 Then **power-cycle the tag** — an SWD reset does not re-run the bootloader's bank
 scan, so the old image keeps running until the power actually drops.
@@ -303,8 +288,8 @@ tags than J-Links. Note that an image built *without* it can only be replaced by
 attaching SWD to that tag again, so `--no-suota` is a one-way door.
 
 ```sh
-tools/build.sh --type 4 --lut-steps 10 --partial
-tools/mksuota.py --ota <stock_dump.bin> out/hema_epd_clock-type4-s10-partial-suota.bin t4.img
+tools/build.sh --lut-steps 10 --partial
+tools/mksuota.py --ota out/hema_epd_clock-s10-partial.bin update.img
 ```
 
 Then push it with any SUOTA client — the tag advertises SUOTA's
@@ -325,22 +310,31 @@ Note the first successful update overwrites the vendor image, since that is the
 bank not in use. From then on the tag is its own fallback: a failed update rolls
 back to the previous version of *this* firmware. Keep the stock dump.
 
-Because a wrong-type image is silent — it boots, advertises, and leaves only the
-panel dead — every image stamps a compatibility identity into its header and the
-tag reports the same string on the DIS Firmware Revision characteristic:
+Every image stamps a compatibility identity into its header, and the tag reports
+the same string on the DIS Firmware Revision characteristic:
 
 ```
-T4B-104x212-W10     type, board variant, panel geometry, waveform, LUT steps
+U1-W10     universal generation, waveform, LUT steps
 ```
+
+It names only what an update can still get wrong. The wiring and geometry are
+not in it because the image no longer has an opinion about either — it reads
+them off the tag. The waveform is, because that is keyed to the panel's lot and
+nothing on the tag reports it: a 7-step table on a 10-step controller runs zero
+frames and leaves the glass blank.
 
 A client should read it and refuse a mismatch **before** transferring. The tag
 does not enforce this itself, so a generic SUOTA app can still push the wrong
 image; use a client that checks.
 
+**Tags running a pre-`U1` image will refuse the first over-the-air update** —
+their identity cannot be told apart from a genuinely incompatible one. Each
+needs one flash over SWD to reach this firmware; after that OTA works normally.
+
 ### 4. Drive it
 
-The tag comes up advertising as **`T4BL-682F8D`** — type, board variant, panel
-resolution, and the tail of its own MAC — showing the built-in clock face and
+The tag comes up advertising as **`Tag-682F8D`** — the tail of its own MAC —
+showing the built-in clock face and
 reading `00:00` on 2000-01-01 until a host syncs it. Open the web UI and
 **Connect**; the chooser filters on the tag's service UUID, so only tags running
 this firmware are offered.
@@ -556,10 +550,11 @@ identifies a tag running this firmware. The name is for whoever is choosing
 between tags and carries no guarantee: it has changed twice, and each time it
 broke every client that matched on it.
 
-Names look like `T4BL-682F8D` — tag type, board variant, panel resolution (`H`
-122×250 / `L` 104×212), then the low three bytes of the tag's own BD address, so
-several tags are distinguishable at a glance. It is filled in at boot from the
-address the radio actually uses, so nothing is configured per unit. Because the
+Names look like `Tag-682F8D` — the low three bytes of the tag's own BD address,
+so several tags are distinguishable at a glance. It is filled in at boot from
+the address the radio actually uses, so nothing is configured per unit. What a
+tag IS, rather than which one it is, comes from the render-status characteristic
+(bytes 10-13 give the real panel size). Because the
 service UUIDs leave no room for it in the 31-byte advertisement, the name travels
 in the scan response — visible to any active scan, which is what scanners do.
 
