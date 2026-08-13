@@ -35,7 +35,10 @@ export const RENDER_ERRORS = [
   'that argument means nothing to the command - the line was skipped',
 ];
 
-/** Decode the status characteristic - 10 bytes at format 2. */
+/** Decode the status characteristic - 14 bytes at format 3, and shorter at the
+ *  older formats this still reads. Every field below past byte 7 is guarded on
+ *  the length it arrived in, so a client newer than the firmware in front of it
+ *  reports "no opinion" rather than reading off the end. */
 export function decodeStatus(view) {
   const b = (i) => view.getUint8(i);
   return {

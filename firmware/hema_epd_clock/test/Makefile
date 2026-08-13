@@ -11,10 +11,15 @@ SRC      = ../src/epd
 CFLAGS   = -std=c99 -Wall -Wextra -Werror -O1 -I stub -I $(SRC)
 
 TESTS    = test_time test_gfx test_board
-TOOLS    = render render-low
+TOOLS    = render
 
 .PHONY: all clean render
-all: $(addprefix run-,$(TESTS))
+# `all` runs the tests and BUILDS the tools without running them. The tools are
+# diagnostics rather than tests, so running them here would mean nothing - but
+# leaving them out of the default target entirely is how render.c came to spend
+# weeks not compiling at all, unnoticed, while a stale binary from before the
+# rename sat beside it still working. Building is the cheap half of the check.
+all: $(addprefix run-,$(TESTS)) $(TOOLS)
 
 run-test_time: test_time
 	./$<
@@ -37,18 +42,13 @@ run-test_board: test_board
 test_board: test_board.c $(SRC)/epd_board.c $(SRC)/epd_board.h
 	$(CC) $(CFLAGS) -o $@ test_board.c $(SRC)/epd_board.c
 
-# Not part of `all`: it is a diagnostic tool, not a test. See render.c.
+# A diagnostic tool, not a test - built by `all`, never run by it. See render.c.
 #
-# Built once per panel, because the geometry is a compile-time constant and the
-# webui's byte-identity test needs to compare against whichever panel the face
-# was written for. render.c itself is geometry-clean - it writes EPD_BUF_SIZE
-# bytes, whatever that is.
+# ONE binary for both panels: pass --panel high|low. There used to be a second,
+# `render-low`, built with -DEPD_PANEL_LOW_RES, back when geometry was a
+# compile-time constant. It is runtime now, on the tag and here alike.
 render: render.c $(SRC)/epd_cmdparser.c $(SRC)/epd_gfx.c $(SRC)/epd_time.c $(SRC)/epd_font_data.c
 	$(CC) $(CFLAGS) -o $@ render.c \
-		$(SRC)/epd_cmdparser.c $(SRC)/epd_gfx.c $(SRC)/epd_time.c $(SRC)/epd_font_data.c
-
-render-low: render.c $(SRC)/epd_cmdparser.c $(SRC)/epd_gfx.c $(SRC)/epd_time.c $(SRC)/epd_font_data.c
-	$(CC) $(CFLAGS) -DEPD_PANEL_LOW_RES -o $@ render.c \
 		$(SRC)/epd_cmdparser.c $(SRC)/epd_gfx.c $(SRC)/epd_time.c $(SRC)/epd_font_data.c
 
 clean:

@@ -49,10 +49,10 @@ const LINE_MAX = cdef('CMD_LINE_MAX');
  * 2026-07-26 14:37:05, a Sunday. */
 const SECS = Math.floor(Date.UTC(2026, 6, 26, 14, 37, 5) / 1000) - 946684800;
 
-/* Concatenate the C string literals of the one DEFAULT_FACE[] in `chunk`. */
+/* Concatenate the C string literals in `chunk`, which the caller has already
+ * narrowed to one array's initialiser - see faceBlock() below. */
 function firmwareFace(chunk) {
-  const block = chunk.split('static const char DEFAULT_FACE[] =')[1].split(';')[0];
-  return [...block.matchAll(/"((?:[^"\\]|\\.)*)"/g)]
+  return [...chunk.matchAll(/"((?:[^"\\]|\\.)*)"/g)]
     .map((m) => m[1].replace(/\\n/g, '\n'))
     .join('');
 }
@@ -60,16 +60,26 @@ function firmwareFace(chunk) {
 test('the default preset matches the firmware byte for byte', () => {
   const c = readFileSync(PARSER_C, 'utf8');
 
-  /* There are two faces now, one per panel, in a single #if/#else. Attribute
-   * them by which arm they sit in rather than by order of appearance, so
-   * swapping the arms around cannot quietly swap the assertions too. */
-  const lo = c.indexOf('#if defined(EPD_PANEL_LOW_RES)');
-  const mid = c.indexOf('#else', lo);
-  const end = c.indexOf('#endif', mid);
-  assert.ok(lo >= 0 && mid > lo && end > mid,
-    'could not find the DEFAULT_FACE #if/#else in epd_cmdparser.c');
+  /* Two faces, one per panel, and BOTH are compiled in - the firmware picks
+   * between them at runtime on epd_width, because one image drives either
+   * panel. They used to sit in the two arms of a single
+   * `#if defined(EPD_PANEL_LOW_RES)`, and this test read them out by arm; that
+   * macro went with the one-image collapse and took the test with it, silently,
+   * for want of anyone running the suite.
+   *
+   * Keyed on the array NAME now rather than on position in a preprocessor
+   * construct, so it survives the next reshuffle and cannot quietly swap the
+   * two assertions. */
+  const faceBlock = (name) => {
+    const at = c.indexOf(`static const char ${name}[] =`);
+    assert.ok(at >= 0, `could not find ${name}[] in epd_cmdparser.c`);
+    const end = c.indexOf(';', at);
+    assert.ok(end > at, `${name}[] is not terminated`);
+    return c.slice(at, end);
+  };
 
-  for (const [key, chunk] of [['low', c.slice(lo, mid)], ['high', c.slice(mid, end)]]) {
+  for (const [key, chunk] of [['low', faceBlock('DEFAULT_FACE_LOW')],
+                              ['high', faceBlock('DEFAULT_FACE_HIGH')]]) {
     assert.equal(PRESETS[key]['Built-in default'], firmwareFace(chunk),
       `the ${key} built-in preset has drifted from DEFAULT_FACE[] in epd_cmdparser.c`);
   }
@@ -347,7 +357,7 @@ test('the firmware reports what it made of a script', () => {
   const OK = 0, UNKNOWN_CMD = 1, UNKNOWN_OPT = 2;
 
   assert.deepEqual(st('CLEAR(1)\nRECT(1,1,9,9,fill=1)\n'),
-    { fmt: 2, code: OK, line: 0, count: 0, flags: 0, len: 30, every: 1 });
+    { fmt: 3, code: OK, line: 0, count: 0, flags: 0, len: 30, every: 1 });
 
   let s = st('CLEAR(1)\nICON(1,2,3)\nRECT(1,1,9,9)\n');
   assert.equal(s.code, UNKNOWN_CMD);
@@ -774,11 +784,10 @@ test('the battery variables render only once a reading exists', () => {
 /* ------------------------------------------------------------------ */
 
 const RENDER = join(HERE, '../firmware/hema_epd_clock/test/render');
-const RENDER_LOW = join(HERE, '../firmware/hema_epd_clock/test/render-low');
 
 test('the JS renderer is byte-identical to the firmware C', { skip:
-      existsSync(RENDER) && existsSync(RENDER_LOW) ? false
-        : 'run: make -C firmware/hema_epd_clock/test render render-low'
+      existsSync(RENDER) ? false
+        : 'run: make -C firmware/hema_epd_clock/test render'
     }, () => {
   /* Scripts aimed at the places the two could drift: clipping, odd rotations,
    * the calendar variables, quoting. Run against both panels below, along with
@@ -968,7 +977,9 @@ test('the JS renderer is byte-identical to the firmware C', { skip:
     Math.floor(Date.UTC(2024, 1, 29, 9, 5, 0) / 1000) - 946684800,
   ];
 
-  for (const [key, bin] of [['high', RENDER], ['low', RENDER_LOW]]) {
+  /* One binary, --panel per geometry - the C tool reads its size at runtime the
+   * same way the firmware does, so PANELS' own key passes straight through. */
+  for (const key of ['high', 'low']) {
     const geom = PANELS[key];
     const scripts = [...Object.values(PRESETS[key]), ...common];
 
@@ -982,7 +993,7 @@ test('the JS renderer is byte-identical to the firmware C', { skip:
       for (const [temp, extra] of [[undefined, []], [26, ['--temp', '26']],
                                    [-5, ['--temp', '-5']]]) {
       for (const script of scripts) {
-        const c = execFileSync(bin, [String(secs), ...extra], {
+        const c = execFileSync(RENDER, [String(secs), '--panel', key, ...extra], {
           input: script, maxBuffer: 1 << 20,
         });
 

@@ -4,10 +4,19 @@
  *   make render
  *   printf "ROTATE(3)\nCLEAR(1)\nFONT(4,4,0,0,0,1,2,'HI')\n" \
  *       | ./render 852109500 > fb.bin
+ *   ./render 852109500 --panel low < face.txt > fb.bin    # the 104x212 part
  *
  * Takes the script on stdin and the clock (seconds since 2000-01-01) as argv[1],
- * and writes the resulting EPD_BUF_SIZE-byte framebuffer to stdout - the same
- * bytes the tag would hold, and the same bytes the image characteristic takes.
+ * and writes the resulting framebuffer to stdout - the same bytes the tag would
+ * hold, and the same bytes the image characteristic takes. Its size follows the
+ * panel: 4000 bytes at 122x250, 2756 at 104x212.
+ *
+ * ONE BINARY FOR BOTH PANELS, chosen with --panel, because that is what the
+ * firmware does. There used to be a second executable, `render-low`, built with
+ * -DEPD_PANEL_LOW_RES; that macro went when one image started reading its
+ * geometry off the tag at boot, and this tool was left not compiling at all for
+ * a while afterwards. Geometry here is what it is in the firmware now: four
+ * ordinary variables, set once before anything draws.
  *
  * The point is to have a third opinion. When the panel disagrees with the web
  * preview there are three candidates - the firmware, the JS port in webui, and
@@ -22,8 +31,27 @@
 #include <string.h>
 
 #include "epd_cmdparser.h"
-#include "epd_gfx.h"
+#include "epd_gfx.h"      /* pulls in epd_ssd1680.h and <stdint.h> */
 #include "epd_time.h"
+
+/* The geometry lives in epd_ssd1680.c, which this tool does not link - it wants
+ * the parser and the drawing code, not a panel driver. Defined here instead,
+ * the same way test_gfx.c does it, and set from --panel below before anything
+ * draws. Nothing reads them until the first command runs, so plain assignment
+ * in main() is enough; the firmware's own epd_geometry_init() does the same job
+ * from the board record. */
+uint16_t epd_width;
+uint16_t epd_height;
+uint16_t epd_width_bytes;
+uint16_t epd_buf_size;
+
+static void set_panel(uint16_t w, uint16_t h)
+{
+    epd_width       = w;
+    epd_height      = h;
+    epd_width_bytes = (uint16_t)((w + 7) / 8);
+    epd_buf_size    = (uint16_t)(((w + 7) / 8) * h);
+}
 
 int main(int argc, char **argv)
 {
@@ -39,6 +67,11 @@ int main(int argc, char **argv)
      * only agree if both are given the same value or neither is. */
     /* --batt <pct> <mv> does the same for {BAT} and {VCC}. One option taking
      * both because one call supplies both - see epd_cmd_set_batt(). */
+    /* --panel <high|low> picks the geometry, defaulting to the 122x250 part.
+     * The names match webui/epd.js's PANELS keys so the byte-identity test can
+     * pass its own key straight through. Applied before anything draws. */
+    set_panel(122, 250);
+
     int i;
     for (i = 2; i + 1 < argc; i++) {
         if (strcmp(argv[i], "--temp") == 0) {
@@ -46,12 +79,23 @@ int main(int argc, char **argv)
         } else if (strcmp(argv[i], "--batt") == 0 && i + 2 < argc) {
             epd_cmd_set_batt((uint8_t)strtoul(argv[i + 1], NULL, 10),
                              (uint16_t)strtoul(argv[i + 2], NULL, 10));
+        } else if (strcmp(argv[i], "--panel") == 0) {
+            if (strcmp(argv[i + 1], "high") == 0) {
+                set_panel(122, 250);
+            } else if (strcmp(argv[i + 1], "low") == 0) {
+                set_panel(104, 212);
+            } else {
+                fprintf(stderr, "render: --panel wants high or low, got '%s'\n",
+                        argv[i + 1]);
+                return 2;
+            }
         }
     }
 
     if (argc < 2) {
         fprintf(stderr,
                 "usage: %s <seconds-since-2000> [--status|--every]"
+                " [--panel <high|low>]"
                 " [--temp <celsius>] [--batt <pct> <mv>] < script > fb.bin\n",
                 argv[0]);
         return 2;
@@ -108,7 +152,11 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    if (fwrite(epd_framebuffer, 1, EPD_BUF_SIZE, stdout) != EPD_BUF_SIZE) {
+    /* epd_buf_size, not a compile-time constant: the framebuffer is as big as
+     * the selected panel needs, exactly as on the tag. This line said
+     * EPD_BUF_SIZE, which stopped existing when the geometry became runtime,
+     * and the tool quietly failed to build for a while - see the Makefile. */
+    if (fwrite(epd_framebuffer, 1, epd_buf_size, stdout) != epd_buf_size) {
         perror("write");
         return 1;
     }
