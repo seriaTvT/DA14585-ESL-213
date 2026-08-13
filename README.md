@@ -263,8 +263,9 @@ banks and boots the newest valid one. This writes **bank 1** and leaves the stoc
 image in bank 2, so a bad build falls back to something that works rather than
 bricking the tag — and it is why a raw `.bin` at offset 0 does not boot on this
 board. `mksuota.py` builds the bank image and blanks the template store, so the
-tag returns to the built-in default face; `mkbootimg.py` is the other format
-(AN-B-001) and not what you want.
+tag returns to the built-in default face. There is deliberately no tool for the
+other format (AN-B-001, a raw image at offset 0): every tag dumped boots from
+OTP, which ignores offset 0 entirely.
 
 `flash.sh` treats J-Link's error lines as fatal, because `JLinkExe` exits 0 even
 when it never reached the probe.
@@ -620,13 +621,15 @@ messages point at working documents that live beside the repo rather than in it.
 ### Tests
 
 ```sh
-cd firmware/hema_epd_clock/test && make && make render render-low && cd -
+make -C firmware/hema_epd_clock/test
 node --test webui/test.mjs
 ```
 
 The C tests compile the pure modules natively against stubs — no SDK, no
-toolchain, no tag. Build `render` and `render-low` before the JS suite or its
-byte-identity check silently skips.
+toolchain, no tag. `make` also builds `render`, the host renderer, which the JS
+suite shells out to for its byte-identity check; without it that check silently
+skips. One binary covers both panels — `render <secs> --panel high|low` — the
+same way one firmware image does.
 
 `webui/epd.js` carries the same Bresenham, rotation transform, glyph tables and
 `{}` expansion as the firmware. **Change a primitive in one and change it in the
