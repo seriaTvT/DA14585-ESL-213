@@ -51,15 +51,18 @@ epd_store_res_t epd_store_save(const char *script, uint16_t len);
  *  built-in face. */
 epd_store_res_t epd_store_load(char *out, uint16_t out_size, uint16_t *out_len);
 
-/** Result of the most recent save, readable over SWD for bring-up. */
-epd_store_res_t epd_store_last_result(void);
-
-/** Result of the most recent load, likewise. Separate from the save result on
- *  purpose: one variable holding whichever happened last cannot say which it
- *  was, and the load is the interesting one at boot - a stale (BAD_VERSION) or
- *  corrupt (BAD_CRC) face is invisible otherwise, since either simply brings
- *  the tag up on the built-in default. */
-epd_store_res_t epd_store_last_load(void);
+/* No epd_store_last_result() / epd_store_last_load() accessors. The results are
+ * still recorded, in the file-static `s_last_result` and `s_last_load`, and
+ * they are still what you want at boot - a stale (BAD_VERSION) or corrupt
+ * (BAD_CRC) face is invisible otherwise, since either simply brings the tag up
+ * on the built-in default. They are kept apart on purpose: one variable holding
+ * whichever happened last cannot say which it was.
+ *
+ * The accessors went on 2026-08-13 because nothing called them and nothing
+ * could usefully call them. They existed "for SWD bring-up", but tools/tagread.py
+ * reads VARIABLES out of the ELF by address - it cannot call a function - and
+ * both statics are volatile and present in the symbol table, so the SWD route
+ * never went through here. Read `s_last_result` / `s_last_load` directly. */
 
 /** Hold the flash bus across many operations.
  *

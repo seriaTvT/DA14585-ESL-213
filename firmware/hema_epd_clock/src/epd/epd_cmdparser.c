@@ -1049,16 +1049,6 @@ static uint16_t s_line_len;
 /* Set when a client's drawing content lands, cleared once persisted. */
 static bool     s_dirty;
 
-void epd_cmd_reset(void)
-{
-    s_script_len = 0;
-    s_script_full = false;
-    s_line_long = false;
-    s_batch_pending = false;
-    s_line_len = 0;
-    s_dirty = false;
-}
-
 void epd_cmd_begin_batch(void)
 {
     s_batch_pending = true;
@@ -1244,11 +1234,6 @@ void epd_cmd_feed(const uint8_t *buf, uint16_t len)
             s_line_len = 0;
         }
     }
-}
-
-bool epd_cmd_script_truncated(void)
-{
-    return s_script_full;
 }
 
 uint16_t epd_cmd_script_len(void)

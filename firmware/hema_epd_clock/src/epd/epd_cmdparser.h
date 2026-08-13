@@ -74,12 +74,18 @@ void epd_cmd_begin_batch(void);
  *  it on the next batch. */
 void epd_cmd_load_default(void);
 
-/** Drop the stored script immediately, blanking the clock face at the next
- *  render. Not part of the connect/disconnect path - see epd_cmd_begin_batch(). */
-void epd_cmd_reset(void);
+/* No epd_cmd_reset(). It dropped the stored script IMMEDIATELY, and nothing
+ * ever called it: RESET() and the connect path both go through
+ * epd_cmd_begin_batch(), which defers the clear to the first drawing write.
+ * That deferral is the point - it is what lets a TIME()-only batch leave the
+ * current face untouched - so an eager reset is not a simpler spelling of the
+ * same thing, it is the bug that deferral was introduced to fix. Removed
+ * 2026-08-13; use epd_cmd_begin_batch(). */
 
-/** True if the last batch exceeded the script buffer and was truncated. */
-bool epd_cmd_script_truncated(void);
+/* No epd_cmd_script_truncated(). Truncation is still tracked, and a client
+ * still learns about it - epd_cmd_status() reports it as bit 0 of byte 5, which
+ * webui/ble.js decodes as `truncated`. That is the route that has a consumer;
+ * this accessor never did. Removed 2026-08-13. */
 
 /** Bytes currently stored (0 = nothing to render). */
 uint16_t epd_cmd_script_len(void);

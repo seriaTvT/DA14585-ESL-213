@@ -917,12 +917,12 @@ void epd_resample_temperature(void)
      * of SPI against a refresh measured in seconds. Restoring is simply
      * cheaper than avoiding.
      *
-     * There may be a cheaper way still - if 0x22 bit 5 (load temperature) and
-     * bit 4 (load LUT) really are independent, then 0xA1 would sample without
-     * touching the waveform and this rewrite would be unnecessary. That is a
-     * datasheet claim we have never verified on this silicon, and the vendor's
-     * driver only ever sends 0xB1, so it is not assumed here. Worth testing:
-     * if a 0xA1 build keeps the Waveshare refresh duration, the bits split.
+     * This path is the fallback, not the default. 0x22 bit 5 (load temperature)
+     * and bit 4 (load LUT) ARE independent on this silicon, so 0xA1 samples
+     * without touching the waveform and none of this rewriting is needed -
+     * that is what EPD_TEMP_LOAD_NOLUT selects, and it is on by default. See
+     * the measurements at its definition in epd_ssd1680.h. Kept because 0xB1
+     * plus a rewrite is what the vendor's driver does and is equally proven.
      *
      * Always the full-refresh table: nothing calls epd_init(false) today. */
     epd_load_waveshare_lut(epd_lut_full);
@@ -1502,10 +1502,12 @@ static void epd_select_waveform(bool partial)
      * sequence uses 0x26, so it is applied afterwards rather than by threading a
      * second parameter through a function every other caller wants unchanged.
      *
-     * UNVERIFIED, and the partial table is thin - a single 10-frame group where
-     * the full one has 60. A lot that takes the full table should take this one
-     * (same controller, same LUT format) but 10 frames is very little drive, and
-     * shape-compatible is not the same as working. */
+     * The partial table is thin - a single 10-frame group where the full one
+     * has 60 - which is why it was carried as unproven for a while. It is
+     * proven now: every working panel in hand does partial refresh, across both
+     * board variants and both buses (PANEL_LOTS.md, "Closed 2026-08-10"), and a
+     * Type 4 / N194NM1 / 10-step tag was measured again on 2026-08-13 at 7 polls
+     * partial against 35 full. Ten frames is enough drive on these lots. */
     epd_load_waveshare_lut(partial ? epd_lut_partial : epd_lut_full);
     if (partial) {
         epd_write_cmd(0x2C);        /* Write VCOM Register, partial value */
@@ -1559,10 +1561,14 @@ static void epd_write_rows(const uint8_t *fb, uint16_t first, uint16_t last,
     epd_set_window(first, last);
 
     /* Our framebuffer uses 1 = white (matching the vendor's DSL where color 1 =
-     * white, and the vendor image encoder), but the panel RAM is the opposite
-     * polarity - Waveshare's own EPD_2IN13_V2_Display sends ~Image for exactly
-     * this reason. So invert on the way out. If the very first test pattern
-     * comes out as white-on-black, flip EPD_INVERT_OUTPUT to 0 and reflash. */
+     * white, and the vendor image encoder), which is ALREADY the panel RAM's
+     * polarity - so nothing is inverted here and EPD_INVERT_OUTPUT defaults to
+     * 0. Waveshare's own EPD_2IN13_V2_Display sends ~Image, but that is because
+     * its GUI layer stores 1 = black; the inversion is a property of their
+     * convention, not of the panel. Confirmed on glass and photographed - see
+     * the STATUS note in epd_ssd1680.h.
+     *
+     * If output ever comes out white-on-black, set EPD_INVERT_OUTPUT to 1. */
     epd_write_cmd(ram_cmd);
     GPIO_SetActive(EPD_PIN(DC));   /* DC high = data */
     epd_cs_low();

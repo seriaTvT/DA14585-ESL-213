@@ -324,10 +324,11 @@ void epd_geometry_init(void);
  * read s_poll_count, which is quicker and less ambiguous: at ~19.8 ms/frame over
  * ~230 ms of overhead, the 60-frame full table should measure ~1420 ms (~28
  * polls). A table of the wrong shape runs zero frames and measures ~230 ms
- * (~4 polls), which is unmistakable and needs no glass. */
-#if !defined(EPD_LUT_STEPS)
-    #define EPD_LUT_STEPS 7
-#endif
+ * (~4 polls), which is unmistakable and needs no glass.
+ *
+ * The default lives in epd_lut_steps.h, which config/tag_types.h also includes
+ * so the SUOTA identity is built from the same number this table is sized by. */
+#include "epd_lut_steps.h"
 
 #if EPD_LUT_STEPS == 7
     #define EPD_LUT_BYTES   70u     /* payload of cmd 0x32 */
@@ -578,17 +579,17 @@ void epd_geometry_init(void);
  */
 
 
-/* And the type number itself, which is what a person actually says out loud
- * and what tools/flash.sh takes. It comes from config/tag_types.h, force-
- * included ahead of this header in a firmware build; the fallback is for the
- * host test builds, which compile this driver's neighbours against stubs and
- * never see that header. "0" is not a tag type, so an image built outside the
- * normal path is stamped unusable rather than stamped wrong. */
-#if !defined(HEMA_TAG_TYPE_TAG)
-#define HEMA_TAG_TYPE_TAG       "HEMA-TAG-TYPE-0"
-#endif
+/* No HEMA_TAG_TYPE_TAG. A tag type used to be stamped into the image here so
+ * tools/flash.sh could refuse a mismatch, and config/tag_types.h supplied it.
+ * There is no tag type any more - one image runs on every board and reads its
+ * wiring, geometry and default face from the record at flash 0x039000 - so
+ * tag_types.h stopped defining it and nothing ever read it again. The fallback
+ * definition outlived both ends by some months. Removed 2026-08-13.
+ *
+ * The waveform below is a different case and is still live: it is the one axis
+ * the board record cannot answer. */
 
-/* Likewise the waveform. config/tag_types.h normally defines this from
+/* config/tag_types.h normally defines this from
  * EPD_INIT_FROM_OTP; the fallback covers a build that never saw that header
  * and derives it from whatever the resolution above settled on. */
 #if !defined(HEMA_WAVEFORM_TAG)
@@ -604,30 +605,26 @@ void epd_geometry_init(void);
  * config/user_profiles_config.h, which is processed long before this header
  * and cannot include it.
  *
- * The cost of living there is that it restates the geometry and the default
- * LUT step count instead of deriving them from EPD_WIDTH/EPD_HEIGHT/
- * EPD_LUT_STEPS. This is where that is checked. A mismatch would be silent and
- * expensive: the identity is what a client uses to decide an image is safe to
- * push, so an identity that disagrees with the build would licence exactly the
- * transfer it exists to prevent.
+ * TWO COMPILE-TIME ASSERTS USED TO SIT HERE, and both are gone.
  *
- * Spelled as a negative array size rather than _Static_assert because this
- * header is also compiled by the host tests at -std=c99.
+ * They existed because the identity restated things this header owns, so the
+ * two could drift apart silently - and an identity that disagrees with the
+ * build licences exactly the over-the-air transfer it exists to prevent.
  *
- * Guarded on HEMA_COMPAT_W for the same reason HEMA_TAG_TYPE_TAG above has a
- * fallback: the host tests compile this header without config/tag_types.h, so
- * there is no identity to check against and an unguarded reference is simply
- * an undefined identifier. A firmware build always has it, which is the build
- * where a mismatch could reach a tag. */
-#if defined(HEMA_COMPAT_W)
-typedef char epd_compat_geometry_agrees[
-    (HEMA_COMPAT_W == EPD_WIDTH_BUILD
-     && HEMA_COMPAT_H == EPD_HEIGHT_BUILD) ? 1 : -1];
-#if !EPD_INIT_FROM_OTP
-typedef char epd_compat_lut_steps_agree[
-    (HEMA_COMPAT_STEPS == EPD_LUT_STEPS) ? 1 : -1];
-#endif
-#endif /* HEMA_COMPAT_W */
+ * The geometry one is obsolete: the identity no longer states a panel size, so
+ * there is nothing to compare. Geometry comes off the tag now (epd_board.h) and
+ * is reported in the render-status characteristic, not in the build stamp.
+ *
+ * The LUT-steps one is unnecessary: both files now take EPD_LUT_STEPS from
+ * epd_lut_steps.h, so there is one definition and no way to disagree. That is
+ * the better fix - the assert had itself been dead for some time, nested inside
+ * a guard on HEMA_COMPAT_W, which stopped being defined when the geometry left
+ * the identity. It went unnoticed because both defaults were 7.
+ *
+ * Same shape as the epd_board_matches_build() removal: what replaces the check
+ * is the absence of anything to check. If you find yourself restating something
+ * from this header in config/, put it in a small shared header instead of
+ * asserting over the copy. */
 
 /* ------------------------------------------------------------------------
  * API

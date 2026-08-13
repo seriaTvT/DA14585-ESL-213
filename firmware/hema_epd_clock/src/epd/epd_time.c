@@ -12,7 +12,11 @@
 #define DAYS_1970_TO_2000   10957
 
 static volatile uint32_t   s_secs;      /* seconds since 2000-01-01 */
-static bool                s_is_set;
+/* No s_is_set. A "has the time been synced" flag was written here and read only
+ * by epd_time_is_set(), which nothing called; the whole trio went 2026-08-13.
+ * Nothing needs it: the tag shows 00:00 before a TIME() sync because s_secs
+ * starts at zero, which is behaviour that falls out of the epoch rather than
+ * something a flag has to gate. */
 static timer_hnd           s_tick = EASY_TIMER_INVALID_TIMER;
 static epd_time_tick_cb_t  s_on_tick;
 
@@ -45,17 +49,11 @@ void epd_time_init(epd_time_tick_cb_t on_tick)
 void epd_time_set(uint32_t secs)
 {
     s_secs = secs;
-    s_is_set = true;
 }
 
 uint32_t epd_time_now(void)
 {
     return s_secs;
-}
-
-bool epd_time_is_set(void)
-{
-    return s_is_set;
 }
 
 /* Howard Hinnant's civil_from_days: days since 1970-01-01 -> y/m/d.

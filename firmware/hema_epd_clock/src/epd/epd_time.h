@@ -51,9 +51,12 @@ void epd_time_set(uint32_t secs);
 /** Seconds since 2000-01-01 00:00:00. */
 uint32_t epd_time_now(void);
 
-/** True once epd_time_set() has been called - lets the UI distinguish
- *  "00:00 because unsynced" from a genuine midnight. */
-bool epd_time_is_set(void);
+/* No epd_time_is_set(). It was meant to let a UI tell "00:00 because unsynced"
+ * from a genuine midnight, but nothing ever asked, and the flag behind it was
+ * written and never read. Removed 2026-08-13 along with the flag. If the
+ * distinction is wanted again, report it over BLE where a client can actually
+ * see it - the render-status characteristic already carries this kind of
+ * "what the tag makes of itself" state. */
 
 /** Broken-down local time. */
 void epd_time_get(epd_tm_t *tm);

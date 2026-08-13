@@ -109,8 +109,10 @@ bool epd_board_decode(const uint8_t *rec, epd_board_t *out);
  */
 bool epd_board_read(epd_board_t *out);
 
-/** What the boot-time check concluded. Readable over SWD for bring-up, the
- *  same way epd_store_last_load() is. */
+/** What the boot-time check concluded. Readable over SWD for bring-up the way
+ *  epd_store.c's s_last_load is - tools/tagread.py resolves a variable out of
+ *  the ELF and reads it by address, so the state has to live in one, and an
+ *  accessor function would not help. */
 typedef enum {
     EPD_BOARD_UNCHECKED = 0,    /**< epd_board_check() has not run           */
     EPD_BOARD_AGREES,           /**< the record was read; use it              */

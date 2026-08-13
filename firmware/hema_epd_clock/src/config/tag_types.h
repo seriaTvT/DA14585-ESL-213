@@ -43,7 +43,7 @@
  *   E213A55N18AH28   1     works, 7 steps   untried
  *   E213A41N192QB4   4     works, 7 steps   works, 3003 ms at >=30 C
  *   E213A41N19AS02   3     works, 7 steps   unmeasured
- *   E213A41N195B82   3     inert at 7 [1]   works, ~3350 ms
+ *   E213A41N195B82   3     works, 10 steps  works, ~3350 ms      [1]
  *   E213A41N194NM1   4     works, 10 steps  works, 3642 ms at >=30 C
  *   E213A55N18CP31   2     - panel damaged, nothing established -
  *
@@ -51,14 +51,13 @@
  * as OTP-only for a month. Its controller runs TEN steps, not seven, so a table
  * written for seven left every phase at zero frames - measured, not guessed, with
  * tools/build.sh --lut-probe. At ten steps it drives the hand-written waveform
- * correctly, 2.35x faster than its own OTP. N195B82 fails the same way and is the
- * obvious next one to try at 10; see EPD_LUT_STEPS.
+ * correctly, 2.35x faster than its own OTP. N195B82 turned out to be the same
+ * story and the same fix; see EPD_LUT_STEPS.
  *
- * [1] Recorded as "hangs" rather than the inert matrix the N194NM1 shows, which
- *     would be a second and different failure mode. The observation was made
- *     before the two Type 3 panels were told apart, so which of them hung is
- *     inference from its being the one that does not take the table. Worth
- *     re-confirming on the panel rather than trusting this line.
+ * [1] This panel was destroyed by electrostatic discharge on 2026-08-12, after
+ *     the measurements above and unrelated to the firmware - its PCB is fine.
+ *     The row stands as a record; the panel is no longer available to re-test,
+ *     so treat it as closed rather than confirmable.
  *
  * **Two Type 4s disagree, and so do two Type 3s.** The type number identifies
  * the board, not the panel lot, so no per-type default can be right for every
@@ -160,14 +159,19 @@
  * memcmp's the field at a fixed sixteen and a silently truncated identity is
  * worse than none, since two different tags would then look alike. */
 
-/* Must match the default in epd_ssd1680.h, which is what the asserted check
- * over there is for. Only meaningful on the Waveshare path - the OTP waveform
- * lives in the panel and has no step count of ours. */
-#if !defined(EPD_LUT_STEPS)
-    #define HEMA_COMPAT_STEPS   7
-#else
-    #define HEMA_COMPAT_STEPS   EPD_LUT_STEPS
-#endif
+/* The step count the identity reports, taken from the one place it is defined
+ * rather than restated here.
+ *
+ * This used to hardcode its own `7` to match the driver header's default, with
+ * a compile-time assert over there checking the two had not drifted. The assert
+ * was dead - see the note where it used to live in epd_ssd1680.h - so the
+ * duplication is gone instead: epd_lut_steps.h defines EPD_LUT_STEPS once, both
+ * files include it, and there is nothing left to keep in step.
+ *
+ * Only meaningful on the Waveshare path - the OTP waveform lives in the panel
+ * and has no step count of ours. */
+#include "epd_lut_steps.h"
+#define HEMA_COMPAT_STEPS   EPD_LUT_STEPS
 
 #if EPD_INIT_FROM_OTP
     #define HEMA_COMPAT_WAVE    "O"

@@ -363,16 +363,6 @@ epd_store_res_t epd_store_load(char *out, uint16_t out_size, uint16_t *out_len)
     return res;
 }
 
-epd_store_res_t epd_store_last_load(void)
-{
-    return s_last_load;
-}
-
-epd_store_res_t epd_store_last_result(void)
-{
-    return s_last_result;
-}
-
 /* Thin wrappers rather than making the statics non-static, so that the bus
  * hand-off - the pad detach order, the JEDEC size override, the fact that
  * release goes through epd_spi_claim() - stays described in exactly one place.
