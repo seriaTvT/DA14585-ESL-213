@@ -247,16 +247,18 @@ void epd_geometry_init(void);
  *   wrong shape   The controller wants a different step count, so our 70 bytes
  *                 land misaligned: the timing bytes fall in the voltage region,
  *                 the timing region stays zero, and every phase runs zero
- *                 frames. Not speculation - measured on the Type 5 controller,
- *                 which wants 12 steps and 144 bytes and went inert on this
- *                 same table, BUSY clearing normally included.
+ *                 frames. Not speculation - measured on the nRF52811 tag's
+ *                 controller (re/newton/), which wants 12 steps and 144 bytes
+ *                 and went inert on this same table, BUSY clearing normally
+ *                 included.
  *
  * This scales the repeat count of each timing group, the one knob that changes
  * total drive without touching voltages or the layout. The outcome is binary:
  *
  *   a gain that brings the matrix to life  -> under-drive
  *   nothing at any gain                    -> wrong shape, and the LUT probe
- *                                             ported from Type 5 is next
+ *                                             ported from the nRF52811 work
+ *                                             (re/newton/) is next
  *
  * Groups already at zero stay at zero; an unused phase must stay unused. 1
  * ships the table as Waveshare wrote it. 3 puts 180 frames on the panel, the
@@ -420,8 +422,8 @@ void epd_geometry_init(void);
  * voltage with every duration at zero, or a duration with every voltage at zero.
  * Never both, so no pixel is ever driven and the glass keeps its picture.
  *
- * Proven on the Type 5 controller, where it recovered a 144-byte, 12-step layout
- * from nothing. Worth running on a panel that ACCEPTS the Waveshare table as a
+ * Proven on the nRF52811 tag's controller (re/newton/), where it recovered a
+ * 144-byte, 12-step layout from nothing. Worth running on a panel that ACCEPTS the Waveshare table as a
  * control: the timing region should appear at bytes 35-70, which is a positive
  * control on the probe itself rather than only on the panel.
  *
@@ -755,8 +757,9 @@ void epd_temp_sweep(void);
 #if EPD_LUT_PROBE
 
 /** How many bytes of 0x32 payload to sweep. Past any plausible LUT length on
- *  purpose - 70 for the SSD1675A family, 144 measured on Type 5's controller, 153
- *  for the SSD1681 - because offsets the controller ignores read as baseline, and
+ *  purpose - 70 for the SSD1675A family, 144 measured on the nRF52811 tag's
+ *  controller, 153 for the SSD1681 - because offsets the controller ignores
+ *  read as baseline, and
  *  that is how the register's real length gets measured instead of assumed. */
 #define EPD_LUT_PROBE_LEN 160u
 

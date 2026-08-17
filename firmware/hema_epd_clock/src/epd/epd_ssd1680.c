@@ -1460,8 +1460,9 @@ bool epd_display_busy(void)
  * loaded, so the panel displayed with whatever was resident - which
  * epd_resample_temperature() had loaded moments earlier as 0xB1, the mode-1 full
  * waveform. Measured on the SLH1904 tag as epd_last_paint 1 with s_poll_count 73,
- * that panel's exact full-refresh figure. The Type 5 notes already recorded that
- * 0xF7 loads the OTP LUT while 0xC7 displays without reloading it; the partial
+ * that panel's exact full-refresh figure. The nRF52811 notes (re/newton/)
+ * already recorded that 0xF7 loads the OTP LUT while 0xC7 displays without
+ * reloading it; the partial
  * value was built on the wrong one of those. */
 #define EPD_UPD_FULL     0xC7u
 #if EPD_INIT_FROM_OTP
