@@ -269,8 +269,15 @@ image in bank 2, so a bad build falls back to something that works rather than
 bricking the tag — and it is why a raw `.bin` at offset 0 does not boot on this
 board. `mksuota.py` builds the bank image and blanks the template store, so the
 tag returns to the built-in default face. There is deliberately no tool for the
-other format (AN-B-001, a raw image at offset 0): every tag dumped boots from
+other format (AN-B-001, a raw image at offset 0): Types 1, 3, 4 and 6 boot from
 OTP, which ignores offset 0 entirely.
+
+**One board is the exception.** The Type 7's OTP is blank, so it boots the
+AN-B-001 image at flash `0x000000` — the same bootloader, just stored in flash
+instead of OTP — and that image is the only boot path it has. The bank format
+above is unchanged; what changes is that offset 0 must be written rather than
+left empty. Flash it with `--fallback <its own dump>` or `--bootloader`, never
+with the synthesised default. See `hema-local/docs/BOOT_CONTRACT.md`.
 
 `flash.sh` treats J-Link's error lines as fatal, because `JLinkExe` exits 0 even
 when it never reached the probe.

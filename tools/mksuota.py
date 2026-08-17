@@ -1,17 +1,30 @@
 #!/usr/bin/env python3
 """Build a full SPI-flash image with our firmware in a SUOTA image bank.
 
-This tag does NOT boot an AN-B-001 image from flash offset 0. Its secondary
-bootloader lives in OTP (proved on hardware: after a full chip erase, forcing
-the ROM to re-run its boot scan still produced the stock bootloader's vector
-table in SysRAM, which erased flash cannot supply). That bootloader ignores
-offset 0 and instead reads a *product header* to find two SUOTA image banks,
-picks the valid one with the newest image id, checks its CRC, copies it to
-SysRAM and jumps. So a bootable firmware has to be a SUOTA image in a bank,
-not a raw image at offset 0. That other format (AN-B-001) would only ever be
-right if the ROM itself did the loading, and on every tag dumped it does not -
-so the tool that built it was removed on 2026-08-13 rather than left as a
-plausible-looking wrong answer.
+Types 1, 3, 4 and 6 do NOT boot an AN-B-001 image from flash offset 0. Their
+secondary bootloader lives in OTP (proved on hardware: after a full chip erase,
+forcing the ROM to re-run its boot scan still produced the stock bootloader's
+vector table in SysRAM, which erased flash cannot supply). That bootloader
+ignores offset 0 and instead reads a *product header* to find two SUOTA image
+banks, picks the valid one with the newest image id, checks its CRC, copies it
+to SysRAM and jumps. So a bootable firmware has to be a SUOTA image in a bank,
+not a raw image at offset 0.
+
+THE TYPE 7 BOARD IS THE EXCEPTION, found 2026-08-17. Its OTP is blank - no
+bootloader payload, app flags zero - so the ROM falls through to the AN-B-001
+image at flash 0x000000, which then reads the same product header and banks.
+The bank format below is therefore right on every tag; what differs is that on
+a Type 7 offset 0 is load-bearing and must be written. --otp-boot means "leave
+offset 0 empty", so it is WRONG for that board - the guard in main() refuses a
+synthesised image with neither --bootloader nor --otp-boot for exactly this
+reason, and on a Type 7 the honest answer to that guard is --bootloader, not
+--otp-boot. The chip-erase proof above was run on an OTP-booting tag and does
+not generalise; the discriminator is the app-flag pair at OTP 0xFE00/0xFE08,
+not OTP_HDR_OTP_CONTROL, which reads 0xC0DEBABE on the Type 7 as well.
+
+The tool that built raw AN-B-001 images was removed on 2026-08-13, before the
+Type 7 turned up. Nothing needs it back: --bootloader writes the vendor's own
+6300-byte image at offset 0, which is what that board already boots.
 
 Layout on this tag (recovered from the stock 256 KiB dump):
 

@@ -25,10 +25,25 @@
 #     bootloader rather than a convention: on a CRC failure it loads and
 #     verifies the other bank before giving up.
 #
-# The bootloader lives in OTP on every tag dumped (all carry
-# OTP_HDR_OTP_CONTROL = 0xC0DEBABE and a byte-identical bootloader), so the
-# AN-B-001 image at flash 0x000000 is present but never runs. The exact
-# contract is in hema-local/docs/BOOT_CONTRACT.md.
+# The bootloader lives in OTP on Types 1, 3, 4 and 6, so the AN-B-001 image at
+# flash 0x000000 is present but never runs there. The exact contract is in
+# hema-local/docs/BOOT_CONTRACT.md.
+#
+# *** NOT UNIVERSAL, and the exception is a hazard. 2026-08-17: the Type 7
+# board's OTP is BLANK - no bootloader payload, app flags zero - so it boots
+# the AN-B-001 image at flash 0x000000, which is its ONLY bootloader. This
+# script still passes --otp-boot whenever --bootloader is absent, which
+# synthesises an image with nothing at offset 0. On a Type 7 that erases the
+# only boot path and the tag will not come up on power (SWD still works, so it
+# is recoverable by reflashing, not dead).
+#
+# Until that default is fixed, flash a Type 7 with one of:
+#   --fallback ../hema-local/re/type7/dump/stock_flash_512k.bin
+#   --bootloader ../hema-local/re/type2/bootloader.bin
+#
+# Do NOT test for 0xC0DEBABE to decide this: the Type 7 carries that value at
+# OTP_HDR_OTP_CONTROL too, with a blank payload behind it. What discriminates
+# is the app-flag pair at OTP 0xFE00/0xFE08 and whether a payload exists.
 #
 #   --fallback <dump>  put this stock image in the other bank, so a bad build
 #                      falls back to something that works. Recommended.
@@ -63,7 +78,10 @@
 #   --speed <kHz>      SWD clock, default 4000. Lower it (1000) if the loader
 #                      fails to download - that is the link, not the target.
 #   --bootloader <f>   secondary bootloader for flash offset 0. Not needed on
-#                      any tag dumped so far, which all boot from OTP.
+#                      Types 1, 3, 4 or 6, which boot from OTP. REQUIRED on a
+#                      Type 7 unless --fallback carries one: that board's OTP
+#                      is blank and offset 0 is its only bootloader. See the
+#                      hazard note at the top.
 #
 # Requires the community J-Link device definition for the DA14585 QSPI bank
 # (JLinkDevices.xml + Devices/jtag_programmer.axf in /opt/SEGGER/JLink) -
