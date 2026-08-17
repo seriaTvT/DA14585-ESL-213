@@ -266,11 +266,15 @@ wrong. `--force` skips both, for bench work.
 
 `p05-b` is Type 7's, named for its record byte `0x05` because that panel's FPC
 label has not been read yet — 122×250 like an A53, but a different model, so it
-does not borrow A53's name. It is also the one record that constrains the boot
-chain: **a synthesised image now needs `--otp-boot` or `--bootloader` stated**,
-because leaving flash `0x000000` empty is correct on five boards and takes the
-boot chain off the sixth. `--fallback` is unaffected, carrying its own. That is
-the same refuse-rather-than-guess rule already applied to the board record.
+does not borrow A53's name.
+
+**One flag is still all a tag needs, Type 7 included.** That board's OTP is blank,
+so flash `0x000000` is its only bootloader rather than the spare space it is on
+the others — but the record already says which board it is, so nothing has to be
+stated: `flash.sh` finds the vendor's own bootloader (hash-checked) and writes
+offset 0 whenever it synthesises an image, which is harmless everywhere else. If
+that file is missing, Types 1–4 and 6 behave exactly as they always did and only
+`--type 7` refuses, rather than quietly building an image that would not boot.
 
 A secondary bootloader reads a product header at `0x038000` to find two image
 banks and boots the newest valid one. This writes **bank 1** and leaves the stock
