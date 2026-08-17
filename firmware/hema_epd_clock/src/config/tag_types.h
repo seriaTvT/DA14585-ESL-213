@@ -45,6 +45,7 @@
  *   E213A41N19AS02   3     works, 7 steps   unmeasured
  *   E213A41N195B82   3     works, 10 steps  works, ~3350 ms      [1]
  *   E213A41N194NM1   4     works, 10 steps  works, 3642 ms at >=30 C
+ *   E213A09N184B04   6     works, 7 steps   works                [2]
  *   E213A55N18CP31   2     - panel damaged, nothing established -
  *
  * The right-hand column of that table is the interesting one: N194NM1 was listed
@@ -58,6 +59,21 @@
  *     the measurements above and unrelated to the firmware - its PCB is fine.
  *     The row stands as a record; the panel is no longer available to re-test,
  *     so treat it as closed rather than confirmable.
+ *
+ * [2] A07 rather than A41 - a different panel design, same 104x212 geometry, so
+ *     the same `09` in the board record. A SECOND panel of this same lot,
+ *     E213A09N184715, is aged: it drives grey. That is a per-unit failure and
+ *     NOT a property of SYX1810, which is why this row reads "works" - the two
+ *     were swapped on one socketed Type 6 board with everything else held
+ *     fixed, and only the panel changed. Its full 60-frame waveform ran to
+ *     completion (s_poll_count 31 on a full paint at 28 C) and the film did not
+ *     follow, which is what aging looks like from the firmware's side. Do not
+ *     let it argue for a waveform change: the fix for a grey panel is a
+ *     different panel.
+ *
+ *     A THIRD panel of this lot, E213A09N184C08, arrived 2026-08-17 on a second
+ *     socketed board (re/type6_black/) and drove correctly at 7 steps on first
+ *     try. Two healthy of three, so this row still reads "works".
  *
  * **Two Type 4s disagree, and so do two Type 3s.** The type number identifies
  * the board, not the panel lot, so no per-type default can be right for every
@@ -89,7 +105,7 @@
  *
  * Do not read a per-type default as a claim about a panel. Two Type 4s and two
  * Type 3s each disagree with each other; the default is a starting guess that is
- * right about half the time on A41 and so far always right on A53.
+ * right about half the time on A41, and so far always right on A53 and A07.
  */
 #if !defined(EPD_INIT_FROM_OTP)
     #define EPD_INIT_FROM_OTP  0
