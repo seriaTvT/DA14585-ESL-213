@@ -29,21 +29,25 @@
 # flash 0x000000 is present but never runs there. The exact contract is in
 # hema-local/docs/BOOT_CONTRACT.md.
 #
-# *** NOT UNIVERSAL, and the exception is a hazard. 2026-08-17: the Type 7
-# board's OTP is BLANK - no bootloader payload, app flags zero - so it boots
-# the AN-B-001 image at flash 0x000000, which is its ONLY bootloader. This
-# script still passes --otp-boot whenever --bootloader is absent, which
-# synthesises an image with nothing at offset 0. On a Type 7 that erases the
-# only boot path and the tag will not come up on power (SWD still works, so it
-# is recoverable by reflashing, not dead).
+# *** NOT UNIVERSAL. 2026-08-17: the Type 7 board's OTP is BLANK - no bootloader
+# payload, app flags zero - so it boots the AN-B-001 image at flash 0x000000,
+# which is its ONLY bootloader. On that board a synthesised image with an empty
+# offset 0 stops the tag booting (SWD still attaches, so it is recoverable by
+# reflashing, not dead).
 #
-# Until that default is fixed, flash a Type 7 with one of:
-#   --fallback ../hema-local/re/type7/dump/stock_flash_512k.bin
-#   --bootloader ../hema-local/re/type2/bootloader.bin
+# So this script no longer guesses where the bootloader is. It used to pass
+# --otp-boot whenever --bootloader was absent, which is the guess that would
+# have cost a Type 7 its boot chain. Now a SYNTHESISED image needs one of
+# --bootloader or --otp-boot stated, exactly as it already needs the board
+# record stated: the same refusal-rather-than-guess rule, applied to the other
+# thing a full-flash write can silently destroy. --fallback is unaffected - a
+# stock dump carries its own bootloader at offset 0.
 #
-# Do NOT test for 0xC0DEBABE to decide this: the Type 7 carries that value at
-# OTP_HDR_OTP_CONTROL too, with a blank payload behind it. What discriminates
-# is the app-flag pair at OTP 0xFE00/0xFE08 and whether a payload exists.
+# Do NOT test for 0xC0DEBABE to decide which kind of tag is on the bench: the
+# Type 7 carries that value at OTP_HDR_OTP_CONTROL too, with a blank payload
+# behind it. What discriminates is the app-flag pair at OTP 0xFE00/0xFE08:
+#   a5a53412 -> OTP boots it, offset 0 is spare
+#   00000000 -> flash boots it, offset 0 is load-bearing
 #
 #   --fallback <dump>  put this stock image in the other bank, so a bad build
 #                      falls back to something that works. Recommended.
@@ -54,15 +58,20 @@
 #                        a53-a  A53 122x250, override map
 #                        a41-a  A41 104x212, override map
 #                        a41-b  A41 104x212, built-in map
+#                        p05-b  122x250, model unknown, built-in map
 #   --type <n>         the same thing said by tag type, because that is how it
 #                      is written down everywhere:
 #                        1 = a53-b   2 = a53-a   3 = a41-a   4 = a41-b
-#                        6 = a41-b
+#                        6 = a41-b   7 = p05-b
 #                      Types 4 and 6 share a record: Type 6 is an earlier
 #                      revision of the same board with a socketed panel, and
 #                      the two cannot be told apart from flash. There is no 5 -
 #                      that number named the nRF52811 board until 2026-08-14
 #                      and was retired rather than reissued.
+#                      p05-b is Type 7's, named for its record byte because
+#                      that panel's FPC label has not been read yet. It is the
+#                      one record that also constrains the boot chain, so
+#                      mksuota.py refuses it together with --otp-boot.
 #   --keep-record      accept a blank record without the warning. For a tag you
 #                      know is a Type 1.
 #   --force            program with no fallback image and no board record, and
@@ -71,17 +80,22 @@
 #                        * no fallback in the other bank, so a bad build has
 #                          nothing to fall back to and the tag needs SWD again;
 #                        * an erased board record, so the tag comes up as the
-#                          built-in case - variant B, 122x250. On a Type 1 that
-#                          is right; on a Type 3, 4 or 6 the panel goes dark
-#                          and nothing says why. Reflash with --record to undo
-#                          it.
+#                          built-in case - variant B, 122x250. On a Type 1 or
+#                          7 the geometry is right; on a Type 3, 4 or 6 the
+#                          panel goes dark and nothing says why. Reflash with
+#                          --record to undo it.
 #   --speed <kHz>      SWD clock, default 4000. Lower it (1000) if the loader
 #                      fails to download - that is the link, not the target.
-#   --bootloader <f>   secondary bootloader for flash offset 0. Not needed on
-#                      Types 1, 3, 4 or 6, which boot from OTP. REQUIRED on a
-#                      Type 7 unless --fallback carries one: that board's OTP
-#                      is blank and offset 0 is its only bootloader. See the
-#                      hazard note at the top.
+#   --bootloader <f>   secondary bootloader for flash offset 0. Types 1, 3, 4
+#                      and 6 boot from OTP and do not need it; a Type 7 does,
+#                      because its OTP is blank and offset 0 is its only
+#                      bootloader. re/type2/bootloader.bin is the vendor's own
+#                      and is byte-identical on every retail tag.
+#   --otp-boot         say that THIS tag boots from OTP, so offset 0 may be left
+#                      empty. Only meaningful for a synthesised image; one of
+#                      this or --bootloader is required for one. It is a claim
+#                      about the tag on the bench, which is why it is not a
+#                      default - see the note at the top.
 #
 # Requires the community J-Link device definition for the DA14585 QSPI bank
 # (JLinkDevices.xml + Devices/jtag_programmer.axf in /opt/SEGGER/JLink) -
@@ -105,6 +119,7 @@ REC_LEN=16
 SPEED=${HEMA_SWD_SPEED:-4000}
 FALLBACK=
 BOOTLOADER=
+OTP_BOOT=0
 BOARD=
 RECORD=
 BOARD_ARGS=()
@@ -126,6 +141,7 @@ while [ $# -gt 0 ]; do
         --speed=*)      SPEED=${1#*=}; shift ;;
         --bootloader)   BOOTLOADER=${2:-}; shift 2 ;;
         --bootloader=*) BOOTLOADER=${1#*=}; shift ;;
+        --otp-boot)     OTP_BOOT=1; shift ;;
         -h|--help)      sed -n '3,8p' "$0" >&2; exit 2 ;;
         -*)             echo "flash.sh: unknown option $1" >&2; exit 2 ;;
         *)              args+=("$1"); shift ;;
@@ -231,9 +247,11 @@ flash.sh: nothing to take the board record from, refusing.
             --fallback <dump>   a stock dump OF THIS TAG. Also puts a working
                                 image in the other bank, which is worth having.
             --record <name>     a53-b = A53/built-in map, a53-a = A53/override,
-                                a41-a = A41/override,  a41-b = A41/built-in
+                                a41-a = A41/override,  a41-b = A41/built-in,
+                                p05-b = Type 7's 122x250/built-in
             --type <n>          the same by tag type: 1 = a53-b, 2 = a53-a,
-                                3 = a41-a, 4 = a41-b, 6 = a41-b. No 5.
+                                3 = a41-a, 4 = a41-b, 6 = a41-b, 7 = p05-b.
+                                No 5.
 EOF
     exit 2
 fi
@@ -243,8 +261,30 @@ MK=("$HERE/mksuota.py")
 [ -n "$FALLBACK" ] && MK+=(--fallback "$FALLBACK")
 if [ -n "$BOOTLOADER" ]; then
     MK+=(--bootloader "$BOOTLOADER")
-else
+elif [ "$OTP_BOOT" = 1 ]; then
     MK+=(--otp-boot)
+elif [ -z "$FALLBACK" ]; then
+    # Synthesised image, and nothing has said where this tag's bootloader is.
+    # This used to default to --otp-boot, which is right on five of the six
+    # boards and takes the boot chain off the sixth.
+    cat >&2 <<'EOF'
+flash.sh: nothing said where this tag's bootloader is, refusing.
+
+          A synthesised image writes all 512 KiB, including flash 0x000000.
+          Whether that matters depends on the tag, so state which it is:
+
+            --otp-boot          this tag boots from OTP, so offset 0 may be
+                                left empty. True for Types 1, 3, 4 and 6.
+            --bootloader <f>    write this at offset 0. REQUIRED for a Type 7:
+                                its OTP is blank and offset 0 is its only
+                                bootloader. ../hema-local/re/type2/bootloader.bin
+                                is the vendor's own, identical on every tag.
+            --fallback <dump>   a stock dump of this tag carries its own.
+
+          One mem8 read settles it, if the tag is on the bench already:
+          OTP 0xFE00 reads a5a53412 for OTP boot, 00000000 for flash boot.
+EOF
+    exit 2
 fi
 [ ${#BOARD_ARGS[@]} -gt 0 ] && MK+=("${BOARD_ARGS[@]}")
 python3 "${MK[@]}" "$FW" "$IMG" "$BANK"

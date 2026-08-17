@@ -117,6 +117,7 @@ void epd_geometry_init(void)
 
     switch (b->panel) {
     case EPD_BOARD_PANEL_A53:
+    case EPD_BOARD_PANEL_P05:   /* different panel model, same frame */
         epd_width  = 122;
         epd_height = 250;
         break;
@@ -130,7 +131,14 @@ void epd_geometry_init(void)
          * so this is a record we do not understand rather than a board without
          * an opinion. Keep the build's geometry: it is at least self-
          * consistent, and epd_board_verdict() has already recorded the state
-         * for anyone asking why the screen looks wrong. */
+         * for anyone asking why the screen looks wrong.
+         *
+         * Note this path is NOT what drove the Type 7 before 0x05 was added
+         * above - it is what drove it CORRECTLY, by luck: the build's own
+         * geometry is 122x250 and so is that panel. A record byte we do not
+         * know landing on a build default that happens to match is not a
+         * mechanism to rely on, which is the whole argument for reading the
+         * vendor's descriptor instead. See epd_board.h. */
         break;
     }
 

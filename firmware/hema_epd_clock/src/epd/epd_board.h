@@ -10,9 +10,21 @@
  * hema-local/docs/TAG_VARIANTS.md; the short version is that a 16-byte record
  * at flash 0x039000 carries both axes:
  *
- *     +0x00        panel model     0x14 = A53 122x250, 0x09 = A41 104x212
+ *     +0x00        panel model     0x14 = A53 122x250, 0x09 = A41 104x212,
+ *                                  0x05 = 122x250, model unknown (Type 7)
  *     +0x01        pin-map select  0x01 = use the map below, 0xFF = built-in
  *     +0x08..0x0F  the pin map, one byte per entry, packed (port << 4) | pin
+ *
+ * The panel byte is a vendor index, not a size, so a value we have not seen
+ * carries no geometry we can infer - which is why an unknown one is reported as
+ * unknown rather than guessed. The vendor does not have this problem: it reads
+ * width and height out of a DESCRIPTOR at flash 0x03A000 (+0x0A and +0x0C,
+ * with the framebuffer size at +0x00) and never switches on the panel byte at
+ * all. That descriptor is correct on all seven dumps we hold, Type 7 included,
+ * so reading it would need no per-panel case here ever again. It is not done
+ * yet for one reason: 0x03A000 lives outside the banks, mksuota.py does not
+ * write one, so it only survives a --fallback flash. See
+ * hema-local/re/type7/README.md.
  *
  * and that a board needing no override simply leaves the record erased. The
  * vendor's built-in default is **variant B**, so an erased record means
@@ -68,10 +80,16 @@ typedef enum {
     EPD_BOARD_NPINS
 } epd_board_signal_t;
 
+/* Appended, never renumbered - same rule as the verdict enum below. */
 typedef enum {
     EPD_BOARD_PANEL_UNKNOWN = 0,
     EPD_BOARD_PANEL_A53,        /**< 122x250 */
-    EPD_BOARD_PANEL_A41         /**< 104x212 */
+    EPD_BOARD_PANEL_A41,        /**< 104x212 */
+    /** 122x250, record byte 0x05, on the Type 7 board. NAMED FOR ITS RECORD
+     *  BYTE because its FPC label has not been read yet - A53's geometry, a
+     *  different panel model. Rename it when the label is known; nothing
+     *  outside epd_board.c and epd_geometry_init() cares which name it has. */
+    EPD_BOARD_PANEL_P05
 } epd_board_panel_t;
 
 typedef struct {

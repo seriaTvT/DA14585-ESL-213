@@ -74,6 +74,7 @@ bool epd_board_decode(const uint8_t *rec, epd_board_t *out)
     switch (rec[0]) {
     case 0x14: out->panel = EPD_BOARD_PANEL_A53; break;
     case 0x09: out->panel = EPD_BOARD_PANEL_A41; break;
+    case 0x05: out->panel = EPD_BOARD_PANEL_P05; break;
     default:   out->panel = EPD_BOARD_PANEL_UNKNOWN; break;
     }
 

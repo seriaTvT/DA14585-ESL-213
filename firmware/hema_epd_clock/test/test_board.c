@@ -93,6 +93,24 @@ int main(void)
     check(b.panel == EPD_BOARD_PANEL_A41,       "panel decodes as A41 (0x09)");
     check_map(&b, variant_b,                    "falls back to the variant-B default");
 
+    /* --- Type 7: a panel byte we had not seen, on variant-B wiring ---------
+     *
+     * Unlike Type 6 this DOES earn a case, because it is a distinct sixteen
+     * bytes that used to decode as UNKNOWN. It is here to catch a regression
+     * with a specific shape: 0x05's geometry (122x250) is also the build's
+     * default, so if the case below were deleted the panel would still render
+     * correctly on real hardware and only this assert would notice. That is
+     * the whole reason to test the decode rather than the pixels. */
+    static const uint8_t type7[16] = {
+        0x05, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
+    };
+    printf("Type 7 (variant B, 0x05 panel) - record erased\n");
+    check(epd_board_decode(type7, &b) == false, "no pin map in the record");
+    check(b.panel == EPD_BOARD_PANEL_P05,       "panel decodes as P05 (0x05)");
+    check(b.panel != EPD_BOARD_PANEL_UNKNOWN,   "0x05 is no longer unknown");
+    check_map(&b, variant_b,                    "falls back to the variant-B default");
+
     /* --- A wholly blank sector, which is what a synthesised image leaves -- */
     static const uint8_t blank[16] = {
         0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,

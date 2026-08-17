@@ -251,17 +251,26 @@ tools/flash.sh --fallback stock_flash_512k.bin out/hema_epd_clock.bin
 
 The dump must be **of this tag**: it supplies the board record that the write
 would otherwise erase, and it fills the other bank. If you have no dump, state the tag
-instead — `--record a53-b`, `a53-a`, `a41-a` or `a41-b`, naming the panel and
-the pin map, which is what the record actually carries. `--type <n>` says the
-same by tag number (1 = `a53-b`, 2 = `a53-a`, 3 = `a41-a`, 4 = `a41-b`,
-6 = `a41-b`) and still works, but two types share one record: Types 4 and 6 are
-different boards — the second has a socketed panel — and are indistinguishable
-from flash. There is no Type 5; that number named the nRF52811 board until
-2026-08-14 and was retired rather than reissued. Either way it says what the
-**tag** is, not what to build; there is one image. `flash.sh` refuses without one rather than quietly erasing
+instead — `--record a53-b`, `a53-a`, `a41-a`, `a41-b` or `p05-b`, naming the
+panel and the pin map, which is what the record actually carries. `--type <n>`
+says the same by tag number (1 = `a53-b`, 2 = `a53-a`, 3 = `a41-a`, 4 = `a41-b`,
+6 = `a41-b`, 7 = `p05-b`) and still works, but two types share one record: Types
+4 and 6 are different boards — the second has a socketed panel — and are
+indistinguishable from flash. There is no Type 5; that number named the nRF52811
+board until 2026-08-14 and was retired rather than reissued. Either way it says
+what the **tag** is, not what to build; there is one image. `flash.sh` refuses
+without one rather than quietly erasing
 the tag's identity, and that refusal is load-bearing: a flash really does erase
 the record, tested, and the tag then comes up with a dead panel and nothing else
 wrong. `--force` skips both, for bench work.
+
+`p05-b` is Type 7's, named for its record byte `0x05` because that panel's FPC
+label has not been read yet — 122×250 like an A53, but a different model, so it
+does not borrow A53's name. It is also the one record that constrains the boot
+chain: **a synthesised image now needs `--otp-boot` or `--bootloader` stated**,
+because leaving flash `0x000000` empty is correct on five boards and takes the
+boot chain off the sixth. `--fallback` is unaffected, carrying its own. That is
+the same refuse-rather-than-guess rule already applied to the board record.
 
 A secondary bootloader reads a product header at `0x038000` to find two image
 banks and boots the newest valid one. This writes **bank 1** and leaves the stock

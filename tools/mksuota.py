@@ -75,15 +75,19 @@ been lost; normally --fallback carries the tag's own.
 
   a53-b  A53 122x250, built-in map    a41-a  A41 104x212, override map
   a53-a  A53 122x250, override map    a41-b  A41 104x212, built-in map
+  p05-b  122x250, model unknown, built-in map  (Type 7)
 
 --type <n> is the same thing said by tag type, kept because that is how it is
 written down everywhere:
 
-  1 = a53-b     2 = a53-a     3 = a41-a     4 = a41-b     6 = a41-b
+  1 = a53-b   2 = a53-a   3 = a41-a   4 = a41-b   6 = a41-b   7 = p05-b
 
 Two types share a record because the record is not a board: Type 6 is an
 earlier vendor revision of the Type 4 board with a socketed panel, and the two
 are indistinguishable from flash. There is no 5 - see RECORD_BY_TYPE.
+
+p05-b is the one record that constrains the boot chain: that board's OTP is
+blank, so --otp-boot with it is refused - see FLASH_BOOT_RECORDS.
 
         mksuota.py --ota <firmware.bin> <out.img>
 
@@ -285,6 +289,11 @@ BOARD_BY_RECORD = {
     'a53-a': (0x14, 'a'),   # A53 122x250, override map
     'a41-a': (0x09, 'a'),   # A41 104x212, override map
     'a41-b': (0x09, 'b'),   # A41 104x212, built-in map
+    # Type 7's panel, named for its record byte because its FPC label has not
+    # been read. 122x250 like an A53 but a different model, so it does not get
+    # to borrow A53's name - a record is written onto hardware and outlives the
+    # guess that produced it.
+    'p05-b': (0x05, 'b'),   # 122x250, model unknown, built-in map
 }
 
 # The tag types, as aliases onto the four records above.
@@ -300,7 +309,15 @@ RECORD_BY_TYPE = {
     3: 'a41-a',
     4: 'a41-b',
     6: 'a41-b',
+    7: 'p05-b',
 }
+
+# Types whose ONLY bootloader is the AN-B-001 image at flash 0x000000, because
+# their OTP is blank. Writing a synthesised image with --otp-boot onto one of
+# these erases the boot chain and the tag stops coming up on power (SWD still
+# attaches, so it is recoverable by reflashing). Keyed by record rather than by
+# type because the record is what actually gets written.
+FLASH_BOOT_RECORDS = frozenset({'p05-b'})
 
 
 def board_record(record: str | None) -> bytes | None:
@@ -443,6 +460,25 @@ def main() -> int:
 
     if len(args) not in (2, 3) or (ota and len(args) != 2):
         print(__doc__)
+        return 2
+
+    # A record naming a flash-booting board, with --otp-boot, is a contradiction
+    # that costs a tag its boot chain. Refuse it here rather than in flash.sh:
+    # this is where the record's meaning is known, and refusing in one place is
+    # the difference between a rule and a convention.
+    if otp_boot and record in FLASH_BOOT_RECORDS:
+        print(f"mksuota.py: --record {record} names a board whose OTP is blank, "
+              f"so the\n"
+              f"  AN-B-001 image at flash 0x000000 is its ONLY bootloader - and "
+              f"--otp-boot\n"
+              f"  means 'leave offset 0 empty'. Together they would build an "
+              f"image that\n"
+              f"  stops the tag booting (recoverable over SWD, but it will not "
+              f"come up on\n"
+              f"  power). Pass --bootloader <boot.bin> instead, or --fallback "
+              f"<a dump of\n"
+              f"  this tag>, either of which puts a bootloader at offset 0.",
+              file=sys.stderr)
         return 2
     payload = open(args[0], 'rb').read()
     out_path = args[1]
