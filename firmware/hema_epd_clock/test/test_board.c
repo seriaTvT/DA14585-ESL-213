@@ -77,12 +77,18 @@ int main(void)
     check(b.have_pinmap == true,                "have_pinmap true");
     check_map(&b, variant_a,                    "unpacks to the tag's live table");
 
-    /* --- Type 4: A41 panel, record erased -> variant B on an A41 board ---- */
+    /* --- Type 4: A41 panel, record erased -> variant B on an A41 board ----
+     *
+     * This is Type 6's record too, byte for byte - a different board with a
+     * socketed panel, indistinguishable from flash. Deliberately not a second
+     * case: the same sixteen bytes cannot decode two ways, and a case that
+     * asserts nothing new is one more thing to keep in step. What the record
+     * cannot tell you about Type 6 is in hema-local/re/type6/README.md. */
     static const uint8_t type4[16] = {
         0x09, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
         0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff
     };
-    printf("Type 4 (variant B, A41) - record erased\n");
+    printf("Types 4 and 6 (variant B, A41) - record erased\n");
     check(epd_board_decode(type4, &b) == false, "no pin map in the record");
     check(b.panel == EPD_BOARD_PANEL_A41,       "panel decodes as A41 (0x09)");
     check_map(&b, variant_b,                    "falls back to the variant-B default");

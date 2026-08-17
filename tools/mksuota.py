@@ -52,16 +52,25 @@ back to something that works - and that is what --fallback is for.
 them even though the bootloader does not. See build_header().
 
 Usage:  mksuota.py [--fallback <stock_dump.bin>] [--bootloader <boot.bin>]
-                   [--otp-boot] [--type <1|2|3|4>]
+                   [--otp-boot] [--record <name> | --type <n>]
                    <firmware.bin> <out.bin> [bank]
         bank defaults to 1.
 
---type writes that tag type's board record at 0x039000. It describes the TAG,
-not the image - one image runs on all of them. Needed only when the record is
-blank or has been lost; normally --fallback carries the tag's own.
+--record writes a board record at 0x039000. It describes the TAG, not the image
+- one image runs on all of them. Needed only when the record is blank or has
+been lost; normally --fallback carries the tag's own.
 
-  1  A53 122x250, variant B      3  A41 104x212, variant A
-  2  A53 122x250, variant A      4  A41 104x212, variant B
+  a53-b  A53 122x250, built-in map    a41-a  A41 104x212, override map
+  a53-a  A53 122x250, override map    a41-b  A41 104x212, built-in map
+
+--type <n> is the same thing said by tag type, kept because that is how it is
+written down everywhere:
+
+  1 = a53-b     2 = a53-a     3 = a41-a     4 = a41-b     6 = a41-b
+
+Two types share a record because the record is not a board: Type 6 is an
+earlier vendor revision of the Type 4 board with a socketed panel, and the two
+are indistinguishable from flash. There is no 5 - see RECORD_BY_TYPE.
 
         mksuota.py --ota <firmware.bin> <out.img>
 
@@ -247,39 +256,64 @@ def build_header(payload: bytes, imageid: int) -> bytes:
     return bytes(h)
 
 
-BOARD_BY_TYPE = {
-    # type: (panel byte, variant)   - see hema-local/docs/TAG_VARIANTS.md
-    1: (0x14, 'b'),     # A53 122x250, variant B
-    2: (0x14, 'a'),     # A53 122x250, variant A
-    3: (0x09, 'a'),     # A41 104x212, variant A
-    4: (0x09, 'b'),     # A41 104x212, variant B
+# What the record actually says: which panel, and which pin map. Keyed by those
+# two axes rather than by a tag type, because the type numbers stopped being a
+# one-to-one label for them on 2026-08-14.
+#
+# Type 6 is a different BOARD from Type 4 - an earlier vendor revision, 2.13_3
+# against 2.13_5, with a socketed panel instead of a soldered one - and it takes
+# the same `09 ff ff...` record. So a table keyed by type would have needed two
+# rows saying the same thing, and `--type 4` would have been the documented way
+# to flash a tag that is not a Type 4. Naming the axes removes the lie; the type
+# numbers stay as aliases below because they are what is written down everywhere.
+BOARD_BY_RECORD = {
+    # name:  (panel byte, pin map)   - see hema-local/docs/TAG_VARIANTS.md
+    'a53-b': (0x14, 'b'),   # A53 122x250, built-in map
+    'a53-a': (0x14, 'a'),   # A53 122x250, override map
+    'a41-a': (0x09, 'a'),   # A41 104x212, override map
+    'a41-b': (0x09, 'b'),   # A41 104x212, built-in map
+}
+
+# The tag types, as aliases onto the four records above.
+#
+# 5 IS DELIBERATELY ABSENT. It named the nRF52811 Solum board until 2026-08-14,
+# which is not a DA14585 tag at all and has no board record; the number was
+# retired rather than reissued, so that any surviving reference to "Type 5"
+# fails here instead of quietly writing an nRF board's identity onto a DA14585
+# one. See hema-local/docs/INDEX.md 4.9.
+RECORD_BY_TYPE = {
+    1: 'a53-b',
+    2: 'a53-a',
+    3: 'a41-a',
+    4: 'a41-b',
+    6: 'a41-b',
 }
 
 
-def board_record(tag_type: int | None) -> bytes | None:
-    """The 16-byte record at 0x039000, for a stated tag type.
+def board_record(record: str | None) -> bytes | None:
+    """The 16-byte record at 0x039000, for a stated (panel, pin map) pair.
 
     It used to be derived from the image's own HEMA-COMPAT stamp, which named
     the variant and the geometry. That stamp no longer does - one image runs on
     every tag, so it has no opinion about either - and inventing a record from
     a build is exactly the wrong direction: the record is what TELLS the build
     what the tag is. tools/flash.sh preserves the tag's own by default and only
-    passes --type for a tag whose record is blank.
+    passes --record for a tag whose record is blank.
 
     Reproduces what a factory tag carries, which is not the obvious layout. The
     panel byte is written on EVERY board; it is the SELECTOR that distinguishes
-    the variants, and an erased selector is variant B's positive answer rather
-    than an absence:
+    the pin maps, and an erased selector is the built-in map's positive answer
+    rather than an absence:
 
-        Type 1  14 ff ff...              A53, built-in map  -> variant B
-        Type 4  09 ff ff...              A41, built-in map  -> variant B
-        Type 3  09 01 ff*6 21 22 10 01 20 07 11 23          -> variant A
+        a53-b   14 ff ff...              A53, built-in map   Type 1
+        a41-b   09 ff ff...              A41, built-in map   Types 4 and 6
+        a41-a   09 01 ff*6 21 22 10 01 20 07 11 23           Type 3
     """
-    if tag_type is None:
+    if record is None:
         return None
-    if tag_type not in BOARD_BY_TYPE:
+    if record not in BOARD_BY_RECORD:
         return None
-    panel, variant = BOARD_BY_TYPE[tag_type]
+    panel, variant = BOARD_BY_RECORD[record]
 
     rec = bytearray(b'\xFF' * 16)
     rec[0] = panel
@@ -290,7 +324,7 @@ def board_record(tag_type: int | None) -> bytes | None:
 
 
 def synth_flash(size: int, boot: bytes, otp_boot: bool,
-                board: int | None = None) -> bytearray:
+                record: str | None = None) -> bytearray:
     """A blank retail-layout flash image: erased, plus bootloader and header."""
     flash = bytearray(b'\xFF' * size)
     if boot:
@@ -307,8 +341,8 @@ def synth_flash(size: int, boot: bytes, otp_boot: bool,
     # firmware now READS this record to decide which eight pins to drive, so an
     # erased sector on a variant-A tag is no longer a lost annotation - it is
     # that tag being told it is variant B, and driving variant B's pins into a
-    # dead panel. Written from the image's own identity instead.
-    rec = board_record(board)
+    # dead panel. Written from the record the caller names instead.
+    rec = board_record(record)
     if rec:
         flash[BOARD_REC_OFF:BOARD_REC_OFF + len(rec)] = rec
         print(f"  board record @ 0x{BOARD_REC_OFF:06x}: "
@@ -319,7 +353,7 @@ def synth_flash(size: int, boot: bytes, otp_boot: bool,
         # this, so a wrong record is a wrong pin map.
         print(f"  board record @ 0x{BOARD_REC_OFF:06x}: left erased. The tag "
               f"will read as the\n           built-in case - variant B, 122x250 "
-              f"- which is right only for a\n           Type 1. Pass --type to "
+              f"- which is right only for a\n           Type 1. Pass --record to "
               f"write the real one.")
     print(f"  bootloader @ 0x000000: "
           + (f"{len(boot)} bytes" if boot
@@ -330,7 +364,7 @@ def synth_flash(size: int, boot: bytes, otp_boot: bool,
 def main() -> int:
     args = []
     ota = False
-    fallback = boot_path = board = None
+    fallback = boot_path = record = None
     otp_boot = False
     argv = sys.argv[1:]
     i = 0
@@ -344,12 +378,37 @@ def main() -> int:
             i += 1; boot_path = argv[i]
         elif a == '--otp-boot':
             otp_boot = True
+        elif a == '--record':
+            i += 1
+            record = argv[i]
+            if record not in BOARD_BY_RECORD:
+                print(f"--record wants one of "
+                      f"{', '.join(sorted(BOARD_BY_RECORD))}, got {record}")
+                return 2
         elif a == '--type':
             i += 1
             try:
-                board = int(argv[i])
+                tag_type = int(argv[i])
             except ValueError:
                 print(f"--type wants a number, got {argv[i]}"); return 2
+            if tag_type == 5:
+                # Not a fallthrough to the generic message: this number used to
+                # work and used to mean something else, so silence about that is
+                # the one answer that could get an nRF board's identity written
+                # onto a DA14585 tag.
+                print("--type 5 is retired. It named the nRF52811 Solum board "
+                      "until 2026-08-14;\n"
+                      "that board is now `newton` and has no board record. If "
+                      "you meant the\n"
+                      "socketed 2.13_3 tag, that is --type 6 (or --record "
+                      "a41-b).")
+                return 2
+            if tag_type not in RECORD_BY_TYPE:
+                print(f"--type wants one of "
+                      f"{', '.join(str(t) for t in sorted(RECORD_BY_TYPE))}, "
+                      f"got {tag_type}")
+                return 2
+            record = RECORD_BY_TYPE[tag_type]
         elif a.startswith('-'):
             print(f"unknown option: {a}\n"); print(__doc__); return 2
         else:
@@ -396,7 +455,7 @@ def main() -> int:
                   "and which ignores\n  offset 0. Or --fallback <dump> to base "
                   "the image on a stock one.", file=sys.stderr)
             return 2
-        flash = synth_flash(0x80000, boot, otp_boot, board)
+        flash = synth_flash(0x80000, boot, otp_boot, record)
         ph, b1, b2 = PROD_HDR_OFF, RETAIL_BANK1, RETAIL_BANK2
 
     if ota:

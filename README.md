@@ -93,7 +93,7 @@ frame size and the right default face.
 
 **What you must not lose is that record.** It is the only copy of the tag's
 identity, and a full-flash write erases it — so `tools/flash.sh` refuses unless
-you give it `--fallback <a stock dump of this tag>` or `--type <n>`. An
+you give it `--fallback <a stock dump of this tag>` or `--record <name>`. An
 erased record reads as the built-in case, variant B and 122×250: right for a
 Type 1, and a dark or garbled panel on the others with nothing to say why.
 
@@ -251,9 +251,14 @@ tools/flash.sh --fallback stock_flash_512k.bin out/hema_epd_clock.bin
 
 The dump must be **of this tag**: it supplies the board record that the write
 would otherwise erase, and it fills the other bank. If you have no dump, state the tag
-instead — `--type 1` (A53/variant B), `2` (A53/variant A), `3` (A41/variant A),
-`4` (A41/variant B). That number says what the **tag** is, not what to build;
-there is one image. `flash.sh` refuses without one rather than quietly erasing
+instead — `--record a53-b`, `a53-a`, `a41-a` or `a41-b`, naming the panel and
+the pin map, which is what the record actually carries. `--type <n>` says the
+same by tag number (1 = `a53-b`, 2 = `a53-a`, 3 = `a41-a`, 4 = `a41-b`,
+6 = `a41-b`) and still works, but two types share one record: Types 4 and 6 are
+different boards — the second has a socketed panel — and are indistinguishable
+from flash. There is no Type 5; that number named the nRF52811 board until
+2026-08-14 and was retired rather than reissued. Either way it says what the
+**tag** is, not what to build; there is one image. `flash.sh` refuses without one rather than quietly erasing
 the tag's identity, and that refusal is load-bearing: a flash really does erase
 the record, tested, and the tag then comes up with a dead panel and nothing else
 wrong. `--force` skips both, for bench work.
